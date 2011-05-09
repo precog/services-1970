@@ -10,16 +10,9 @@ import blueeyes.persistence.mongo._
 
 import net.lag.configgy.ConfigMap
 import CreditCard._
+import Account._
 import blueeyes.concurrent.Future
-import com.braintreegateway.SubscriptionRequest
-
-/**
- * Created by IntelliJ IDEA.
- * User: knuttycombe
- * Date: 5/9/11
- * Time: 10:53 AM
- * To change this template use File | Settings | File Templates.
- */
+import com.braintreegateway._
 
 trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJson with BijectionsChunkReaderString {
   def mongoFactory(configMap: ConfigMap): Mongo
@@ -38,7 +31,14 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJs
 
         val brainTreeConfig = config.configMap("braintree")
 
-        BillingConfig(database, accountsCollection, plansCollection, brainTreeConfig)
+        val gateway = new BraintreeGateway(
+            Environment.SANDBOX,
+            brainTreeConfig("merchant_id"),
+            brainTreeConfig("public_key"),
+            brainTreeConfig("private_key")
+        )
+
+        BillingConfig(database, accountsCollection, plansCollection, gateway)
       } -> request { state =>
         path("/signup") {
           post { request: HttpRequest[JValue] =>
@@ -48,7 +48,9 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJs
                   case Some(currentAccount) =>
                     Future.lift(HttpResponse(status = HttpStatus(HttpStatusCodes.BadRequest, "Account already exists.")))
 
-                  case None => createAccount(state, signup)
+                  case None => for (billingId <- createCustomer(state, signup);
+                                    ccId <- createCreditCard(state, signup.cc, billingId);
+                                    acct <- createAccount(state, signup, billingId, ccId)) yield acct
                 }
               } getOrElse {
                 Future.lift(HttpResponse(status = HttpStatus(HttpStatusCodes.BadRequest, "No request contents.")))
@@ -62,18 +64,47 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJs
     }
   }
 
-  def createAccount(config: BillingConfig, signup: UserSignup) = {
+  def createCustomer(config: BillingConfig, signup: UserSignup): Future[String] = Future.async {
+    val request = (new CustomerRequest).email(signup.email)
+    val result = config.gateway.customer.create(request);
+
+    if (result.isSuccess) {
+      result.getTarget.getId
+    } else {
+      error("Could not create customer account.")
+    }
+  }
+
+  def createCreditCard(config: BillingConfig, cc: CreditCard, customerId: String): Future[String] = Future.async {
+    val request = cc.billingAddress.amendRequest(
+      (new CreditCardRequest).
+      customerId(customerId).
+      number(cc.number).
+      cvv(cc.cvv).
+      expirationDate(cc.expDate).
+      cardholderName(cc.cardholder)
+    ).done
+
+    val result = config.gateway.creditCard.create(request);
+
+    if (result.isSuccess) {
+      result.getTarget.getToken
+    } else {
+      throw HttpException(HttpStatusCodes.BadRequest, "Could not create customer account; credit card validation may have failed.")
+    }
+  }
+
+  def createAccount(config: BillingConfig, signup: UserSignup, customerId: String, billingToken: String): Future[HttpResponse[JObject]] = {
     config.billingDatabase(selectOne().from(config.plansCollection).where(".planId" === signup.planId))
     .flatMap {
       _.map(_.deserialize[Plan]).map {
         plan => {
-          val request = new SubscriptionRequest().
+          val request = (new SubscriptionRequest).
             id("new_id").
-            paymentMethodToken("new_payment_method_token").
-            planId(signup.planId).
-            merchantAccountId(state.brainTreeConfig.getString("merchant_account_id"))
+            paymentMethodToken(billingToken).
+            planId(signup.planId)
 
-          val result = gateway.subscription().update(
+          val result = config.gateway.subscription.update(
             "a_subscription_id",
             request
           );
@@ -81,10 +112,12 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJs
           val account = Account(
             signup.email,
             signup.password,
-            plan
+            plan,
+            customerId,
+            billingToken
           )
 
-          config.billingDatabase(insert(account.serialize)).map {
+          config.billingDatabase(insert(account.serialize.asInstanceOf[JObject])).map {
             _.map {
               _ => HttpResponse(status = HttpStatus(HttpStatusCodes.OK, "Account created."))
             } getOrElse {
@@ -103,7 +136,7 @@ case class BillingConfig(
   billingDatabase: MongoDatabase,
   accountsCollection: MongoCollection,
   plansCollection: MongoCollection,
-  brainTreeConfig: ConfigMap
+  gateway: BraintreeGateway
 )
 
 case class UserSignup(email: String, password: String, planId: String, cc: CreditCard)
@@ -130,41 +163,113 @@ object UserSignup{
   }
 }
 
-case class CreditCard(number: String, cctype: String, expMonth: Int, expYear: Int, ccv: String)
+case class CreditCard(
+    cardholder: String,
+    number: String,
+    cctype: String,
+    expMonth: Int,
+    expYear: Int,
+    cvv: String,
+    billingAddress: Address
+) {
+  def expDate = expMonth + "/" + expYear
+}
 
 object CreditCard {
   implicit val CreditCardDecomposer : Decomposer[CreditCard] = new Decomposer[CreditCard] {
     override def decompose(cc: CreditCard): JValue =  JObject(
       List(
+        JField("cardholder", cc.cardholder.serialize),
         JField("number", cc.number.serialize),
         JField("cctype", cc.cctype.serialize),
         JField("expMonth", cc.expMonth.serialize),
         JField("expYear", cc.expYear.serialize),
-        JField("ccv", cc.ccv.serialize)
+        JField("cvv", cc.cvv.serialize),
+        JField("billingAddress", cc.billingAddress.serialize)
       )
     )
   }
 
   implicit val CreditCardExtractor : Extractor[CreditCard] = new Extractor[CreditCard] {
     override def extract(obj: JValue) = CreditCard(
+      (obj \ "cardholder").deserialize[String],
       (obj \ "number").deserialize[String],
       (obj \ "cctype").deserialize[String],
       (obj \ "expMonth").deserialize[Int],
       (obj \ "expYear").deserialize[Int],
-      (obj \ "ccv").deserialize[String]
+      (obj \ "cvv").deserialize[String],
+      (obj \ "billingAddress").deserialize[Address]
     )
   }
 }
 
-case class Account(email: String, passwordMD5: String, plan: Plan)
+case class Address(
+  firstName: String,
+  lastName: String,
+  company: String,
+  streetAddress: String,
+  extendedAddress: String,
+  locality: String, //city
+  region: String, //state
+  postalCode: String,
+  countryCodeAlpha2: String) {
+
+
+  def amendRequest(ccr: CreditCardRequest) = ccr.billingAddress.
+    firstName(firstName).
+    lastName(lastName).
+    company(company).
+    streetAddress(streetAddress).
+    extendedAddress(extendedAddress).
+    locality(locality).
+    region(region).
+    postalCode(postalCode).
+    countryCodeAlpha2(countryCodeAlpha2)
+}
+
+object Address {
+  implicit val AddressDecomposer : Decomposer[Address] = new Decomposer[Address] {
+    override def decompose(addr: Address): JValue =  JObject(
+      List(
+        JField("firstName", addr.firstName.serialize),
+        JField("lastName", addr.lastName.serialize),
+        JField("company", addr.company.serialize),
+        JField("streetAddress", addr.streetAddress.serialize),
+        JField("extendedAddress", addr.extendedAddress.serialize),
+        JField("locality", addr.locality.serialize),
+        JField("region", addr.region.serialize),
+        JField("postalCode", addr.postalCode.serialize),
+        JField("countryCodeAlpha2", addr.countryCodeAlpha2.serialize)
+      )
+    )
+  }
+
+  implicit val AddressExtractor : Extractor[Address] = new Extractor[Address] {
+    override def extract(obj: JValue) = Address(
+      (obj \ "firstName").deserialize[String],
+      (obj \ "lastName").deserialize[String],
+      (obj \ "company").deserialize[String],
+      (obj \ "streetAddress").deserialize[String],
+      (obj \ "extendedAddress").deserialize[String],
+      (obj \ "locality").deserialize[String],
+      (obj \ "region").deserialize[String],
+      (obj \ "postalCode").deserialize[String],
+      (obj \ "countryCodeAlpha2").deserialize[String]
+    )
+  }
+}
+
+case class Account(email: String, passwordMD5: String, plan: Plan, customerId: String, billingToken: String)
 
 object Account{
   implicit val AccountDecomposer : Decomposer[Account] = new Decomposer[Account] {
-    override def decompose(acct: Account): JValue =  JObject(
+    override def decompose(acct: Account): JObject = JObject(
       List(
         JField("email", acct.email.serialize),
         JField("passwordMD5", acct.passwordMD5.serialize),
-        JField("plan", acct.plan.serialize)
+        JField("plan", acct.plan.serialize),
+        JField("customerId", acct.customerId.serialize),
+        JField("billingToken", acct.billingToken.serialize)
       )
     )
   }
@@ -173,7 +278,9 @@ object Account{
     override def extract(obj: JValue) = Account(
       (obj \ "email").deserialize[String],
       (obj \ "passwordMD5").deserialize[String],
-      (obj \ "plan").deserialize[Plan]
+      (obj \ "plan").deserialize[Plan],
+      (obj \ "customerId").deserialize[String],
+      (obj \ "billingToken").deserialize[String]
     )
   }
 }
@@ -192,7 +299,7 @@ object Plan {
   implicit val PlanDecomposer : Decomposer[Plan] = new Decomposer[Plan] {
     override def decompose(plan: Plan): JValue =  JObject(
       List(
-        JField("planId", plan.requestVolume.serialize),
+        JField("planId", plan.planId.serialize),
         JField("price", plan.price.serialize),
         JField("description", plan.description.serialize),
         JField("requestLimit", plan.requestLimit.serialize),

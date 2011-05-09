@@ -3,6 +3,4 @@ lib_managed
 src_managed
 target
 *.iml
-analytics/project/boot
-billing/project/boot
-billing/project/plugins/project
+project/boot
