@@ -55,7 +55,7 @@ trait OneJar { this: DefaultProject =>
   }
 }
 
-class BillingProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar {
+class BillingProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {
 
   val scalatest   = "org.scalatest"               % "scalatest"         % "1.2"             % "test"
   val scalaspec   = "org.scala-tools.testing"     % "specs_2.8.0"       % "1.6.6-SNAPSHOT"  % "test"
@@ -80,4 +80,5 @@ trait Repositories {
   val sonatyperelease = MavenRepository("Sonatype Releases",          "http://oss.sonatype.org/content/repositories/releases")
   val nexusscalatools = MavenRepository("Nexus Scala Tools",          "http://nexus.scala-tools.org/content/repositories/releases")
   val mavenrepo1      = MavenRepository("Maven Repo 1",               "http://repo1.maven.org/maven2/")
+  val scalablerepo    = MavenRepository("Scalable Solutions Repo",    "http://scalablesolutions.se/akka/repository")
 }

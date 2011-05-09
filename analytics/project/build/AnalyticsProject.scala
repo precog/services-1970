@@ -55,7 +55,7 @@ trait OneJar { this: DefaultProject =>
   }
 }
 
-class AnalyticsProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar {
+class AnalyticsProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {
 
   val scalatest   = "org.scalatest"               % "scalatest"         % "1.2"             % "test"
   val scalaspec   = "org.scala-tools.testing"     % "specs_2.8.0"       % "1.6.6-SNAPSHOT"  % "test"
