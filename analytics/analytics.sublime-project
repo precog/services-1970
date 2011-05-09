@@ -1,0 +1,686 @@
+{
+	"auto_complete":
+	{
+		"selected_items":
+		[
+		]
+	},
+	"buffers":
+	[
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AnalyticsService.scala",
+			"settings":
+			{
+				"buffer_size": 19335,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Limits.scala",
+			"settings":
+			{
+				"buffer_size": 615,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Path.scala",
+			"settings":
+			{
+				"buffer_size": 1414,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Token.scala",
+			"settings":
+			{
+				"buffer_size": 2901,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Variable.scala",
+			"settings":
+			{
+				"buffer_size": 181,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/TimeSeries.scala",
+			"settings":
+			{
+				"buffer_size": 2837,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Period.scala",
+			"settings":
+			{
+				"buffer_size": 1756,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Periodicity.scala",
+			"settings":
+			{
+				"buffer_size": 4239,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Aggregator.scala",
+			"settings":
+			{
+				"buffer_size": 2183,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/TimeSeriesAggregator.scala",
+			"settings":
+			{
+				"buffer_size": 923,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Report.scala",
+			"settings":
+			{
+				"buffer_size": 3136,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/package.scala",
+			"settings":
+			{
+				"buffer_size": 2420,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Predicate.scala",
+			"settings":
+			{
+				"buffer_size": 426,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AggregationEngine2.scala",
+			"settings":
+			{
+				"buffer_size": 14240,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"contents": "\n{\n	\"accountTokenId\": \"2342342342342342344\",\n\n	\"path\": \"/advertisers/Nike/campaigns/June 2011\",\n\n	\"order\": 2,\n\n	\"period\": {\n		\"periodicity\": \"hour\",\n		\"start\": 2139232323,\n		\"end\": 324234324\n	},\n\n	\"where\": {\n		\".click.gender\": \"male\",\n		\".click.location\": \"Boulder\"\n	},\n\n	\"count\": {\n		\"hour\": {\n			\"23482734343\": 23\n		}\n	}\n}\n\n\n{\n	\"accountTokenId\": \"2342342342342342344\",\n\n	\"path\": \"/advertisers/Nike/campaigns/June 2011\",\n\n	\"order\": 1,\n	\n	\"period\": {\n		\"periodicity\": \"hour\",\n		\"start\": 2139232323,\n		\"end\": 324234324\n	},\n\n	\"where\": {\n		\".click.gender\": \"male\"\n	},\n\n	\"count\": {\n		\"hour\": {\n			\"23482734343\": 23\n		}\n	}\n}\n\n",
+			"settings":
+			{
+				"buffer_size": 621,
+				"line_ending": "Unix"
+			}
+		}
+	],
+	"build_system": "",
+	"file_history":
+	[
+		"/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Permissions.scala",
+		"/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/TokenManager.scala",
+		"/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Limits.scala",
+		"/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/TimeSeries.scala",
+		"/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AggregationEngine2.scala",
+		"/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Periodicity.scala",
+		"/Users/John/Documents/reportgrid/services/analytics/project/build/AnalyticsProject.scala",
+		"/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AnalyticsService.scala",
+		"/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Token.scala"
+	],
+	"find_in_files":
+	{
+		"include_history":
+		[
+		],
+		"location_history":
+		[
+		]
+	},
+	"find_state":
+	{
+		"case_sensitive": false,
+		"find_history":
+		[
+			"updateTimeSeries",
+			"updateValues",
+			"addPathChildrenOfPath",
+			"MongoPatches",
+			"internalSearchSeries",
+			"periodicityOf"
+		],
+		"highlight": true,
+		"in_selection": false,
+		"preserve_case": false,
+		"regex": false,
+		"replace_history":
+		[
+		],
+		"reverse": false,
+		"show_context": true,
+		"use_buffer": false,
+		"whole_word": false,
+		"wrap": true
+	},
+	"folders":
+	{
+		"mount_points":
+		[
+			"/Users/John/Documents/reportgrid/services/analytics"
+		]
+	},
+	"groups":
+	[
+		{
+			"selected": 13,
+			"sheets":
+			[
+				{
+					"buffer": 0,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AnalyticsService.scala",
+					"settings":
+					{
+						"buffer_size": 19335,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								17708,
+								17708
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 5128,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 1,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Limits.scala",
+					"settings":
+					{
+						"buffer_size": 615,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								541,
+								541
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage"
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 2,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Path.scala",
+					"settings":
+					{
+						"buffer_size": 1414,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								0,
+								0
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 3,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Token.scala",
+					"settings":
+					{
+						"buffer_size": 2901,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								655,
+								661
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 4,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Variable.scala",
+					"settings":
+					{
+						"buffer_size": 181,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								181,
+								181
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage"
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 5,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/TimeSeries.scala",
+					"settings":
+					{
+						"buffer_size": 2837,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								1909,
+								1909
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 6,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Period.scala",
+					"settings":
+					{
+						"buffer_size": 1756,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								343,
+								343
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 19,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 7,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Periodicity.scala",
+					"settings":
+					{
+						"buffer_size": 4239,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								3879,
+								3879
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 1083,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 8,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Aggregator.scala",
+					"settings":
+					{
+						"buffer_size": 2183,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								0,
+								0
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 71,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 9,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/TimeSeriesAggregator.scala",
+					"settings":
+					{
+						"buffer_size": 923,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								250,
+								258
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 10,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Report.scala",
+					"settings":
+					{
+						"buffer_size": 3136,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								2626,
+								2637
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 523,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 11,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/package.scala",
+					"settings":
+					{
+						"buffer_size": 2420,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								272,
+								272
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 12,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Predicate.scala",
+					"settings":
+					{
+						"buffer_size": 426,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								426,
+								426
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage"
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 13,
+					"file": "/Users/John/Documents/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AggregationEngine2.scala",
+					"settings":
+					{
+						"buffer_size": 14240,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								13544,
+								13544
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 4797,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 14,
+					"settings":
+					{
+						"buffer_size": 621,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								435,
+								435
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Text/Plain text.tmLanguage"
+						},
+						"translation.x": 0,
+						"translation.y": 11,
+						"zoom_level": 1
+					},
+					"type": "text"
+				}
+			]
+		}
+	],
+	"layout":
+	{
+		"cells":
+		[
+			[
+				0,
+				0,
+				1,
+				1
+			]
+		],
+		"cols":
+		[
+			0,
+			1
+		],
+		"rows":
+		[
+			0,
+			1
+		]
+	},
+	"menu_visible": true,
+	"save_all_on_build": true,
+	"select_file":
+	{
+		"height": 0,
+		"selected_items":
+		[
+			[
+				"tokenman",
+				"src/main/scala/com/reportgrid/analytics/TokenManager.scala"
+			],
+			[
+				"limits",
+				"src/main/scala/com/reportgrid/analytics/Limits.scala"
+			],
+			[
+				"timeseries",
+				"src/main/scala/com/reportgrid/analytics/TimeSeries.scala"
+			],
+			[
+				"agg",
+				"src/main/scala/com/reportgrid/analytics/AggregationEngine2.scala"
+			],
+			[
+				"per",
+				"src/main/scala/com/reportgrid/analytics/Periodicity.scala"
+			],
+			[
+				"analyticsproj",
+				"project/build/AnalyticsProject.scala"
+			],
+			[
+				"aproj",
+				"project/build/AnalyticsProject.scala"
+			],
+			[
+				"analyticsser",
+				"src/main/scala/com/reportgrid/analytics/AnalyticsService.scala"
+			],
+			[
+				"token",
+				"src/main/scala/com/reportgrid/analytics/Token.scala"
+			]
+		],
+		"width": 0
+	},
+	"select_project":
+	{
+		"height": 0,
+		"selected_items":
+		[
+		],
+		"width": 0
+	},
+	"show_minimap": true,
+	"show_tabs": true,
+	"side_bar_visible": true,
+	"side_bar_width": 356,
+	"status_bar_visible": true
+}
