@@ -1,9 +1,9 @@
 package com.reportgrid.billing
 
 import blueeyes.BlueEyesServiceBuilder
-import blueeyes.core.data.{BijectionsChunkReaderString, BijectionsChunkReaderJson}
+import blueeyes.core.data.{BijectionsChunkString, BijectionsChunkJson}
 import blueeyes.core.http._
-import blueeyes.json.JsonAST.{JObject, JField, JValue}
+import blueeyes.json.JsonAST.{JObject, JField, JValue, JNothing}
 import blueeyes.json.xschema.{Extractor, Decomposer}
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.persistence.mongo._
@@ -14,7 +14,7 @@ import Account._
 import blueeyes.concurrent.Future
 import com.braintreegateway._
 
-trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJson with BijectionsChunkReaderString {
+trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkJson {
   def mongoFactory(configMap: ConfigMap): Mongo
 
   val billingService = service("billing", "0.01") {
@@ -39,26 +39,26 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJs
         )
 
         BillingConfig(database, accountsCollection, plansCollection, gateway)
-      } -> request { state =>
-        path("/signup") {
-          post { request: HttpRequest[JValue] =>
-            HttpResponse[JValue](
-              request.content.map(_.deserialize[UserSignup]).map {
-                signup => state.billingDatabase(selectOne().from(state.accountsCollection).where(".email" === signup.email)) flatMap {
+      } -> request { state: BillingConfig =>
+        jvalue {
+          path("/signup") {
+            post {
+              request: HttpRequest[JValue] => request.content.map(_.deserialize[UserSignup]).map {
+                signup => state.billingDatabase(selectOne().from(state.accountsCollection).where(".email" === signup.email)).flatMap[HttpResponse[JValue]] {
                   case Some(currentAccount) =>
-                    Future.lift(HttpResponse(status = HttpStatus(HttpStatusCodes.BadRequest, "Account already exists.")))
+                    throw HttpException(HttpStatusCodes.BadRequest, "Account already exists.")
 
                   case None => for (billingId <- createCustomer(state, signup);
                                     ccId <- createCreditCard(state, signup.cc, billingId);
                                     acct <- createAccount(state, signup, billingId, ccId)) yield acct
                 }
               } getOrElse {
-                Future.lift(HttpResponse(status = HttpStatus(HttpStatusCodes.BadRequest, "No request contents.")))
+                throw HttpException(HttpStatusCodes.BadRequest, "No request contents.")
               }
-            )
+            }
           }
         }
-      } ->  shutdown { state =>
+      } ->  shutdown { state: BillingConfig =>
         error("todo")
       }
     }
@@ -94,9 +94,9 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJs
     }
   }
 
-  def createAccount(config: BillingConfig, signup: UserSignup, customerId: String, billingToken: String): Future[HttpResponse[JObject]] = {
+  def createAccount(config: BillingConfig, signup: UserSignup, customerId: String, billingToken: String): Future[HttpResponse[JValue]] = {
     config.billingDatabase(selectOne().from(config.plansCollection).where(".planId" === signup.planId))
-    .flatMap {
+    .flatMap[HttpResponse[JValue]] {
       _.map(_.deserialize[Plan]).map {
         plan => {
           val request = (new SubscriptionRequest).
@@ -117,16 +117,16 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkReaderJs
             billingToken
           )
 
-          config.billingDatabase(insert(account.serialize.asInstanceOf[JObject])).map {
+          config.billingDatabase[JNothing.type](insert(account.serialize.asInstanceOf[JObject]).into(config.accountsCollection)).map {
             _.map {
-              _ => HttpResponse(status = HttpStatus(HttpStatusCodes.OK, "Account created."))
+              _ => HttpResponse[JValue](status = HttpStatus(HttpStatusCodes.OK, "Account created."))
             } getOrElse {
-              HttpResponse(status = HttpStatus(HttpStatusCodes.FailedDependency, "Unable to create account."))
+              HttpResponse[JValue](status = HttpStatus(HttpStatusCodes.FailedDependency, "Unable to create account."))
             }
           }
         }
       } getOrElse {
-        Future.lift(HttpResponse(status = HttpStatus(HttpStatusCodes.BadRequest, "No such plan.")))
+        Future.lift(HttpResponse[JValue](status = HttpStatus(HttpStatusCodes.BadRequest, "No such plan.")))
       }
     }
   }
