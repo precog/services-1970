@@ -316,7 +316,7 @@ object Plan {
       (obj \ "description").deserialize[String],
       (obj \ "requestLimit").deserialize[Long],
       (obj \ "upgradePlanId").deserialize[Option[String]],
-      (obj \ "overageRate").deserialize[Option[BigDecimal]]
+      (obj \ "overageRate").deserialize[Option[MeteredRate]]
     )
   }
 }

@@ -10,7 +10,7 @@ import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.json.JsonAST._
 import blueeyes.json.{JPath, JsonParser}
 import blueeyes.json.xschema.DefaultSerialization._
-import blueeyes.core.data.{Chunk, BijectionsChunkReaderJson, BijectionsChunkReaderString}
+import blueeyes.core.data.{Chunk, BijectionsChunkJson, BijectionsChunkString}
 
 import net.lag.configgy.{Configgy, ConfigMap}
 
@@ -23,7 +23,7 @@ import com.reportgrid.analytics.persistence.MongoSupport._
 
 case class AnalyticsState(aggregationEngine: AggregationEngine2, tokenManager: TokenManager)
 
-trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkReaderJson with BijectionsChunkReaderString {
+trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString {
   def mongoFactory(configMap: ConfigMap): Mongo
 
   val analyticsService = service("analytics", "0.01") {

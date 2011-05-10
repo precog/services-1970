@@ -48,7 +48,6 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
           timeToLive = Some(timeToLive),
           unit       = TimeUnit.MILLISECONDS
         ),
-        initialCapacity = initialCapacity,
         maximumCapacity = maximumCapacity
       )
     ), collection)
@@ -69,7 +68,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
   def aggregate(token: Token, path: Path, time: DateTime, jobject: JObject, count: Long) = {
     Future.async {
       // Keep track of parent/child relationships:
-      pathChildS ++= addPathChildrenOfPath(token, path).patches
+      pathChildS putAll addPathChildrenOfPath(token, path).patches
 
       val accountPathFilter = forTokenAndPath(token, path)
 
@@ -92,8 +91,8 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
           limit = token.limits.limit
         )
 
-        varValueSeriesS ++= updateTimeSeries(accountPathFilter, valueReport).patches
-        varValueS       ++= updateValues(accountPathFilter, valueReport).patches
+        varValueSeriesS putAll updateTimeSeries(accountPathFilter, valueReport).patches
+        varValueS       putAll updateValues(accountPathFilter, valueReport).patches
 
         val childCountReport = Report.ofChildren(
           event = event,
@@ -103,7 +102,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
           limit = token.limits.limit
         )
 
-        varChildS ++= updateValues(accountPathFilter, childCountReport).patches
+        varChildS putAll updateValues(accountPathFilter, childCountReport).patches
 
         val childSeriesReport = Report.ofChildren(
           event = event,
@@ -113,7 +112,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
           limit = token.limits.limit
         )
 
-        varSeriesS  ++= updateTimeSeries(accountPathFilter, childSeriesReport).patches
+        varSeriesS putAll updateTimeSeries(accountPathFilter, childSeriesReport).patches
       }
     }
   }
@@ -200,13 +199,13 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
     searchSeries(token, path, Periodicity.Eternity, observation, start_, end_).map(_.total)
   }
 
-  def stop(): Future[Unit] = Future.async {
-    varValueSeriesS.stop
-    varSeriesS.stop
-    varChildS.stop
-    varValueS.stop
-    pathChildS.stop
-  }
+  def stop(): Future[Unit] =  for {
+    _ <- varValueSeriesS.flushAll
+    _ <- varSeriesS.flushAll
+    _ <- varChildS.flushAll
+    _ <- varValueS.flushAll
+    _ <- pathChildS.flushAll
+  } yield ()
 
   /** Creates a bunch of patches to keep track of parent/child path relationships.
    * E.g. if you send "/foo/bar/baz", it will keep track of the following:
