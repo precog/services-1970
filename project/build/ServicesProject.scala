@@ -8,6 +8,9 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
   class CommonProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {
     val scalaspec   = "org.scala-tools.testing"     % "specs_2.8.0"       % "1.6.6-SNAPSHOT"  % "test"
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
+
+    val jodatime    = "joda-time"                   % "joda-time"         % "1.6.2"   % "compile"
+    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.8"   % "compile"
   }
 
   class BillingProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {

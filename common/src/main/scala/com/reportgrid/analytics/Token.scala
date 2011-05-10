@@ -1,4 +1,7 @@
 package com.reportgrid.analytics
+import blueeyes.json.xschema._
+import blueeyes.json.JsonAST._
+import blueeyes.json.xschema.DefaultSerialization._
 
 import org.joda.time.{DateTime, DateTimeZone}
 
@@ -43,6 +46,8 @@ case class Token(tokenId: String, parentTokenId: Option[String], accountTokenId:
 object Token {
   private def newUUID() = java.util.UUID.randomUUID().toString.toUpperCase
 
+  val Never = new DateTime(java.lang.Long.MAX_VALUE, DateTimeZone.UTC)
+
   lazy val Root = Token("8E680858-329C-4F31-BEE3-2AD15FB67EED", None, "8E680858-329C-4F31-BEE3-2AD15FB67EED", "/", Permissions(true, true, true), Never, Limits.None)
 
   lazy val Test = Token(
@@ -68,4 +73,30 @@ object Token {
       limits         = limits.limitTo(Token.Root.limits)
     )
   }
+
+  implicit val TokenExtractor = new Extractor[Token] {
+    def extract(jvalue: JValue): Token = Token(
+      tokenId         = (jvalue \ "tokenId").deserialize[String],
+      parentTokenId   = (jvalue \ "parentTokenId").deserialize[Option[String]],
+      accountTokenId  = (jvalue \ "accountTokenId").deserialize[String],
+      path            = (jvalue \ "path").deserialize[Path],
+      permissions     = (jvalue \ "permissions").deserialize[Permissions],
+      expires         = (jvalue \ "expires").deserialize[DateTime],
+      limits          = (jvalue \ "limits").deserialize[Limits]
+    )
+  }
+
+  implicit val TokenDecomposer = new Decomposer[Token] {
+    def decompose(token: Token): JValue = JObject(
+      JField("tokenId",         token.tokenId.serialize)  ::
+      JField("parentTokenId",   token.parentTokenId.serialize) ::
+      JField("accountTokenId",  token.accountTokenId.serialize) ::
+      JField("path",            token.path.serialize) ::
+      JField("permissions",     token.permissions.serialize) ::
+      JField("expires",         token.expires.serialize) ::
+      JField("limits",          token.limits.serialize) ::
+      Nil
+    )
+  }
+
 }

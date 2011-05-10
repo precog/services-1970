@@ -11,8 +11,6 @@ package object analytics extends AggregatorImplicits {
 
   type ObservationCounted[A <: Predicate, B] = (Observation[A], B)
 
-  val Never = new DateTime(java.lang.Long.MAX_VALUE, DateTimeZone.UTC)
-
   def cleanPath(string: String): String = "/" + string.split("/").map(_.trim).filter(_.length > 0).mkString("/")
 
   /** Finds sublists of the specified list up to the specified order.

@@ -1,12 +1,16 @@
 package com.reportgrid.billing
 
+
+import com.reportgrid.analytics._
 import blueeyes.BlueEyesServiceBuilder
-import blueeyes.core.data.{BijectionsChunkString, BijectionsChunkJson}
+import blueeyes.core.data.{BijectionsChunkString, BijectionsChunkJson, ByteChunk}
 import blueeyes.core.http._
+import blueeyes.core.service.HttpClient
 import blueeyes.json.JsonAST.{JObject, JField, JValue, JNothing}
 import blueeyes.json.xschema.{Extractor, Decomposer}
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.persistence.mongo._
+import blueeyes.core.http.MimeTypes
 
 import net.lag.configgy.ConfigMap
 import CreditCard._
@@ -17,49 +21,56 @@ import com.braintreegateway._
 trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkJson {
   def mongoFactory(configMap: ConfigMap): Mongo
 
+  implicit val httpClient: HttpClient[ByteChunk]
+
   val billingService = service("billing", "0.01") {
-    healthMonitor { monitor => context =>
-      startup {
-        import context._
+    healthMonitor { monitor =>
+      serviceLocator { locator: ServiceLocator[ByteChunk] => {
+        def tokenService: HttpClient[JValue] = locator("analytics", "0").contentType(MimeTypes.application / MimeTypes.json).query("tokenId", Token.Root.tokenId)
 
-        val mongoConfig = config.configMap("mongo")
-        val mongo = mongoFactory(mongoConfig)
-        val database = mongo.database(mongoConfig.getString("database").getOrElse("billing"))
+        context => startup {
+          import context._
 
-        val accountsCollection  = mongoConfig.getString("billingAccounts").getOrElse("accounts")
-        val plansCollection  = mongoConfig.getString("billingPlans").getOrElse("plans")
+          val mongoConfig = config.configMap("mongo")
+          val mongo = mongoFactory(mongoConfig)
+          val database = mongo.database(mongoConfig.getString("database").getOrElse("billing"))
 
-        val brainTreeConfig = config.configMap("braintree")
+          val accountsCollection  = mongoConfig.getString("billingAccounts").getOrElse("accounts")
+          val plansCollection  = mongoConfig.getString("billingPlans").getOrElse("plans")
 
-        val gateway = new BraintreeGateway(
-            Environment.SANDBOX,
-            brainTreeConfig("merchant_id"),
-            brainTreeConfig("public_key"),
-            brainTreeConfig("private_key")
-        )
+          val brainTreeConfig = config.configMap("braintree")
 
-        BillingConfig(database, accountsCollection, plansCollection, gateway)
-      } -> request { state: BillingConfig =>
-        jvalue {
-          path("/signup") {
-            post {
-              request: HttpRequest[JValue] => request.content.map(_.deserialize[UserSignup]).map {
-                signup => state.billingDatabase(selectOne().from(state.accountsCollection).where(".email" === signup.email)).flatMap[HttpResponse[JValue]] {
-                  case Some(currentAccount) =>
-                    throw HttpException(HttpStatusCodes.BadRequest, "Account already exists.")
+          val gateway = new BraintreeGateway(
+              Environment.SANDBOX,
+              brainTreeConfig("merchant_id"),
+              brainTreeConfig("public_key"),
+              brainTreeConfig("private_key")
+          )
 
-                  case None => for (billingId <- createCustomer(state, signup);
-                                    ccId <- createCreditCard(state, signup.cc, billingId);
-                                    acct <- createAccount(state, signup, billingId, ccId)) yield acct
+          BillingConfig(database, accountsCollection, plansCollection, gateway)
+        } -> request { state: BillingConfig =>
+          jvalue {
+            path("/signup") {
+              post {
+                request: HttpRequest[JValue] => request.content.map(_.deserialize[UserSignup]).map {
+                  signup => state.billingDatabase(selectOne().from(state.accountsCollection).where(".email" === signup.email)).flatMap[HttpResponse[JValue]] {
+                    case Some(currentAccount) =>
+                      throw HttpException(HttpStatusCodes.BadRequest, "Account already exists.")
+
+                    case None => for (billingId <- createCustomer(state, signup);
+                                      ccId <- createCreditCard(state, signup, billingId);
+                                      acct <- createAccount(state, signup, billingId, ccId, tokenService)) yield acct
+                  }
+                } getOrElse {
+                  throw HttpException(HttpStatusCodes.BadRequest, "No request contents.")
                 }
-              } getOrElse {
-                throw HttpException(HttpStatusCodes.BadRequest, "No request contents.")
               }
             }
           }
+        } ->  shutdown { state: BillingConfig =>
+          error("todo")
         }
-      } ->  shutdown { state: BillingConfig =>
-        error("todo")
+      }
       }
     }
   }
@@ -71,30 +82,32 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkJson {
     if (result.isSuccess) {
       result.getTarget.getId
     } else {
-      error("Could not create customer account.")
+      throw HttpException(HttpStatusCodes.ServiceUnavailable, "Could not create customer account.")
     }
   }
 
-  def createCreditCard(config: BillingConfig, cc: CreditCard, customerId: String): Future[String] = Future.async {
-    val request = cc.billingAddress.amendRequest(
-      (new CreditCardRequest).
-      customerId(customerId).
-      number(cc.number).
-      cvv(cc.cvv).
-      expirationDate(cc.expDate).
-      cardholderName(cc.cardholder)
-    ).done
+  def createCreditCard(config: BillingConfig, signup: UserSignup, customerId: String): Future[Option[String]] = Future.async {
+    signup.cc.map { cc =>
+      val request = cc.billingAddress.amendRequest(
+        (new CreditCardRequest).
+        customerId(customerId).
+        number(cc.number).
+        cvv(cc.cvv).
+        expirationDate(cc.expDate).
+        cardholderName(cc.cardholder)
+      ).done
 
-    val result = config.gateway.creditCard.create(request);
+      val result = config.gateway.creditCard.create(request);
 
-    if (result.isSuccess) {
-      result.getTarget.getToken
-    } else {
-      throw HttpException(HttpStatusCodes.BadRequest, "Could not create customer account; credit card validation may have failed.")
+      if (result.isSuccess) {
+        result.getTarget.getToken
+      } else {
+        throw HttpException(HttpStatusCodes.BadRequest, "Could not create customer account; credit card validation may have failed.")
+      }
     }
   }
 
-  def createAccount(config: BillingConfig, signup: UserSignup, customerId: String, billingToken: String): Future[HttpResponse[JValue]] = {
+  def createAccount(config: BillingConfig, signup: UserSignup, customerId: String, billingToken: Option[String], tokenService: HttpClient[JValue]): Future[HttpResponse[JValue]] = {
     config.billingDatabase(selectOne().from(config.plansCollection).where(".planId" === signup.planId))
     .flatMap[HttpResponse[JValue]] {
       _.map(_.deserialize[Plan]).map {
@@ -114,7 +127,8 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkJson {
             signup.password,
             plan,
             customerId,
-            billingToken
+            billingToken,
+            tokenService.post(JObject())
           )
 
           config.billingDatabase[JNothing.type](insert(account.serialize.asInstanceOf[JObject]).into(config.accountsCollection)).map {
@@ -139,7 +153,7 @@ case class BillingConfig(
   gateway: BraintreeGateway
 )
 
-case class UserSignup(email: String, password: String, planId: String, cc: CreditCard)
+case class UserSignup(email: String, password: String, planId: String, cc: Option[CreditCard])
 
 object UserSignup{
   implicit val UserSignupDecomposer : Decomposer[UserSignup] = new Decomposer[UserSignup] {

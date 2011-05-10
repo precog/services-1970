@@ -48,14 +48,6 @@ object MongoSupport {
     def extract(v: JValue): JPath = JPath(v.deserialize[String])
   }
 
-  implicit val PathDecomposer = new Decomposer[Path] {
-    def decompose(v: Path): JValue = JString(v.toString)
-  }
-
-  implicit val PathExtractor = new Extractor[Path] {
-    def extract(v: JValue): Path = Path(v.deserialize[String])
-  }
-
   implicit def IntUpdater(jpath: JPath, value: Int): MongoUpdate = jpath inc value
 
   implicit def LongUpdater(jpath: JPath, value: Long): MongoUpdate = jpath inc value
@@ -135,65 +127,6 @@ object MongoSupport {
 
       case _ => error("Expected object but found: " + value)
     }
-  }
-
-  implicit val LimitsExtractor = new Extractor[Limits] {
-    def extract(jvalue: JValue): Limits = Limits(
-      order = (jvalue \ "order").deserialize[Int],
-      limit = (jvalue \ "limit").deserialize[Int],
-      depth = (jvalue \ "depth").deserialize[Int]
-    )
-  }
-
-  implicit val LimitsDecomposer = new Decomposer[Limits] {
-    def decompose(limits: Limits): JValue = JObject(
-      JField("order", limits.order.serialize) ::
-      JField("limit", limits.order.serialize) ::
-      JField("depth", limits.order.serialize) ::
-      Nil
-    )
-  }
-
-  implicit val PermissionsExtractor = new Extractor[Permissions] {
-    def extract(jvalue: JValue): Permissions = Permissions(
-      read  = (jvalue \ "read").deserialize[Boolean],
-      write = (jvalue \ "write").deserialize[Boolean],
-      share = (jvalue \ "share").deserialize[Boolean]
-    )
-  }
-
-  implicit val PermissionsDecomposer = new Decomposer[Permissions] {
-    def decompose(permissions: Permissions): JValue = JObject(
-      JField("read",    permissions.read.serialize)  ::
-      JField("write",   permissions.write.serialize) ::
-      JField("share",   permissions.share.serialize) ::
-      Nil
-    )
-  }
-
-  implicit val TokenExtractor = new Extractor[Token] {
-    def extract(jvalue: JValue): Token = Token(
-      tokenId         = (jvalue \ "tokenId").deserialize[String],
-      parentTokenId   = (jvalue \ "parentTokenId").deserialize[Option[String]],
-      accountTokenId  = (jvalue \ "accountTokenId").deserialize[String],
-      path            = (jvalue \ "path").deserialize[Path],
-      permissions     = (jvalue \ "permissions").deserialize[Permissions],
-      expires         = (jvalue \ "expires").deserialize[DateTime],
-      limits          = (jvalue \ "limits").deserialize[Limits]
-    )
-  }
-
-  implicit val TokenDecomposer = new Decomposer[Token] {
-    def decompose(token: Token): JValue = JObject(
-      JField("tokenId",         token.tokenId.serialize)  ::
-      JField("parentTokenId",   token.parentTokenId.serialize) ::
-      JField("accountTokenId",  token.accountTokenId.serialize) ::
-      JField("path",            token.path.serialize) ::
-      JField("permissions",     token.permissions.serialize) ::
-      JField("expires",         token.expires.serialize) ::
-      JField("limits",          token.limits.serialize) ::
-      Nil
-    )
   }
 
   /** Serializes HasChild Predicate into a JValue.
