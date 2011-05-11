@@ -74,7 +74,7 @@ class TokenManager(database: MongoDatabase, tokensCollection: MongoCollection) e
         case false => parent.issue(path, permissions, expires, limits)
 
         // This is the root token being used to create a new account:
-        case true => Token.newAccount(path, permissions, expires, limits)
+        case true => Token.newAccount(path, limits, permissions, expires)
       })
 
       val tokenJ = newToken.serialize.asInstanceOf[JObject]
