@@ -24,6 +24,9 @@ case class Permissions(read: Boolean, write: Boolean, share: Boolean) {
 }
 
 object Permissions {
+  val All = Permissions(true, true, true)
+
+
   implicit val PermissionsExtractor = new Extractor[Permissions] {
     def extract(jvalue: JValue): Permissions = Permissions(
       read  = (jvalue \ "read").deserialize[Boolean],

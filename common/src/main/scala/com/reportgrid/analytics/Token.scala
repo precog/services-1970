@@ -60,7 +60,7 @@ object Token {
     limits         = Limits(order = 2, depth = 3, limit = 10)
   )
 
-  def newAccount(path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Token = {
+  def newAccount(path: Path, limits: Limits, permissions: Permissions = Permissions.All, expires: DateTime = Never): Token = {
     val newTokenId = newUUID()
 
     new Token(

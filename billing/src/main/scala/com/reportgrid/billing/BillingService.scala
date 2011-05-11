@@ -3,7 +3,7 @@ package com.reportgrid.billing
 
 import com.reportgrid.analytics._
 import blueeyes.BlueEyesServiceBuilder
-import blueeyes.core.data.{BijectionsChunkString, BijectionsChunkJson, ByteChunk}
+import blueeyes.core.data.{BijectionsChunkString, BijectionsChunkJson, ByteChunk, BijectionsIdentity}
 import blueeyes.core.http._
 import blueeyes.core.service.HttpClient
 import blueeyes.json.JsonAST.{JObject, JField, JValue, JNothing}
@@ -75,6 +75,20 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkJson {
     }
   }
 
+  type BrainTreeBillingToken = String
+
+  def plans(config: BillingConfig): Future[List[Plan]] = {
+    config.billingDatabase(selectAll.from(config.plansCollection)).map {
+      _.toList.map(_.deserialize[Plan])
+    }
+  }
+
+  def plan(config: BillingConfig, planId: String): Future[Plan] = {
+    config.billingDatabase(selectOne().from(config.plansCollection).where(".planId" === planId)).map {
+      _.getOrElse(throw HttpException(HttpStatusCodes.BadRequest, "Plan " + planId + " not found.")).deserialize[Plan]
+    }
+  }
+
   def createCustomer(config: BillingConfig, signup: UserSignup): Future[String] = Future.async {
     val request = (new CustomerRequest).email(signup.email)
     val result = config.gateway.customer.create(request);
@@ -86,7 +100,7 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkJson {
     }
   }
 
-  def createCreditCard(config: BillingConfig, signup: UserSignup, customerId: String): Future[Option[String]] = Future.async {
+  def createCreditCard(config: BillingConfig, signup: UserSignup, customerId: String): Future[Option[BrainTreeBillingToken]] = Future.async {
     signup.cc.map { cc =>
       val request = cc.billingAddress.amendRequest(
         (new CreditCardRequest).
@@ -107,36 +121,37 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkJson {
     }
   }
 
-  def createAccount(config: BillingConfig, signup: UserSignup, customerId: String, billingToken: Option[String], tokenService: HttpClient[JValue]): Future[HttpResponse[JValue]] = {
+  def createAccount(config: BillingConfig, signup: UserSignup, customerId: String, billingToken: Option[BrainTreeBillingToken], tokenService: HttpClient[JValue]): Future[HttpResponse[JValue]] = {
     config.billingDatabase(selectOne().from(config.plansCollection).where(".planId" === signup.planId))
     .flatMap[HttpResponse[JValue]] {
       _.map(_.deserialize[Plan]).map {
         plan => {
-          val request = (new SubscriptionRequest).
-            id("new_id").
-            paymentMethodToken(billingToken).
-            planId(signup.planId)
+          import BijectionsIdentity._
+          tokenService.post("/tokens/")(Token.newAccount(signup.email, plan.limits).serialize).flatMap { response =>
+            val tokenId = response.content.get  
+            val request = (new SubscriptionRequest).id("new_id").planId(signup.planId)
 
-          val result = config.gateway.subscription.update(
-            "a_subscription_id",
-            request
-          );
+            val result = config.gateway.subscription.update(
+              "a_subscription_id",
+              billingToken.map(t => request.paymentMethodToken(t)).getOrElse(request)
+            );
 
-          val account = Account(
-            signup.email,
-            signup.password,
-            plan,
-            customerId,
-            billingToken,
-            tokenService.post(JObject())
-          )
+            val account = Account(
+              signup.email,
+              signup.password,
+              plan,
+              customerId,
+              billingToken,
+              tokenId.deserialize[String]
+            )
 
-          config.billingDatabase[JNothing.type](insert(account.serialize.asInstanceOf[JObject]).into(config.accountsCollection)).map {
-            _.map {
-              _ => HttpResponse[JValue](status = HttpStatus(HttpStatusCodes.OK, "Account created."))
-            } getOrElse {
-              HttpResponse[JValue](status = HttpStatus(HttpStatusCodes.FailedDependency, "Unable to create account."))
-            }
+            config.billingDatabase[JNothing.type](insert(account.serialize.asInstanceOf[JObject]).into(config.accountsCollection)).map {
+              _.map {
+                _ => HttpResponse[JValue](status = HttpStatus(HttpStatusCodes.OK, "Account created."))
+              } getOrElse {
+                HttpResponse[JValue](status = HttpStatus(HttpStatusCodes.FailedDependency, "Unable to create account."))
+              }
+            }    
           }
         }
       } getOrElse {
@@ -172,7 +187,7 @@ object UserSignup{
       (obj \ "email").deserialize[String],
       (obj \ "password").deserialize[String],
       (obj \ "planId").deserialize[String],
-      (obj \ "cc").deserialize[CreditCard]
+      (obj \ "cc").deserialize[Option[CreditCard]]
     )
   }
 }
@@ -273,7 +288,7 @@ object Address {
   }
 }
 
-case class Account(email: String, passwordMD5: String, plan: Plan, customerId: String, billingToken: String)
+case class Account(email: String, passwordMD5: String, plan: Plan, customerId: String, billingToken: Option[String], tokenId: String)
 
 object Account{
   implicit val AccountDecomposer : Decomposer[Account] = new Decomposer[Account] {
@@ -281,9 +296,12 @@ object Account{
       List(
         JField("email", acct.email.serialize),
         JField("passwordMD5", acct.passwordMD5.serialize),
-        JField("plan", acct.plan.serialize),
+        JField("plan", acct.plan.serialize)
+
+        ,
         JField("customerId", acct.customerId.serialize),
-        JField("billingToken", acct.billingToken.serialize)
+        JField("billingToken", acct.billingToken.serialize),
+        JField("tokenId", acct.tokenId.serialize)
       )
     )
   }
@@ -294,7 +312,8 @@ object Account{
       (obj \ "passwordMD5").deserialize[String],
       (obj \ "plan").deserialize[Plan],
       (obj \ "customerId").deserialize[String],
-      (obj \ "billingToken").deserialize[String]
+      (obj \ "billingToken").deserialize[Option[String]],
+      (obj \ "tokenId").deserialize[String]
     )
   }
 }
@@ -305,6 +324,7 @@ case class Plan(
   price: BigDecimal,
   description: String,
   requestLimit: Long,
+  limits: Limits,
   upgradePlanId: Option[String],
   overageRate: Option[MeteredRate]
 )
@@ -318,6 +338,7 @@ object Plan {
         JField("description", plan.description.serialize),
         JField("requestLimit", plan.requestLimit.serialize),
         JField("upgradePlanId", plan.upgradePlanId.serialize),
+        JField("limits", plan.limits.serialize),
         JField("overageRate", plan.overageRate.serialize)
       )
     )
@@ -329,6 +350,7 @@ object Plan {
       (obj \ "price").deserialize[BigDecimal],
       (obj \ "description").deserialize[String],
       (obj \ "requestLimit").deserialize[Long],
+      (obj \ "limits").deserialize[Limits],
       (obj \ "upgradePlanId").deserialize[Option[String]],
       (obj \ "overageRate").deserialize[Option[MeteredRate]]
     )
