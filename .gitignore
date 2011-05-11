@@ -5,3 +5,4 @@ src_managed
 target
 *.iml
 project/boot
+*.swp

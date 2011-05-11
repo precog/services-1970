@@ -342,23 +342,16 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       case jvalue   => Some(jvalue.deserialize[DateTime])
                     }
 
-                    if (select == "count") {
-                      aggregationEngine.searchCount(token, from, where, start, end).map { count =>
-                        HttpResponse[JValue](content = Some(count.serialize))
-                      }
-                    }
-                    else {
-                      select.split("/").toList.map(_.toLowerCase) match {
-                        case "series" :: p :: Nil =>
-                          val periodicity = Periodicity(p)
+                    Selection(select) match {
+                      case Count => 
+                        aggregationEngine.searchCount(token, from, where, start, end).map { count =>
+                          HttpResponse[JValue](content = Some(count.serialize))
+                        }
 
-                          aggregationEngine.searchSeries(token, from, periodicity, where, start, end).map { series =>
-                            HttpResponse[JValue](content = Some(series.toJValue))
-                          }
-
-                        case _ =>
-                          throw HttpException(HttpStatusCodes.BadRequest, "Select must be in the form series/'periodicity")
-                      }
+                      case Series(periodicity) => 
+                        aggregationEngine.searchSeries(token, from, where, periodicity,  start, end).map { 
+                          series => HttpResponse[JValue](content = Some(series.toJValue))
+                        }
                     }
                   }.getOrElse[Future[HttpResponse[JValue]]] {
                     HttpResponse[JValue](content = None)
@@ -366,6 +359,41 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 }
               }
             } ~
+            path("/intersect") {
+              post { request: HttpRequest[JValue] => 
+                tokenOf(request).flatMap { token => 
+                  import PropertyDescriptor._
+                  val content = request.content.get
+                    
+                  val from: Path = token.path + "/" + (content \ "from").deserialize[String]
+                  val properties = (content \ "properties").deserialize[List[PropertyDescriptor]]
+
+                  val select = Selection((content \ "select").deserialize[String].toLowerCase)
+
+                  val start = (content \ "start") match {
+                    case JNothing => None
+                    case jvalue   => Some(jvalue.deserialize[DateTime])
+                  }
+
+                  val end = (content \ "end") match {
+                    case JNothing => None
+                    case jvalue   => Some(jvalue.deserialize[DateTime])
+                  }
+
+                  select match {
+                    case Count => 
+                      aggregationEngine.intersectCount(token, from, properties, start, end).map {
+                        _ => error("foo")
+                      }
+
+                    case Series(p) => 
+                      aggregationEngine.intersectSeries(token, from, properties, p, start, end).map {
+                        _ => error("foo")
+                      }
+                  }
+                }
+              } 
+            } ~ 
             path("/tokens/") {
               get { request: HttpRequest[JValue] =>
                 tokenOf(request).flatMap { token =>

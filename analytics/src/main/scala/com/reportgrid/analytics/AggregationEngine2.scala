@@ -176,7 +176,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
   /** Retrieves a time series for the specified observed value of a variable.
    */
   def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, periodicity: Periodicity, start_ : Option[DateTime] = None, end_ : Option[DateTime] = None): Future[TimeSeriesType] = {
-    searchSeries(token, path, periodicity, Set(variable -> HasValue(value)), start_, end_)
+    searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, start_, end_)
   }
 
   /** Retrieves a count for the specified observed value of a variable.
@@ -187,7 +187,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
 
   /** Searches time series to locate observations matching the specified criteria.
    */
-  def searchSeries(token: Token, path: Path, periodicity: Periodicity, observation: Observation[HasValue],
+  def searchSeries(token: Token, path: Path, observation: Observation[HasValue], periodicity: Periodicity, 
     start_ : Option[DateTime] = None, end_ : Option[DateTime] = None): Future[TimeSeriesType] = {
     internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, start_, end_)
   }
@@ -195,8 +195,18 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
   /** Searches counts to locate observations matching the specified criteria.
    */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
-    start_ : Option[DateTime] = None, end_ : Option[DateTime] = None): Future[Long] = {
-    searchSeries(token, path, Periodicity.Eternity, observation, start_, end_).map(_.total)
+    start_ : Option[DateTime] = None, end_ : Option[DateTime] = None): Future[CountType] = {
+    searchSeries(token, path, observation, Periodicity.Eternity,  start_, end_).map(_.total)
+  }
+
+  def intersectCount(token: Token, path: Path, properties: List[PropertyDescriptor], 
+                     start: Option[DateTime], end: Option[DateTime]): Future[Map[List[JValue], CountType]] = {
+    error("Not yet done.")
+  }
+
+  def intersectSeries(token: Token, path: Path, properties: List[PropertyDescriptor], 
+                     periodicity: Periodicity, start: Option[DateTime], end: Option[DateTime]): Future[Map[List[JValue], CountType]] = {
+    error("Not yet done")
   }
 
   def stop(): Future[Unit] =  for {
