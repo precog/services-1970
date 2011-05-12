@@ -362,11 +362,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             path("/intersect") {
               post { request: HttpRequest[JValue] => 
                 tokenOf(request).flatMap { token => 
-                  import PropertyDescriptor._
+                  import VariableDescriptor._
                   val content = request.content.get
                     
                   val from: Path = token.path + "/" + (content \ "from").deserialize[String]
-                  val properties = (content \ "properties").deserialize[List[PropertyDescriptor]]
+                  val properties = (content \ "properties").deserialize[List[VariableDescriptor]]
 
                   val select = Selection((content \ "select").deserialize[String].toLowerCase)
 

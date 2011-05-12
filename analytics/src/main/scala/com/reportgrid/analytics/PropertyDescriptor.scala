@@ -3,6 +3,7 @@ import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JsonAST._
 
+import com.reportgrid.analytics.persistence.MongoSupport._
 import SortOrder._
 
 sealed trait SortOrder 
@@ -11,6 +12,8 @@ object SortOrder {
     def extract(jvalue: JValue): SortOrder = jvalue match {
       case JString("Ascending")  => Ascending
       case JString("Descending") => Descending
+      
+      case _ => error("Invalid sort order: " + jvalue)
     }
   }
 
@@ -25,22 +28,22 @@ object SortOrder {
 case object Ascending extends SortOrder
 case object Descending extends SortOrder
 
-case class PropertyDescriptor(path: Path, limit: Int, order: SortOrder)
+case class VariableDescriptor(variable: Variable, maxResults: Int, sortOrder: SortOrder)
 
-object PropertyDescriptor {
-  implicit val PropertyDescriptorExtractor = new Extractor[PropertyDescriptor] {
-    def extract(jvalue: JValue): PropertyDescriptor = PropertyDescriptor(
-      path = (jvalue \ "path").deserialize[Path],
-      limit = (jvalue \ "limit").deserialize[Int],
-      order = (jvalue \ "order").deserialize[SortOrder]
+object VariableDescriptor {
+  implicit val VariableDescriptorExtractor = new Extractor[VariableDescriptor] {
+    def extract(jvalue: JValue): VariableDescriptor = VariableDescriptor(
+      variable = (jvalue \ "variable").deserialize[Variable],
+      maxResults = (jvalue \ "maxResults").deserialize[Int],
+      sortOrder = (jvalue \ "sortOrder").deserialize[SortOrder]
     )
   }
 
-  implicit val PropertyDescriptorDecomposer = new Decomposer[PropertyDescriptor] {
-    def decompose(descriptor: PropertyDescriptor): JValue = JObject(
-      JField("path", descriptor.path.serialize) ::
-      JField("limit", descriptor.limit.serialize) ::
-      JField("order", descriptor.order.serialize) ::
+  implicit val VariableDescriptorDecomposer = new Decomposer[VariableDescriptor] {
+    def decompose(descriptor: VariableDescriptor): JValue = JObject(
+      JField("variable", descriptor.variable.serialize) ::
+      JField("maxResults", descriptor.maxResults.serialize) ::
+      JField("sortOrder", descriptor.sortOrder.serialize) ::
       Nil
     )
   }
@@ -55,6 +58,8 @@ object Selection {
     case "count" => Count
     case _ => select.split("/").toList.map(_.toLowerCase) match {
       case "series" :: p :: Nil => Series(Periodicity(p))
+
+      case _ => error("Invalid series")
     }
   }
 }

@@ -17,6 +17,9 @@ import java.util.concurrent.TimeUnit
 
 import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
+import scala.collection.SortedMap
+import scalaz.Scalaz._
+import Future._
 
 class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatabase) extends FutureDeliveryStrategySequential {
   val EarliestTime = new DateTime(0,             DateTimeZone.UTC)
@@ -128,33 +131,43 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
 
     (variable match {
       case None =>
-        extractValues(filter, pathChildC) { jvalue =>
+        extractValues(filter, pathChildC) { (jvalue, _) =>
           jvalue.deserialize[String]
         }
 
       case Some(variable) =>
-        extractValues(filter & forVariable(variable), varChildC) { jvalue =>
+        extractValues(filter & forVariable(variable), varChildC) { (jvalue, _) =>
           jvalue.deserialize[HasChild].child.toString
         }
     })
   }
 
-  // TODO: Add distribution!!!!!!!
+  /** Retrieves a histogram of the values a variable acquires over its lifetime.
+   */
+  private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[List[(JValue, CountType)]] = {
+    extractValues(forTokenAndPath(token, path) & forVariable(variable), varValueC) { 
+      (jvalue, count) => (jvalue.deserialize[HasValue].value, count)
+    }
+  }
+  
+  def getHistogram(token: Token, path: Path, variable: Variable) = 
+    getHistogramInternal(token, path, variable).map(_.toMap)
+
+  def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int) = 
+    getHistogramInternal(token, path, variable).map(_.sortBy(- _._2).take(n)).map(_.toMap)
+
+  def getHistogramBottom(token: Token, path: Path, variable: Variable, n: Int) = 
+    getHistogramInternal(token, path, variable).map(_.sortBy(_._2).take(n)).map(_.toMap)
 
   /** Retrieves values of the specified variable.
    */
-  def getValues(token: Token, path: Path, variable: Variable): Future[List[JValue]] = {
-    val filter = forTokenAndPath(token, path)
-
-    extractValues(filter & forVariable(variable), varValueC) { jvalue =>
-      jvalue.deserialize[HasValue].value
-    }
-  }
+  def getValues(token: Token, path: Path, variable: Variable): Future[List[JValue]] = 
+    getHistogramInternal(token, path, variable).map(_.map(_._1))
 
   /** Retrieves a count of how many times the specified variable appeared in
    * an event.
    */
-  def getVariableSeries(token: Token, path: Path, variable: Variable, periodicity: Periodicity, start_ : Option[DateTime] = None, end_ : Option[DateTime] = None): Future[TimeSeriesType] = {
+  def getVariableSeries(token: Token, path: Path, variable: Variable, periodicity: Periodicity, _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
     variable.parent match {
       case None =>
         Future.lift(TimeSeries.empty)
@@ -162,7 +175,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
       case Some(parent) =>
         val lastNode = variable.name.nodes.last
 
-        internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), start_, end_)
+        internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), _start, _end)
     }
   }
 
@@ -175,8 +188,8 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
 
   /** Retrieves a time series for the specified observed value of a variable.
    */
-  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, periodicity: Periodicity, start_ : Option[DateTime] = None, end_ : Option[DateTime] = None): Future[TimeSeriesType] = {
-    searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, start_, end_)
+  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, periodicity: Periodicity, _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
+    searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, _start, _end)
   }
 
   /** Retrieves a count for the specified observed value of a variable.
@@ -188,25 +201,27 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
   /** Searches time series to locate observations matching the specified criteria.
    */
   def searchSeries(token: Token, path: Path, observation: Observation[HasValue], periodicity: Periodicity, 
-    start_ : Option[DateTime] = None, end_ : Option[DateTime] = None): Future[TimeSeriesType] = {
-    internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, start_, end_)
+    _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
+    internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, _start, _end)
   }
 
   /** Searches counts to locate observations matching the specified criteria.
    */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
-    start_ : Option[DateTime] = None, end_ : Option[DateTime] = None): Future[CountType] = {
-    searchSeries(token, path, observation, Periodicity.Eternity,  start_, end_).map(_.total)
+    _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[CountType] = {
+    searchSeries(token, path, observation, Periodicity.Eternity,  _start, _end).map(_.total)
   }
 
-  def intersectCount(token: Token, path: Path, properties: List[PropertyDescriptor], 
-                     start: Option[DateTime], end: Option[DateTime]): Future[Map[List[JValue], CountType]] = {
-    error("Not yet done.")
+  type IntersectionResult = SortedMap[List[JValue], TimeSeriesType]
+
+  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], 
+                     start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult] = {
+    intersectSeries(token, path, properties, Periodicity.Eternity, start, end)
   }
 
-  def intersectSeries(token: Token, path: Path, properties: List[PropertyDescriptor], 
-                     periodicity: Periodicity, start: Option[DateTime], end: Option[DateTime]): Future[Map[List[JValue], CountType]] = {
-    error("Not yet done")
+  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], 
+                      periodicity: Periodicity, start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult] = {
+    internalIntersectSeries(varValueSeriesC, token, path, properties, periodicity, start, end)
   }
 
   def stop(): Future[Unit] =  for {
@@ -303,12 +318,73 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
     }
   }
 
+  private def internalIntersectSeries[P <: Predicate](
+      col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
+      periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult] = { 
+    val histograms = Future(variableDescriptors.map { 
+      case VariableDescriptor(variable, maxResults, Ascending) =>
+        getHistogramBottom(token, path, variable, maxResults)
+
+      case VariableDescriptor(variable, maxResults, Descending) =>
+        getHistogramTop(token, path, variable, maxResults)
+    }: _*)
+
+    histograms.flatMap { hist => 
+      implicit def ordering: scala.math.Ordering[List[JValue]] = new scala.math.Ordering[List[JValue]] {
+        override def compare(l1: List[JValue], l2: List[JValue]) = {
+          (l1 zip l2).zipWithIndex.foldLeft(0) {
+            case (0, ((v1, v2), i)) => hist(i) |> {
+                m => variableDescriptors(i).sortOrder match {
+                  case Ascending  => -(m(v1) compare m(v2))
+                  case Descending => m(v1) compare m(v2)
+                }
+              }
+            case (x, _) => x
+          }
+        }
+      }
+
+      val filterTokenAndPath = forTokenAndPath(token, path)
+
+      val start = _start.getOrElse(EarliestTime)
+      val end   = _end.getOrElse(LatestTime)
+      val aggregator = implicitly[Aggregator[TimeSeriesType]]
+
+      database {
+        select(".count", ".where").from(col).where {
+          filterTokenAndPath &
+          JPath(".period.periodicity") === periodicity.serialize &
+          JPath(".period.start")       >=  start.serialize &
+          JPath(".period.start")        <  end.serialize &
+          JPath(".order") === variableDescriptors.length & {
+            variableDescriptors.foldLeft[MongoFilter](MongoFilterAll) { 
+              case (filter, VariableDescriptor(variable, limit, order)) =>
+                filter & {
+                  JPath(".where." + variableToFieldName(variable)) exists
+                }
+            }
+          }
+        }
+      } map { results =>
+        results.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
+          case (m, result) =>
+            val key: List[JValue] = variableDescriptors.map { vd => 
+              result.get(JPath(".where") \ variableToFieldName(vd.variable)).head
+            }
+
+            val count = (result \ "count").deserialize[TimeSeriesType]
+            m + (key -> (m.getOrElse(key, TimeSeries.empty[CountType]) + count))
+        }
+      }
+    }
+  }
+
   private def internalSearchSeries[P <: Predicate](col: MongoCollection, token: Token, path: Path, periodicity: Periodicity, observation: Observation[P],
-    start_ : Option[DateTime] = None, end_ : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
+    _start : Option[DateTime] = None, _end : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
     val filterTokenAndPath = forTokenAndPath(token, path)
 
-    val start = start_.getOrElse(EarliestTime)
-    val end   = end_.getOrElse(LatestTime)
+    val start = _start.getOrElse(EarliestTime)
+    val end   = _end.getOrElse(LatestTime)
 
     database {
       select(".count").from(col).where {
@@ -360,7 +436,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
     }
   }
 
-  private def extractValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: JValue => T): Future[List[T]] = {
+  private def extractValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
     database {
       selectOne(".values").from(collection).where {
         filter
@@ -374,7 +450,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
             case JField(name, count) =>
               val jvalue = JsonParser.parse(MongoEscaper.decode(name))
 
-              extractor(jvalue)
+              extractor(jvalue, count.deserialize[CountType])
           }
       }
     }
