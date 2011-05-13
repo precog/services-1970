@@ -224,7 +224,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
     }
   }
 
-  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], maxResults: Long,
+  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], 
                       periodicity: Periodicity, start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = {
     internalIntersectSeries(varValueSeriesC, token, path, properties, periodicity, start, end)
   }
@@ -324,13 +324,13 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
   }
 
   private def internalIntersectSeries[P <: Predicate](
-      col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], maxResults: Long 
+      col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
       periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
     val histograms = Future(variableDescriptors.map { 
-      case VariableDescriptor(variable, Ascending) =>
+      case VariableDescriptor(variable, maxResults, Ascending) =>
         getHistogramBottom(token, path, variable, maxResults)
 
-      case VariableDescriptor(variable, Descending) =>
+      case VariableDescriptor(variable, maxResults, Descending) =>
         getHistogramTop(token, path, variable, maxResults)
     }: _*)
 
