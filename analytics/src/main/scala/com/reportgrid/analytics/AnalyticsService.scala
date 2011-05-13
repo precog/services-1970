@@ -8,7 +8,7 @@ import blueeyes.core.http.MimeTypes.{application, json}
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.json.JsonAST._
-import blueeyes.json.{JPath, JsonParser}
+import blueeyes.json.{JPath, JsonParser, JPathField}
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.core.data.{Chunk, BijectionsChunkJson, BijectionsChunkString}
 
@@ -380,16 +380,24 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     case jvalue   => Some(jvalue.deserialize[DateTime])
                   }
 
-                  select match {
+                  (select match {
                     case Count => 
                       aggregationEngine.intersectCount(token, from, properties, start, end).map {
-                        _ => error("foo")
+                        _.foldLeft[JValue](JObject(Nil)) {
+                          case (result, (values, count)) => 
+                            result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), count.serialize)
+                        }
                       }
 
                     case Series(p) => 
                       aggregationEngine.intersectSeries(token, from, properties, p, start, end).map {
-                        _ => error("foo")
+                        _.foldLeft[JValue](JObject(Nil)) {
+                          case (result, (values, count)) => 
+                            result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), count.serialize)
+                        }
                       }
+                  }) map {
+                    v => HttpResponse(content = Some(v))
                   }
                 }
               } 

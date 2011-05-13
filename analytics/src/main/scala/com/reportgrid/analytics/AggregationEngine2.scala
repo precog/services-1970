@@ -183,7 +183,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
    * an event.
    */
   def getVariableCount(token: Token, path: Path, variable: Variable): Future[CountType] = {
-    getVariableSeries(token, path, variable, Periodicity.Eternity).map(_.total)
+    getVariableSeries(token, path, variable, Periodicity.Eternity).map(_.total(Periodicity.Eternity))
   }
 
   /** Retrieves a time series for the specified observed value of a variable.
@@ -195,7 +195,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
   /** Retrieves a count for the specified observed value of a variable.
    */
   def getValueCount(token: Token, path: Path, variable: Variable, value: JValue): Future[Long] = {
-    getValueSeries(token, path, variable, value, Periodicity.Eternity).map(_.total)
+    getValueSeries(token, path, variable, value, Periodicity.Eternity).map(_.total(Periodicity.Eternity))
   }
 
   /** Searches time series to locate observations matching the specified criteria.
@@ -209,18 +209,23 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
    */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
     _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[CountType] = {
-    searchSeries(token, path, observation, Periodicity.Eternity,  _start, _end).map(_.total)
+    searchSeries(token, path, observation, Periodicity.Eternity,  _start, _end).map(_.total(Periodicity.Eternity))
   }
 
-  type IntersectionResult = SortedMap[List[JValue], TimeSeriesType]
+  type IntersectionResult[T] = SortedMap[List[JValue], T]
 
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], 
-                     start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult] = {
-    intersectSeries(token, path, properties, Periodicity.Eternity, start, end)
+                     start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult[CountType]] = {
+    intersectSeries(token, path, properties, Periodicity.Eternity, start, end).map { series => 
+      import series.ordering
+      series.map {
+        case (k, v) => (k, v.total(Periodicity.Eternity))
+      }
+    }
   }
 
   def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], 
-                      periodicity: Periodicity, start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult] = {
+                      periodicity: Periodicity, start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = {
     internalIntersectSeries(varValueSeriesC, token, path, properties, periodicity, start, end)
   }
 
@@ -320,7 +325,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
 
   private def internalIntersectSeries[P <: Predicate](
       col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
-      periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult] = { 
+      periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
     val histograms = Future(variableDescriptors.map { 
       case VariableDescriptor(variable, maxResults, Ascending) =>
         getHistogramBottom(token, path, variable, maxResults)
@@ -369,7 +374,7 @@ class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatab
         results.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
           case (m, result) =>
             val key: List[JValue] = variableDescriptors.map { vd => 
-              result.get(JPath(".where") \ variableToFieldName(vd.variable)).head
+              result.get(JPath(".where") \ variableToFieldName(vd.variable))
             }
 
             val count = (result \ "count").deserialize[TimeSeriesType]
