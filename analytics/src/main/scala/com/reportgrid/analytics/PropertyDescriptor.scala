@@ -28,13 +28,12 @@ object SortOrder {
 case object Ascending extends SortOrder
 case object Descending extends SortOrder
 
-case class VariableDescriptor(variable: Variable, maxResults: Int, sortOrder: SortOrder)
+case class VariableDescriptor(variable: Variable, sortOrder: SortOrder)
 
 object VariableDescriptor {
   implicit val VariableDescriptorExtractor = new Extractor[VariableDescriptor] {
     def extract(jvalue: JValue): VariableDescriptor = VariableDescriptor(
       variable = (jvalue \ "variable").deserialize[Variable],
-      maxResults = (jvalue \ "maxResults").deserialize[Int],
       sortOrder = (jvalue \ "sortOrder").deserialize[SortOrder]
     )
   }
@@ -42,7 +41,6 @@ object VariableDescriptor {
   implicit val VariableDescriptorDecomposer = new Decomposer[VariableDescriptor] {
     def decompose(descriptor: VariableDescriptor): JValue = JObject(
       JField("variable", descriptor.variable.serialize) ::
-      JField("maxResults", descriptor.maxResults.serialize) ::
       JField("sortOrder", descriptor.sortOrder.serialize) ::
       Nil
     )
