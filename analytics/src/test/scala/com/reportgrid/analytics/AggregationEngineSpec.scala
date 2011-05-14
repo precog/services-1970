@@ -6,7 +6,7 @@ import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test.FutureMatchers
 import blueeyes.concurrent.Duration
-import blueeyes.concurrent.Duration._
+import blueeyes.concurrent.Duration.toDuration
 import MimeTypes._
 
 import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
@@ -93,7 +93,7 @@ with ArbitraryEvent with FutureMatchers {
   
   val engine = new AggregationEngine2(config, Logger.get, database) 
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(50, 100L.milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(50, toDuration(100).milliseconds)
 
   "Aggregation engine" should {
     "aggregate simple events" in {
