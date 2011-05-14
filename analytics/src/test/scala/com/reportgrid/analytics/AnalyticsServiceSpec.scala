@@ -43,7 +43,19 @@ class AnalyticsServiceSpec extends BlueEyesServiceSpecification with ScalaCheck 
     "create events" in {
       val sampleEvents: List[Event] = containerOfN[List, Event](1000, eventGen).sample.get
 
-      fail("todo")
+      for (Event(name, jv) <- sampleEvents) {
+        service.post[JValue](name)(jv)
+      }
+
+      val count = service.get[JValue]("/tweeted/count") 
+      count.value must eventually {
+        beLike {
+          case Some(HttpResponse(_, _, Some(result), _)) =>
+            println("Got :" + result)
+            true
+        }
+      }
+      
 
     }
   }
