@@ -50,7 +50,7 @@ trait Repositories {
   val sonatyperelease = MavenRepository("Sonatype Releases",          "http://oss.sonatype.org/content/repositories/releases")
   val nexusscalatools = MavenRepository("Nexus Scala Tools",          "http://nexus.scala-tools.org/content/repositories/releases")
   val mavenrepo1      = MavenRepository("Maven Repo 1",               "http://repo1.maven.org/maven2/")
-  val scalablerepo    = MavenRepository("Scalable Solutions Repo",    "http://scalablesolutions.se/akka/repository")
+  val scalablerepo    = MavenRepository("Scalable Solutions Repo",    "http://akka.io/repository/")
 }
 
 trait OneJar { this: DefaultProject =>

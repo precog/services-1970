@@ -7,8 +7,6 @@
 	<key>documents</key>
 	<array>
 		<dict>
-			<key>expanded</key>
-			<true/>
 			<key>name</key>
 			<string>project</string>
 			<key>regexFolderFilter</key>
@@ -43,20 +41,6 @@
 	<integer>481</integer>
 	<key>metaData</key>
 	<dict>
-		<key>project/build/AnalyticsProject.scala</key>
-		<dict>
-			<key>caret</key>
-			<dict>
-				<key>column</key>
-				<integer>81</integer>
-				<key>line</key>
-				<integer>74</integer>
-			</dict>
-			<key>firstVisibleColumn</key>
-			<integer>0</integer>
-			<key>firstVisibleLine</key>
-			<integer>0</integer>
-		</dict>
 		<key>src/main/scala/com/reportgrid/analytics/Aggregator.scala</key>
 		<dict>
 			<key>caret</key>
@@ -84,34 +68,6 @@
 			<integer>0</integer>
 			<key>firstVisibleLine</key>
 			<integer>3</integer>
-		</dict>
-		<key>src/main/scala/com/reportgrid/analytics/MasterReport.scala</key>
-		<dict>
-			<key>caret</key>
-			<dict>
-				<key>column</key>
-				<integer>20</integer>
-				<key>line</key>
-				<integer>38</integer>
-			</dict>
-			<key>firstVisibleColumn</key>
-			<integer>0</integer>
-			<key>firstVisibleLine</key>
-			<integer>13</integer>
-		</dict>
-		<key>src/main/scala/com/reportgrid/analytics/Observation.scala</key>
-		<dict>
-			<key>caret</key>
-			<dict>
-				<key>column</key>
-				<integer>20</integer>
-				<key>line</key>
-				<integer>6</integer>
-			</dict>
-			<key>firstVisibleColumn</key>
-			<integer>0</integer>
-			<key>firstVisibleLine</key>
-			<integer>0</integer>
 		</dict>
 		<key>src/main/scala/com/reportgrid/analytics/Period.scala</key>
 		<dict>
@@ -257,20 +213,6 @@
 			<key>firstVisibleLine</key>
 			<integer>128</integer>
 		</dict>
-		<key>src/main/scala/com/reportgrid/analytics/persistence/PersistenceSupport.scala</key>
-		<dict>
-			<key>caret</key>
-			<dict>
-				<key>column</key>
-				<integer>18</integer>
-				<key>line</key>
-				<integer>14</integer>
-			</dict>
-			<key>firstVisibleColumn</key>
-			<integer>0</integer>
-			<key>firstVisibleLine</key>
-			<integer>0</integer>
-		</dict>
 		<key>src/main/scala/com/reportgrid/util/MapUtil.scala</key>
 		<dict>
 			<key>caret</key>
@@ -290,23 +232,19 @@
 	<array>
 		<string>src/main/scala/com/reportgrid/analytics/package.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/Report.scala</string>
-		<string>src/main/scala/com/reportgrid/analytics/Observation.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/Variable.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/TimeSeries.scala</string>
-		<string>src/main/scala/com/reportgrid/analytics/MasterReport.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/AnalyticsService.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/persistence/MongoSupport.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/TimeSeriesAggregator.scala</string>
-		<string>src/main/scala/com/reportgrid/analytics/persistence/PersistenceSupport.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/Period.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/Periodicity.scala</string>
-		<string>project/build/AnalyticsProject.scala</string>
 		<string>src/main/scala/com/reportgrid/util/MapUtil.scala</string>
 		<string>src/main/scala/com/reportgrid/analytics/Aggregator.scala</string>
 	</array>
 	<key>showFileHierarchyDrawer</key>
 	<true/>
 	<key>windowFrame</key>
-	<string>{{441, 174}, {1422, 984}}</string>
+	<string>{{10, 174}, {1422, 984}}</string>
 </dict>
 </plist>
