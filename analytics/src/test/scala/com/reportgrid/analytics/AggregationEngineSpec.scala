@@ -17,7 +17,7 @@ import blueeyes.persistence.mongo.{Mongo, MockMongo}
 import net.lag.configgy.{Configgy, Config, ConfigMap}
 import net.lag.logging.Logger
 
-import org.specs._
+import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
 import Gen._
