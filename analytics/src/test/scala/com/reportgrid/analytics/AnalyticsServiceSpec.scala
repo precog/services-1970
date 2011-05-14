@@ -1,62 +1,125 @@
 package com.reportgrid.analytics
 
-import blueeyes.core.service.test.BlueEyesServiceSpecification
-import blueeyes.persistence.mongo.{Mongo, MockMongo}
+import blueeyes.core.data.Bijection.identity
 import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
-import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
 import blueeyes.core.http.HttpStatusCodes._
-import blueeyes.core.http.MimeTypes._
-import blueeyes.persistence.mongo._
-import blueeyes.core.http.MimeTypes._
-import blueeyes.concurrent.Future
-import blueeyes.core.data.{BijectionsChunkJson, BijectionsIdentity}
-import blueeyes.core.service.HttpClient
+import blueeyes.core.service.test.BlueEyesServiceSpecification
+import MimeTypes._
+
+import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
+import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.persistence.mongo.{Mongo, MockMongo}
 
 import net.lag.configgy.{Configgy, ConfigMap}
 
 import org.specs._
+import org.specs.specification.PendingUntilFixed
+import org.specs.util.TimeConversions._
 import org.scalacheck._
 import Gen._
 
-class AnalyticsServiceSpec extends BlueEyesServiceSpecification with ScalaCheck with AnalyticsService with ArbitraryEvent {
+class AnalyticsServiceSpec extends BlueEyesServiceSpecification with PendingUntilFixed with ScalaCheck 
+with AnalyticsService with ArbitraryEvent {
 
   def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
 
-//  override def configuration = """
-//    services {
-//      contactlist {
-//        v1 {
-//          mongo {
-//            database{
-//              contacts = "%s"
-//            }
-//            collection{
-//              contacts = "%s"
-//            }
-//          }    
-//        }
-//      }
-//    }
-//    """.format(databaseName, collectionName)
+  override def configuration = """
+    services {
+      analytics {
+        v0 {
+          variable_series {
+            collection = "variable_series"
 
-  "Demo Service" should {
-    "create events" in {
-      val sampleEvents: List[Event] = containerOfN[List, Event](1000, eventGen).sample.get
+            time_to_idle_millis = 500
+            time_to_live_millis = 100
 
-      for (Event(name, jv) <- sampleEvents) {
-        service.post[JValue](name)(jv)
-      }
+            initial_capacity = 1000
+            maximum_capacity = 10000
+          }
 
-      val count = service.get[JValue]("/tweeted/count") 
-      count.value must eventually {
-        beLike {
-          case Some(HttpResponse(_, _, Some(result), _)) =>
-            println("Got :" + result)
-            true
+          variable_value_series {
+            collection = "variable_value_series"
+
+            time_to_idle_millis = 500
+            time_to_live_millis = 100
+
+            initial_capacity = 1000
+            maximum_capacity = 10000
+          }
+
+          variable_values {
+            collection = "variable_values"
+
+            time_to_idle_millis = 500
+            time_to_live_millis = 100
+
+            initial_capacity = 1000
+            maximum_capacity = 10000
+          }
+
+          variable_children {
+            collection = "variable_children"
+
+            time_to_idle_millis = 500
+            time_to_live_millis = 100
+
+            initial_capacity = 1000
+            maximum_capacity = 10000
+          }
+
+          path_children {
+            collection = "path_children"
+
+            time_to_idle_millis = 500
+            time_to_live_millis = 100
+
+            initial_capacity = 1000
+            maximum_capacity = 10000
+          }
+
+          mongo {
+            database = "analytics"
+
+            servers = ["mongodb01.reportgrid.com:27017", "mongodb02.reportgrid.com:27017", "mongodb03.reportgrid.com:27017"]
+          }
+
+          log {
+            level   = "debug"
+            console = true
+          }
         }
       }
-      
+    }
 
+    server {
+      log {
+        level   = "debug"
+        console = true
+      }
+    }
+    """
+
+  lazy val analytics = service.contentType[JValue](application/json).query("tokenId", Token.Test.tokenId)
+
+  "Demo Service" should {
+    "create events" in pendingUntilFixed {
+      val sampleEvents: List[Event] = containerOfN[List, Event](2, eventGen).sample.get
+
+      lazy val tweetedCount = sampleEvents.count {
+        case Event(JObject(JField("tweeted", _) :: Nil), _) => true
+        case _ => false
+      }
+
+      for (event <- sampleEvents) {
+        analytics.post[JValue]("/vfs/gluecon")(event.message)
+      }
+
+      (analytics.get[JValue]("/vfs/gluecon/.tweeted/count").value) must eventually(10, 1.second) {
+        beLike {
+          case Some(HttpResponse(_, _, Some(result), _)) =>
+            result.deserialize[Long] must_== tweetedCount
+        }
+      } 
     }
   }
 }

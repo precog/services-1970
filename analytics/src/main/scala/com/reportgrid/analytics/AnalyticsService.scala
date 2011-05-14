@@ -42,9 +42,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           val reportsCollection = mongoConfig.getString("reportsCollection").getOrElse("reports")
 
           val aggregationEngine = new AggregationEngine2(config, logger, database)
-          val tokenManager      = new TokenManager(database, tokensCollection)
-
-          AnalyticsState(aggregationEngine, tokenManager)
+          TokenManager(database, tokensCollection).map(AnalyticsState(aggregationEngine, _))
         } ->
         request { state =>
           import state._

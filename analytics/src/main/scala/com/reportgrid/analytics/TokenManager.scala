@@ -24,13 +24,22 @@ import scala.math._
 import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 
-class TokenManager(database: MongoDatabase, tokensCollection: MongoCollection) extends FutureDeliveryStrategySequential {
-  private val RootTokenJ: JObject = Token.Root.serialize.asInstanceOf[JObject]
-  private val TestTokenJ: JObject = Token.Test.serialize.asInstanceOf[JObject]
+object TokenManager {
+  def apply(database: MongoDatabase, tokensCollection: MongoCollection) = {
+    val RootTokenJ: JObject = Token.Root.serialize.asInstanceOf[JObject]
+    val TestTokenJ: JObject = Token.Test.serialize.asInstanceOf[JObject]
 
-  // Make sure root exists in the database:
-  database[JNothing.type](upsert(tokensCollection).set(RootTokenJ))
-  database[JNothing.type](upsert(tokensCollection).set(TestTokenJ))
+    val rootTokenFuture = database[JNothing.type](upsert(tokensCollection).set(RootTokenJ)).toUnit
+    val testTokenFuture = database[JNothing.type](upsert(tokensCollection).set(TestTokenJ)).toUnit
+
+    (rootTokenFuture zip testTokenFuture) map {
+      tokens => new TokenManager(database, tokensCollection)
+    }
+  }
+}
+
+
+class TokenManager private (database: MongoDatabase, tokensCollection: MongoCollection) extends FutureDeliveryStrategySequential {
 
   /** Look up the specified token.
    */

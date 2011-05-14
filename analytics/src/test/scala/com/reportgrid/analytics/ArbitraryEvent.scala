@@ -10,6 +10,7 @@ trait ArbitraryEvent {
   val Locations = for (i <- 0 to 10; v <- Gen.identifier.sample) yield v
   val Startups = for (i <- 0 to 50; v <- Gen.identifier.sample) yield v
   val TwitterClients = for (i <- 0 to 10; v <- Gen.identifier.sample) yield v  
+  val EventTypes = List("tweeted", "funded")
 
   val Now = new DateTime()
 
@@ -24,10 +25,14 @@ trait ArbitraryEvent {
     startups <- containerOfN[List, String](i, oneOf(Startups))
   } yield startups
 
-  case class Event(name: String, data: JObject)
+  case class Event(data: JObject, timestamp: DateTime) {
+    def message = JObject(
+      JField("events", data) :: JField("timestamp", timestamp.getMillis) :: Nil
+    )
+  }
 	
   implicit val eventGen = for {
-    eventName      <- oneOf("tweeted", "funded")
+    eventName      <- oneOf(EventTypes)
     location       <- oneOf(Locations)
     time 			     <- genTime
     retweet 		   <- oneOf(true, false)
@@ -36,17 +41,18 @@ trait ArbitraryEvent {
     otherStartups  <- genOtherStartups
     twitterClient  <- oneOf(TwitterClients)
   } yield Event(
-    eventName, 
     JObject(
-      JField("location", 			location.serialize) ::
-      JField("time", 				time.serialize) ::
-      JField("retweet",			retweet.serialize) ::
-      JField("recipientCount", 	recipientCount.serialize) ::
-      JField("startup", 			startup.serialize) ::
-      JField("otherStartups",     otherStartups.serialize) ::
-      JField("twitterClient",     twitterClient) ::
-      Nil
-    )
+      JField(eventName, JObject(
+        JField("location", 			location.serialize) ::
+        JField("retweet",			retweet.serialize) ::
+        JField("recipientCount", 	recipientCount.serialize) ::
+        JField("startup", 			startup.serialize) ::
+        JField("otherStartups",     otherStartups.serialize) ::
+        JField("twitterClient",     twitterClient) ::
+        Nil
+      )) :: Nil
+    ),
+    time
   )
 }
 
