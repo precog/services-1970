@@ -6,7 +6,6 @@ import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test.FutureMatchers
 import blueeyes.concurrent.Duration
-import blueeyes.concurrent.Duration._
 import MimeTypes._
 
 import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
@@ -17,7 +16,7 @@ import blueeyes.persistence.mongo.{Mongo, MockMongo}
 import net.lag.configgy.{Configgy, Config, ConfigMap}
 import net.lag.logging.Logger
 
-import org.specs._
+import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
 import Gen._
