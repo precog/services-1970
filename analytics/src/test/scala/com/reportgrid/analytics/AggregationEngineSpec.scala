@@ -19,7 +19,6 @@ import net.lag.logging.Logger
 
 import org.specs._
 import org.specs.specification.PendingUntilFixed
-import org.specs.util.TimeConversions._
 import org.scalacheck._
 import Gen._
 
@@ -94,7 +93,7 @@ with ArbitraryEvent with FutureMatchers {
   
   val engine = new AggregationEngine2(config, Logger.get, database) 
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(50, 100l.milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(50, 100L.milliseconds)
 
   "Aggregation engine" should {
     "aggregate simple events" in {
