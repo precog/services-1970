@@ -10,7 +10,7 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
 
     val jodatime    = "joda-time"                   % "joda-time"         % "1.6.2"   % "compile"
-    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.12"   % "compile"
+    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.11"   % "compile"
   }
 
   class BillingProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {
@@ -18,7 +18,7 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
 
     val configgy    = "net.lag"                     % "configgy"          % "2.0.0"   % "compile"
-    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.12"   % "compile"
+    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.11"   % "compile"
 
     override def mainClass = Some("com.reportgrid.billing.BillingServer")
 
@@ -34,7 +34,7 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
 
     val jodatime    = "joda-time"                   % "joda-time"         % "1.6.2"   % "compile"
     val configgy    = "net.lag"                     % "configgy"          % "2.0.0"   % "compile"
-    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.8"   % "compile"
+    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.11"   % "compile"
 
     override def mainClass = Some("com.reportgrid.analytics.AnalyticsServer")
 
