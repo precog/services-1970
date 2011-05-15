@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 
-case class AnalyticsState(aggregationEngine: AggregationEngine2, tokenManager: TokenManager)
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString {
   def mongoFactory(configMap: ConfigMap): Mongo
@@ -41,7 +41,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           val tokensCollection  = mongoConfig.getString("tokensCollection").getOrElse("tokens")
           val reportsCollection = mongoConfig.getString("reportsCollection").getOrElse("reports")
 
-          val aggregationEngine = new AggregationEngine2(config, logger, database)
+          val aggregationEngine = new AggregationEngine(config, logger, database)
           TokenManager(database, tokensCollection).map(AnalyticsState(aggregationEngine, _))
         } ->
         request { state =>

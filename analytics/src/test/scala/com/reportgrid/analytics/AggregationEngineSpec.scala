@@ -91,7 +91,7 @@ with ArbitraryEvent with FutureMatchers {
   val mongo = new MockMongo()
   val database = mongo.database("gluecon")
   
-  val engine = new AggregationEngine2(config, Logger.get, database) 
+  val engine = new AggregationEngine(config, Logger.get, database) 
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(50, toDuration(100).milliseconds)
 

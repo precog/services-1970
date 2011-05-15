@@ -21,7 +21,7 @@ import scala.collection.SortedMap
 import scalaz.Scalaz._
 import Future._
 
-class AggregationEngine2(config: ConfigMap, logger: Logger, database: MongoDatabase) extends FutureDeliveryStrategySequential {
+class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDatabase) extends FutureDeliveryStrategySequential {
   val EarliestTime = new DateTime(0,             DateTimeZone.UTC)
   val LatestTime   = new DateTime(Long.MaxValue, DateTimeZone.UTC)
 
