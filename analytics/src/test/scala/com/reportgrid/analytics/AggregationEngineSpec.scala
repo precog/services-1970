@@ -12,7 +12,7 @@ import MimeTypes._
 import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
 import blueeyes.json.JPathImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
-import blueeyes.persistence.mongo.{Mongo, MockMongo}
+import blueeyes.persistence.mongo._
 
 import net.lag.configgy.{Configgy, Config, ConfigMap}
 import net.lag.logging.Logger
@@ -29,8 +29,8 @@ with ArbitraryEvent with FutureMatchers {
   config.load("""
     variable_series {
       collection = "variable_series"
-      time_to_idle_millis = 500
-      time_to_live_millis = 100
+      time_to_idle_millis = 50
+      time_to_live_millis = 10
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -39,8 +39,8 @@ with ArbitraryEvent with FutureMatchers {
     variable_value_series {
       collection = "variable_value_series"
 
-      time_to_idle_millis = 500
-      time_to_live_millis = 100
+      time_to_idle_millis = 50
+      time_to_live_millis = 10
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -49,8 +49,8 @@ with ArbitraryEvent with FutureMatchers {
     variable_values {
       collection = "variable_values"
 
-      time_to_idle_millis = 500
-      time_to_live_millis = 100
+      time_to_idle_millis = 50
+      time_to_live_millis = 10
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -59,8 +59,8 @@ with ArbitraryEvent with FutureMatchers {
     variable_children {
       collection = "variable_children"
 
-      time_to_idle_millis = 500
-      time_to_live_millis = 100
+      time_to_idle_millis = 50
+      time_to_live_millis = 10
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -69,8 +69,8 @@ with ArbitraryEvent with FutureMatchers {
     path_children {
       collection = "path_children"
 
-      time_to_idle_millis = 500
-      time_to_live_millis = 100
+      time_to_idle_millis = 50
+      time_to_live_millis = 10
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -97,22 +97,24 @@ with ArbitraryEvent with FutureMatchers {
 
   "Aggregation engine" should {
     "aggregate simple events" in {
-      val sampleEvents: List[Event] = containerOfN[List, Event](2, eventGen).sample.get
+      val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
 
       def countEvents(eventName: String) = sampleEvents.count {
-        case Event(JObject(JField(eventName, _) :: Nil), _) => true
+        case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
         case _ => false
       }
 
       val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
 
       for (event <- sampleEvents) {
-        engine.aggregate(Token.Test, "/vfs/gluecon", event.timestamp, event.message, 1)
+        engine.aggregate(Token.Test, "/vfs/gluecon", event.timestamp, event.data, 1)
       }
+
+      engine.stop must whenDelivered { beSome(()) }
 
       eventCounts.foreach {
         case (eventName, count) =>
-          engine.getVariableCount(Token.Test, "/vfs/gluecon/", Variable("." + eventName)) must deliver {
+          engine.getVariableCount(Token.Test, "/vfs/gluecon/", Variable("." + eventName)) must whenDelivered {
             beSome(count)
           }
       }

@@ -159,6 +159,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         val path     = fullPathOf(token, request)
                         val variable = variableOf(request)
 
+                        println("Count request: " + (token, path, variable))
+                        aggregationEngine.printDatabase
+
                         aggregationEngine.getVariableCount(token, path, variable).map { count =>
                           HttpResponse[JValue](content = Some(count.serialize))
                         }

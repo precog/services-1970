@@ -4,6 +4,7 @@ import blueeyes.core.data.Bijection.identity
 import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
+import blueeyes.concurrent.test._
 import MimeTypes._
 
 import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
@@ -19,7 +20,7 @@ import org.scalacheck._
 import Gen._
 
 class AnalyticsServiceSpec extends BlueEyesServiceSpecification with PendingUntilFixed with ScalaCheck 
-with AnalyticsService with ArbitraryEvent {
+with AnalyticsService with ArbitraryEvent with FutureMatchers {
 
   def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
 
@@ -30,8 +31,8 @@ with AnalyticsService with ArbitraryEvent {
           variable_series {
             collection = "variable_series"
 
-            time_to_idle_millis = 500
-            time_to_live_millis = 100
+            time_to_idle_millis = 50
+            time_to_live_millis = 10
 
             initial_capacity = 1000
             maximum_capacity = 10000
@@ -40,8 +41,8 @@ with AnalyticsService with ArbitraryEvent {
           variable_value_series {
             collection = "variable_value_series"
 
-            time_to_idle_millis = 500
-            time_to_live_millis = 100
+            time_to_idle_millis = 50
+            time_to_live_millis = 10
 
             initial_capacity = 1000
             maximum_capacity = 10000
@@ -50,8 +51,8 @@ with AnalyticsService with ArbitraryEvent {
           variable_values {
             collection = "variable_values"
 
-            time_to_idle_millis = 500
-            time_to_live_millis = 100
+            time_to_idle_millis = 50
+            time_to_live_millis = 10
 
             initial_capacity = 1000
             maximum_capacity = 10000
@@ -60,8 +61,8 @@ with AnalyticsService with ArbitraryEvent {
           variable_children {
             collection = "variable_children"
 
-            time_to_idle_millis = 500
-            time_to_live_millis = 100
+            time_to_idle_millis = 50
+            time_to_live_millis = 10
 
             initial_capacity = 1000
             maximum_capacity = 10000
@@ -70,8 +71,8 @@ with AnalyticsService with ArbitraryEvent {
           path_children {
             collection = "path_children"
 
-            time_to_idle_millis = 500
-            time_to_live_millis = 100
+            time_to_idle_millis = 50
+            time_to_live_millis = 10
 
             initial_capacity = 1000
             maximum_capacity = 10000
@@ -102,8 +103,8 @@ with AnalyticsService with ArbitraryEvent {
   lazy val analytics = service.contentType[JValue](application/json).query("tokenId", Token.Test.tokenId)
 
   "Demo Service" should {
-    "create events" in pendingUntilFixed {
-      val sampleEvents: List[Event] = containerOfN[List, Event](2, eventGen).sample.get
+    "create events" in {
+      val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
 
       lazy val tweetedCount = sampleEvents.count {
         case Event(JObject(JField("tweeted", _) :: Nil), _) => true
@@ -114,12 +115,15 @@ with AnalyticsService with ArbitraryEvent {
         analytics.post[JValue]("/vfs/gluecon")(event.message)
       }
 
-      (analytics.get[JValue]("/vfs/gluecon/.tweeted/count").value) must eventually(10, 1.second) {
+      Thread.sleep(10000)
+
+      analytics.get[JValue]("/vfs/gluecon/.tweeted/count") must whenDelivered {
         beLike {
-          case Some(HttpResponse(_, _, Some(result), _)) =>
+          case Some(HttpResponse(status, _, Some(result), _)) =>
             result.deserialize[Long] must_== tweetedCount
         }
       } 
     }
+
   }
 }

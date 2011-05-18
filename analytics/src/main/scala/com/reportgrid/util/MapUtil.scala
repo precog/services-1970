@@ -15,6 +15,16 @@ object MapUtil {
   def merge2WithDefault[K, V, Z](default: V)(m1: Map[K, V], m2: Map[K, V])(f: (V, V) => Z): Map[K, Z] = {
     merge2WithDefaults(default, default)(m1, m2)(f)
   }
+
+  def merge2WithDefault2[K, V](default: V)(m1: Map[K, V], m2: Map[K, V])(f: (V, V) => V): Map[K, V] = {
+    val (mergeFrom, mergeTo, merge) = if (m1.size > m2.size) (m1, m2, f) else (m2, m1, (v2: V, v1: V) => f(v1, v2))
+
+    mergeFrom.foldLeft(mergeTo) {
+      case (mergeTo, (k, v)) =>
+        mergeTo + (k -> merge(mergeTo.getOrElse(k, default), v))
+    }
+  }
+
   
   def merge2WithDefaults[K, V1, V2, Z](default1: V1, default2: V2)(m1: Map[K, V1], m2: Map[K, V2])(f: (V1, V2) => Z): Map[K, Z] = {
     val keys = m1.keys ++ m2.keys

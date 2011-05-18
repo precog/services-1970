@@ -1,5 +1,6 @@
 package com.reportgrid.analytics
 
+import blueeyes._
 import blueeyes.concurrent.{Future, FutureDeliveryStrategySequential}
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
@@ -42,6 +43,28 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
 
     val collection = config.getString(prefix + ".collection").getOrElse(prefix)
 
+/*
+
+   type Mealy[A, B] = (A => (B, Mealy[A, B]))
+
+
+
+    Map[MongoCollection, Stage[MongoFilter, MongoUpdate]]
+
+
+
+    def aggregate(event, properties): Map[MongoCollection, MongoPatches]
+
+   
+   type Event = (String, JObject)
+
+   aggregator: Mealy[Event, Map[MongoCollection, MongoPatches]]
+               
+
+
+
+
+*/
     (new MongoStage(
       database   = database,
       collection = collection,
@@ -64,6 +87,24 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
   private val (pathChildS,      pathChildC)       = newMongoStage("path_children")
 
   private val DefaultAggregator = TimeSeriesAggregator.Default
+
+  def printDatabase = {
+    val collections = List(
+      "variable_series",
+      "variable_value_series",
+      "variable_values",
+      "variable_children",
+      "path_children"
+    )
+
+    for (collection <- collections) {
+      database(selectAll.from(collection)).deliverTo { result => 
+          println("collection: " + collection)
+          for (record <- result) println(renderNormalized(record))
+          println("\n")
+      }
+    }
+  }
 
   /** Aggregates the specified data. The object may contain multiple events or
    * just one.
@@ -403,15 +444,14 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
         JPath(".period.start")       >=  start.serialize &
         JPath(".period.start")        <  end.serialize &
         JPath(".order") === observation.size & {
-          observation.foldLeft[MongoFilter](MongoFilterAll) { (filter, tuple) =>
-            val (variable, predicate) = tuple
-
-            filter & {
-              JPath(".where." + variableToFieldName(variable)) === predicate.serialize
-            }
+          observation.foldLeft[MongoFilter](MongoFilterAll) { 
+            case (filter, (variable, predicate)) => 
+              filter & {
+                JPath(".where." + variableToFieldName(variable)) === predicate.serialize
+              }
           }
         }
-      }
+      } 
     }.map { results =>
       results.map { result =>
         (result \ "count").deserialize[TimeSeriesType]
