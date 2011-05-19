@@ -136,7 +136,7 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
         )
 
         varValueSeriesS putAll updateTimeSeries(accountPathFilter, valueReport).patches
-        varValueS       putAll updateValues(accountPathFilter, valueReport).patches
+        varValueS       putAll updateValues(accountPathFilter, valueReport.order(1)).patches
 
         val childCountReport = Report.ofChildren(
           event = event,
@@ -146,7 +146,7 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
           limit = token.limits.limit
         )
 
-        varChildS putAll updateValues(accountPathFilter, childCountReport).patches
+        varChildS putAll updateValues(accountPathFilter, childCountReport.order(1)).patches
 
         val childSeriesReport = Report.ofChildren(
           event = event,
@@ -368,10 +368,10 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
       col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
       periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
     val histograms = Future(variableDescriptors.map { 
-      case VariableDescriptor(variable, maxResults, Ascending) =>
+      case VariableDescriptor(variable, maxResults, SortOrder.Ascending) =>
         getHistogramBottom(token, path, variable, maxResults)
 
-      case VariableDescriptor(variable, maxResults, Descending) =>
+      case VariableDescriptor(variable, maxResults, SortOrder.Descending) =>
         getHistogramTop(token, path, variable, maxResults)
     }: _*)
 
@@ -381,8 +381,8 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
           (l1 zip l2).zipWithIndex.foldLeft(0) {
             case (0, ((v1, v2), i)) => hist(i) |> {
                 m => variableDescriptors(i).sortOrder match {
-                  case Ascending  => -(m(v1) compare m(v2))
-                  case Descending => m(v1) compare m(v2)
+                  case SortOrder.Ascending  => -(m(v1) compare m(v2))
+                  case SortOrder.Descending => m(v1) compare m(v2)
                 }
               }
             case (x, _) => x
@@ -496,6 +496,7 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
         case None => Nil
 
         case Some(result) =>
+          println("in extractValues: " + renderNormalized(result))
           (result \ "values").children.collect {
             case JField(name, count) =>
               val jvalue = JsonParser.parse(MongoEscaper.decode(name))

@@ -7,10 +7,84 @@
 	},
 	"buffers":
 	[
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AnalyticsService.scala",
+			"settings":
+			{
+				"buffer_size": 21049,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/billing/src/main/scala/com/reportgrid/billing/BillingService.scala",
+			"settings":
+			{
+				"buffer_size": 13504,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/common/src/main/scala/com/reportgrid/analytics/Permissions.scala",
+			"settings":
+			{
+				"buffer_size": 1615,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/common/src/main/scala/com/reportgrid/analytics/Token.scala",
+			"settings":
+			{
+				"buffer_size": 4279,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AggregationEngine2.scala",
+			"settings":
+			{
+				"buffer_size": 0,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/AnalyticsServiceSpec.scala",
+			"settings":
+			{
+				"buffer_size": 4290,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/ArbitraryEvent.scala",
+			"settings":
+			{
+				"buffer_size": 1814,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/VariableDescriptor.scala",
+			"settings":
+			{
+				"buffer_size": 2124,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/AggregationEngineSpec.scala",
+			"settings":
+			{
+				"buffer_size": 4053,
+				"line_ending": "Unix"
+			}
+		}
 	],
 	"build_system": "",
 	"file_history":
 	[
+		"/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/PropertyDescriptor.scala",
+		"/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/Predicate.scala"
 	],
 	"find_in_files":
 	{
@@ -26,6 +100,17 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"getHistogramBottom",
+			"maxResult",
+			"intersectSeries",
+			"internalInter",
+			"internal",
+			"internalInter",
+			"extractValues",
+			"Account",
+			"createAcc",
+			"Account",
+			"Plan"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -50,8 +135,261 @@
 	"groups":
 	[
 		{
+			"selected": 8,
 			"sheets":
 			[
+				{
+					"buffer": 0,
+					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AnalyticsService.scala",
+					"settings":
+					{
+						"buffer_size": 21049,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								0,
+								0
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 5961,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 1,
+					"file": "/Users/knuttycombe/reportgrid/services/billing/src/main/scala/com/reportgrid/billing/BillingService.scala",
+					"settings":
+					{
+						"buffer_size": 13504,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								5829,
+								5829
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 1708,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 2,
+					"file": "/Users/knuttycombe/reportgrid/services/common/src/main/scala/com/reportgrid/analytics/Permissions.scala",
+					"settings":
+					{
+						"buffer_size": 1615,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								954,
+								954
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 3,
+					"file": "/Users/knuttycombe/reportgrid/services/common/src/main/scala/com/reportgrid/analytics/Token.scala",
+					"settings":
+					{
+						"buffer_size": 4279,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								2732,
+								2732
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 179,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 4,
+					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AggregationEngine2.scala",
+					"settings":
+					{
+						"buffer_size": 0,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								0,
+								0
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 1849,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 5,
+					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/AnalyticsServiceSpec.scala",
+					"settings":
+					{
+						"buffer_size": 4290,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								2652,
+								2652
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 1019,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 6,
+					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/ArbitraryEvent.scala",
+					"settings":
+					{
+						"buffer_size": 1814,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								712,
+								712
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 7,
+					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/VariableDescriptor.scala",
+					"settings":
+					{
+						"buffer_size": 2124,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								0,
+								0
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 0,
+						"zoom_level": 1
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 8,
+					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/AggregationEngineSpec.scala",
+					"settings":
+					{
+						"buffer_size": 4053,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								2741,
+								2741
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Scala/Scala.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0,
+						"translation.y": 1257,
+						"zoom_level": 1
+					},
+					"type": "text"
+				}
 			]
 		}
 	],
@@ -84,6 +422,46 @@
 		"height": 0,
 		"selected_items":
 		[
+			[
+				"aggenspe",
+				"analytics/src/test/scala/com/reportgrid/analytics/AggregationEngineSpec.scala"
+			],
+			[
+				"aespec",
+				"analytics/src/test/scala/com/reportgrid/analytics/AggregationEngineSpec.scala"
+			],
+			[
+				"ag2.scala",
+				"analytics/src/main/scala/com/reportgrid/analytics/AggregationEngine2.scala"
+			],
+			[
+				"vd",
+				"analytics/src/main/scala/com/reportgrid/analytics/VariableDescriptor.scala"
+			],
+			[
+				"pdes",
+				"analytics/src/main/scala/com/reportgrid/analytics/PropertyDescriptor.scala"
+			],
+			[
+				"predicate",
+				"analytics/src/main/scala/com/reportgrid/analytics/Predicate.scala"
+			],
+			[
+				"toke",
+				"common/src/main/scala/com/reportgrid/analytics/Token.scala"
+			],
+			[
+				"permi",
+				"common/src/main/scala/com/reportgrid/analytics/Permissions.scala"
+			],
+			[
+				"bill",
+				"billing/src/main/scala/com/reportgrid/billing/BillingService.scala"
+			],
+			[
+				"anser",
+				"analytics/src/main/scala/com/reportgrid/analytics/AnalyticsService.scala"
+			]
 		],
 		"width": 0
 	},
@@ -98,6 +476,6 @@
 	"show_minimap": true,
 	"show_tabs": true,
 	"side_bar_visible": true,
-	"side_bar_width": 150,
+	"side_bar_width": 249,
 	"status_bar_visible": true
 }

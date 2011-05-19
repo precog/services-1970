@@ -30,7 +30,7 @@ with ArbitraryEvent with FutureMatchers {
     variable_series {
       collection = "variable_series"
       time_to_idle_millis = 50
-      time_to_live_millis = 10
+      time_to_live_millis = 100
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -40,7 +40,7 @@ with ArbitraryEvent with FutureMatchers {
       collection = "variable_value_series"
 
       time_to_idle_millis = 50
-      time_to_live_millis = 10
+      time_to_live_millis = 100
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -50,7 +50,7 @@ with ArbitraryEvent with FutureMatchers {
       collection = "variable_values"
 
       time_to_idle_millis = 50
-      time_to_live_millis = 10
+      time_to_live_millis = 100
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -60,7 +60,7 @@ with ArbitraryEvent with FutureMatchers {
       collection = "variable_children"
 
       time_to_idle_millis = 50
-      time_to_live_millis = 10
+      time_to_live_millis = 100
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -70,7 +70,7 @@ with ArbitraryEvent with FutureMatchers {
       collection = "path_children"
 
       time_to_idle_millis = 50
-      time_to_live_millis = 10
+      time_to_live_millis = 100
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -93,12 +93,17 @@ with ArbitraryEvent with FutureMatchers {
   
   val engine = new AggregationEngine(config, Logger.get, database) 
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(50, toDuration(100).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(600, toDuration(100).milliseconds)
 
   "Aggregation engine" should {
-    "aggregate simple events" in {
-      val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
+    shareVariables()
+    val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
 
+    for (event <- sampleEvents) {
+      engine.aggregate(Token.Test, "/vfs/gluecon", event.timestamp, event.data, 1)
+    }
+
+    "aggregate simple events" in pendingUntilFixed {
       def countEvents(eventName: String) = sampleEvents.count {
         case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
         case _ => false
@@ -106,17 +111,49 @@ with ArbitraryEvent with FutureMatchers {
 
       val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
 
-      for (event <- sampleEvents) {
-        engine.aggregate(Token.Test, "/vfs/gluecon", event.timestamp, event.data, 1)
-      }
-
-      engine.stop must whenDelivered { beSome(()) }
-
       eventCounts.foreach {
         case (eventName, count) =>
           engine.getVariableCount(Token.Test, "/vfs/gluecon/", Variable("." + eventName)) must whenDelivered {
-            beSome(count)
+            beEqualTo(count)
           }
+      }
+    }
+
+    "retrieve the top results of a histogram" in {
+      val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
+        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
+          val key = obj(".retweet")
+          map + (key -> map.get(key).map(_ + 1).getOrElse(1))
+
+        case (map, _) => map
+      }
+
+      engine.getHistogramTop(Token.Test, "/vfs/gluecon", Variable(".tweeted.retweet"), 10) must whenDelivered {
+        beEqualTo(retweetCounts)
+      }
+    }
+
+    "retrieve intersection results" in pendingUntilFixed {
+      val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
+        case (map, Event(JObject(List(JField(_, obj))), _)) =>
+          val key = List(obj(".retweet"), obj(".recipientCount"))
+          map + (key -> map.get(key).map(_ + 1).getOrElse(1))
+      }
+
+      engine.intersectCount(
+        Token.Test, "/vfs/gluecon", 
+        List(
+          VariableDescriptor(Variable(".tweeted.retweet"), 10, SortOrder.Descending),
+          VariableDescriptor(Variable(".tweeted.recipientCount"), 10, SortOrder.Descending)
+        ),
+        None, None
+      ) must whenDelivered {
+        beLike {
+          case x => 
+          println("expected: " + expectedCounts)
+          println("found: " + x)
+          fail
+        }
       }
     }
   }

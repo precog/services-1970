@@ -22,7 +22,6 @@ import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 
 case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager)
-
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString {
   def mongoFactory(configMap: ConfigMap): Mongo
 
@@ -159,8 +158,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         val path     = fullPathOf(token, request)
                         val variable = variableOf(request)
 
-                        println("Count request: " + (token, path, variable))
-                        aggregationEngine.printDatabase
+                        //println("Count request: " + (token, path, variable))
+                        //aggregationEngine.printDatabase
 
                         aggregationEngine.getVariableCount(token, path, variable).map { count =>
                           HttpResponse[JValue](content = Some(count.serialize))
@@ -432,7 +431,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
               path('descendantTokenId) {
                 //parameter('descendantTokenId) { descendantTokenId =>
                   get { request: HttpRequest[JValue] =>
-                    println(request.parameters)
+                    //println(request.parameters)
 
                     tokenOf(request).flatMap { token =>
                       tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { descendantToken =>

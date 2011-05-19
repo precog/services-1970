@@ -8,6 +8,9 @@ import SortOrder._
 
 sealed trait SortOrder 
 object SortOrder {
+  case object Ascending extends SortOrder
+  case object Descending extends SortOrder
+
   implicit val SortOrderExtractor = new Extractor[SortOrder] {
     def extract(jvalue: JValue): SortOrder = jvalue match {
       case JString("Ascending")  => Ascending
@@ -24,9 +27,6 @@ object SortOrder {
     }
   }
 }
-
-case object Ascending extends SortOrder
-case object Descending extends SortOrder
 
 case class VariableDescriptor(variable: Variable, maxResults: Int, sortOrder: SortOrder)
 

@@ -5,17 +5,20 @@ import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test._
+import blueeyes.concurrent.Duration._
+
 import MimeTypes._
 
 import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
 import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.JPathImplicits._
 import blueeyes.persistence.mongo.{Mongo, MockMongo}
 
 import net.lag.configgy.{Configgy, ConfigMap}
 
 import org.specs._
 import org.specs.specification.PendingUntilFixed
-import org.specs.util.TimeConversions._
+//import org.specs.util.TimeConversions._
 import org.scalacheck._
 import Gen._
 
@@ -102,6 +105,8 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers {
 
   lazy val analytics = service.contentType[JValue](application/json).query("tokenId", Token.Test.tokenId)
 
+  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(100, 100L.milliseconds)
+
   "Demo Service" should {
     "create events" in {
       val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
@@ -115,15 +120,33 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers {
         analytics.post[JValue]("/vfs/gluecon")(event.message)
       }
 
-      Thread.sleep(10000)
-
       analytics.get[JValue]("/vfs/gluecon/.tweeted/count") must whenDelivered {
         beLike {
-          case Some(HttpResponse(status, _, Some(result), _)) =>
+          case HttpResponse(status, _, Some(result), _) =>
             result.deserialize[Long] must_== tweetedCount
         }
       } 
     }
 
+    "calculate intersections" in {
+      val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
+      
+      analytics.post[JValue]("/intersect") {
+        JObject(List(
+          JField("select",     JString("count")),
+          JField("from",       JString("/vfs/gluecon/")),
+          JField("properties", JArray(List(
+            VariableDescriptor(Variable(".tweeted.retweet"), 10, SortOrder.Descending).serialize,
+            VariableDescriptor(Variable(".tweeted.recipientCount"), 10, SortOrder.Descending).serialize
+          )))
+        ))
+      } must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) =>
+            println(status, renderNormalized(result))
+            fail
+        }
+      }
+    }
   }
 }
