@@ -375,6 +375,8 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
         getHistogramTop(token, path, variable, maxResults)
     }: _*)
 
+    println(variableDescriptors)
+
     histograms.flatMap { hist => 
       implicit def ordering: scala.math.Ordering[List[JValue]] = new scala.math.Ordering[List[JValue]] {
         override def compare(l1: List[JValue], l2: List[JValue]) = {
@@ -414,6 +416,8 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
       } map { results =>
         results.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
           case (m, result) =>
+            println(renderNormalized(result.get(JPath(".where"))))
+
             // generate the key for the count in the results
             val values: List[JValue] = variableDescriptors.map { vd => 
               result.get(JPath(".where") \ variableToFieldName(vd.variable))
@@ -421,10 +425,10 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
 
             // ensure that all the variables are within the set of values selected by
             // the histogram that is used for sorting.
-            if (values.zipWithIndex.forall { case (v, i) => hist(i).isDefinedAt(v) }) {
+            //if (values.zipWithIndex.forall { case (v, i) => hist(i).isDefinedAt(v) }) {
               val count = (result \ "count").deserialize[TimeSeriesType]
               m + (values -> (m.getOrElse(values, TimeSeries.empty[CountType]) + count))
-            } else m
+            //} else m
         }
       }
     }

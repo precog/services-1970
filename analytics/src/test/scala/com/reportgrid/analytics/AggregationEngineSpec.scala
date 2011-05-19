@@ -31,8 +31,8 @@ with ArbitraryEvent with FutureMatchers {
   config.load("""
     variable_series {
       collection = "variable_series"
-      time_to_idle_millis = 50
-      time_to_live_millis = 100
+      time_to_idle_millis = 500
+      time_to_live_millis = 1000
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -41,8 +41,8 @@ with ArbitraryEvent with FutureMatchers {
     variable_value_series {
       collection = "variable_value_series"
 
-      time_to_idle_millis = 50
-      time_to_live_millis = 100
+      time_to_idle_millis = 500
+      time_to_live_millis = 1000
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -51,8 +51,8 @@ with ArbitraryEvent with FutureMatchers {
     variable_values {
       collection = "variable_values"
 
-      time_to_idle_millis = 50
-      time_to_live_millis = 100
+      time_to_idle_millis = 500
+      time_to_live_millis = 1000
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -61,8 +61,8 @@ with ArbitraryEvent with FutureMatchers {
     variable_children {
       collection = "variable_children"
 
-      time_to_idle_millis = 50
-      time_to_live_millis = 100
+      time_to_idle_millis = 500
+      time_to_live_millis = 1000
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -71,8 +71,8 @@ with ArbitraryEvent with FutureMatchers {
     path_children {
       collection = "path_children"
 
-      time_to_idle_millis = 50
-      time_to_live_millis = 100
+      time_to_idle_millis = 500
+      time_to_live_millis = 1000
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -95,7 +95,7 @@ with ArbitraryEvent with FutureMatchers {
   
   val engine = new AggregationEngine(config, Logger.get, database) 
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(1000).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(30, toDuration(1000).milliseconds)
 
   "Aggregation engine" should {
     shareVariables()
