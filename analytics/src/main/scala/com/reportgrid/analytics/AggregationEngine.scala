@@ -496,7 +496,6 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
         case None => Nil
 
         case Some(result) =>
-          println("in extractValues: " + renderNormalized(result))
           (result \ "values").children.collect {
             case JField(name, count) =>
               val jvalue = JsonParser.parse(MongoEscaper.decode(name))
