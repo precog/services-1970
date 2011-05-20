@@ -116,7 +116,7 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
 
       val accountPathFilter = forTokenAndPath(token, path)
 
-      val seriesCount = DefaultAggregator.aggregate(time, count)
+      val seriesCount = TimeSeriesAggregator.Eternity.aggregate(time, count)//DefaultAggregator.aggregate(time, count)
 
       val events = jobject.children.collect {
         case JField(eventName, properties) => (eventName, JObject(JField(eventName, properties) :: Nil))
@@ -330,39 +330,34 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
 
   private def updateTimeSeries[P <: Predicate](filter: MongoFilter, report: Report[TimeSeriesType, P])
     (implicit tsUpdater: (JPath, TimeSeriesType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
-    report.groupByOrder.flatMap { tuple =>
-      val (order, report) = tuple
-
-      report.groupByPeriod.map { tuple =>
-        val (period, report) = tuple
-
-        ((order, period), report)
-      }
-    }.foldLeft(MongoPatches.empty) { (patches, tuple) =>
-      val ((order, period), report) = tuple
-
-      val filterOrderPeriod = (filter & {
-        ".order"  === order.serialize &
-        ".period" === period.serialize
-      })
-
-      report.observationCounts.foldLeft(patches) { (patches, tuple) =>
-        val (observation, count) = tuple
-
-        val filterWhereClause = observation.foldLeft[MongoFilter](filterOrderPeriod) { (filter, tuple) =>
-          val (variable, predicate) = tuple
-
-          filter & {
-            (".where." + variableToFieldName(variable)) === predicate.serialize
-          }
+    
+    report.groupByOrder.flatMap { 
+      case (order, report) =>
+        report.groupByPeriod.map { 
+          case (period, report) => ((order, period), report)
         }
+    }.foldLeft(MongoPatches.empty) {
+      case (patches, ((order, period), report)) =>
+        val filterOrderPeriod = (filter & {
+          ".order"  === order.serialize &
+          ".period" === period.serialize
+        })
 
-        //println(renderNormalized(filterWhereClause.filter))
+        report.observationCounts.foldLeft(patches) { 
+          case (patches, (observation, count)) =>
+            val filterWhereClause = observation.foldLeft[MongoFilter](filterOrderPeriod) {
+              case (filter, (variable, predicate)) =>
+                filter & {
+                  (".where." + variableToFieldName(variable)) === predicate.serialize
+                }
+            }
 
-        val timeSeriesUpdate = tsUpdater(".count", count)
+            //println(renderNormalized(filterWhereClause.filter))
 
-        patches + (filterWhereClause -> timeSeriesUpdate)
-      }
+            val timeSeriesUpdate = tsUpdater(".count", count)
+
+            patches + (filterWhereClause -> timeSeriesUpdate)
+        }
     }
   }
 
@@ -467,7 +462,8 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
       } 
     }.map { results =>
       results.map { result =>
-        (result \ "count").deserialize[TimeSeriesType]
+        ((result \ "count").deserialize[TimeSeriesType]) ->- lp("internalSearchSeries - count")
+
       }.foldLeft[TimeSeriesType](TimeSeries.empty) { _ + _ }.fillGaps
     }
   }

@@ -57,10 +57,9 @@ object MongoSupport {
   implicit def DoubleUpdater(jpath: JPath, value: Double): MongoUpdate = jpath inc value
 
   implicit def TimeSeriesUpdater[T](jpath: JPath, value: TimeSeries[T])(implicit updater: (JPath, T) => MongoUpdate): MongoUpdate = {
-    value.series.foldLeft[MongoUpdate](MongoUpdateNothing) { (fullUpdate, tuple) =>
-      val (period, count) = tuple
-
-      fullUpdate & updater(jpath \ period.periodicity.name \ period.start.getMillis.toString, count)
+    value.series.foldLeft[MongoUpdate](MongoUpdateNothing) {
+      case (fullUpdate, (period, count)) =>
+        fullUpdate & updater(jpath \ period.periodicity.name \ period.start.getMillis.toString, count)
     }
   }
 
