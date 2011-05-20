@@ -15,19 +15,15 @@ package object analytics extends AggregatorImplicits {
 
   /** Finds sublists of the specified list up to the specified order.
    */
-  def sublists[T](list: List[T], order: Int): List[List[T]] = {
-    if (order <= 0) Nil
-    else list match {
+  def sublists[T](l: List[T], order: Int): List[List[T]] = {
+    if (order <= 0) Nil 
+    else l match {
       case Nil => Nil
 
       case x :: xs =>
-        val xSublist         = List(List(x))
-        val sublistsWithoutX = sublists(xs, order)
-        val sublistsWithX    = sublistsWithoutX.filter(_.length < order).map { sublist: List[T] =>
-          x :: sublist
-        }
+        val smallerSets = sublists(xs, order)
 
-        xSublist ++ sublistsWithX ++ sublistsWithoutX
+        List(List(x)) ++ smallerSets ++ (smallerSets.map(x :: _).filter(_.length <= order))
     }
   }
 

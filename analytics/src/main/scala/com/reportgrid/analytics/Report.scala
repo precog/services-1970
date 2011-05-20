@@ -58,11 +58,24 @@ object Report {
   /** Creates a report of values.
    */
   def ofValues[T: Aggregator](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[T, HasValue] = {
-    val flattened = event.flattenWithPath.take(limit).map { t =>
-      val (jpath, jvalue) = t
-
-      (Variable(jpath), HasValue(jvalue))
+    val flattened = event.flattenWithPath.take(limit).map {
+      case (jpath, jvalue) => (Variable(jpath), HasValue(jvalue))
     }
+  
+    /*def factorial(n: Int) : Long = {
+      def factorial0(n: Int, acc: Long): Long = {
+        if (n <= 1) acc
+        else factorial0(n - 1, acc * n)
+      }
+
+      factorial0(n, 1L)
+    }
+
+    def nchoosek(n: Int, k: Int): Long = factorial(n) / (factorial(k) * factorial(n - k))
+
+    val ss = sublists(flattened, order)
+
+    println("actual length: " + ss.length + ", expected length: " + (1 to order).foldLeft(0L)((length, order) => length + nchoosek(flattened.length, order)))*/
 
     Report(Map(sublists(flattened, order).map { subset =>
       (subset.toSet, count)

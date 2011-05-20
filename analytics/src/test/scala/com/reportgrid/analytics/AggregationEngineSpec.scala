@@ -29,6 +29,10 @@ with ArbitraryEvent with FutureMatchers {
   val config = new Config()
 
   config.load("""
+    mongo {
+      database = "analytics"
+      servers  = ["localhost:27017"]
+    }
     variable_series {
       collection = "variable_series"
       time_to_idle_millis = 500
@@ -78,24 +82,18 @@ with ArbitraryEvent with FutureMatchers {
       maximum_capacity = 10000
     }
 
-    mongo {
-      database = "analytics"
-
-      servers = ["mongodb01.reportgrid.com:27017", "mongodb02.reportgrid.com:27017", "mongodb03.reportgrid.com:27017"]
-    }
-
     log {
       level   = "debug"
       console = true
     }
   """)
 
-  val mongo = new MockMongo()
+  val mongo = new RealMongo(config.configMap("mongo"))
   val database = mongo.database("gluecon")
   
   val engine = new AggregationEngine(config, Logger.get, database) 
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(30, toDuration(1000).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(1000).milliseconds)
 
   "Aggregation engine" should {
     shareVariables()
@@ -134,7 +132,7 @@ with ArbitraryEvent with FutureMatchers {
 //        beEqualTo(retweetCounts)
 //      }
 //    }
-//
+
     "retrieve intersection results" in {
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
         case (map, Event(JObject(List(JField(_, obj))), _)) =>

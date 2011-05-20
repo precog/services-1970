@@ -57,7 +57,7 @@ object Token {
     path           = "test-account-root",
     permissions    = Permissions(true, true, true),
     expires        = Never,
-    limits         = Limits(order = 2, depth = 3, limit = 10)
+    limits         = Limits(order = 2, depth = 3, limit = 20)
   )
 
   def newAccount(path: Path, limits: Limits, permissions: Permissions = Permissions.All, expires: DateTime = Never): Token = {

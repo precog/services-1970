@@ -357,6 +357,8 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
           }
         }
 
+        //println(renderNormalized(filterWhereClause.filter))
+
         val timeSeriesUpdate = tsUpdater(".count", count)
 
         patches + (filterWhereClause -> timeSeriesUpdate)
@@ -375,14 +377,16 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
         getHistogramTop(token, path, variable, maxResults)
     }: _*)
 
-    println(variableDescriptors)
+    //println(variableDescriptors)
 
     histograms.flatMap { hist => 
       implicit def ordering: scala.math.Ordering[List[JValue]] = new scala.math.Ordering[List[JValue]] {
         override def compare(l1: List[JValue], l2: List[JValue]) = {
           (l1 zip l2).zipWithIndex.foldLeft(0) {
             case (0, ((v1, v2), i)) => hist(i) |> {
-                m => variableDescriptors(i).sortOrder match {
+                m => 
+                
+                variableDescriptors(i).sortOrder match {
                   case SortOrder.Ascending  => -(m(v1) compare m(v2))
                   case SortOrder.Descending => m(v1) compare m(v2)
                 }
@@ -391,6 +395,8 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
           }
         }
       }
+
+      //println(hist)
 
       val filterTokenAndPath = forTokenAndPath(token, path)
 
@@ -410,25 +416,28 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
                 filter & {
                   JPath(".where." + variableToFieldName(variable)) exists
                 }
-            }
+            } 
           }
         }
       } map { results =>
         results.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
           case (m, result) =>
-            println(renderNormalized(result.get(JPath(".where"))))
+            //println(renderNormalized(result.get(JPath(".where"))))
 
             // generate the key for the count in the results
             val values: List[JValue] = variableDescriptors.map { vd => 
               result.get(JPath(".where") \ variableToFieldName(vd.variable))
             }
 
+            // TODO: Delete these 3 lines of code
+            values.foreach { case JNothing => new Exception("Gone to hell").printStackTrace(); true; case _ => false }
+
             // ensure that all the variables are within the set of values selected by
             // the histogram that is used for sorting.
-            //if (values.zipWithIndex.forall { case (v, i) => hist(i).isDefinedAt(v) }) {
+            if (values.zipWithIndex.forall { case (v, i) => hist(i).isDefinedAt(v) }) {
               val count = (result \ "count").deserialize[TimeSeriesType]
               m + (values -> (m.getOrElse(values, TimeSeries.empty[CountType]) + count))
-            //} else m
+            } else m
         }
       }
     }
