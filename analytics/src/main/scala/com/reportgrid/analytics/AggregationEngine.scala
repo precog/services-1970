@@ -22,7 +22,7 @@ import scala.collection.SortedMap
 import scalaz.Scalaz._
 import Future._
 
-class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDatabase) extends FutureDeliveryStrategySequential {
+class AggregationEngine private (config: ConfigMap, logger: Logger, database: MongoDatabase) extends FutureDeliveryStrategySequential {
   val EarliestTime = new DateTime(0,             DateTimeZone.UTC)
   val LatestTime   = new DateTime(Long.MaxValue, DateTimeZone.UTC)
 
@@ -88,20 +88,16 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
 
   private val DefaultAggregator = TimeSeriesAggregator.Default
 
-  def printDatabase = {
-    val collections = List(
-      "variable_series",
-      "variable_value_series",
-      "variable_values",
-      "variable_children",
-      "path_children"
-    )
+  val ListJValueOrdering = new Ordering[List[JValue]] {
+    import blueeyes.json.xschema.DefaultOrderings.JValueOrdering
 
-    for (collection <- collections) {
-      database(selectAll.from(collection)).deliverTo { result => 
-          println("collection: " + collection)
-          for (record <- result) println(renderNormalized(record))
-          println("\n")
+    def compare(l1: List[JValue], l2: List[JValue]): Int = {
+      (l1.zip(l2).map {
+        case (v1, v2) => JValueOrdering.compare(v1, v2)
+      }).dropWhile(_ == 0).headOption match {
+        case None => l1.length compare l2.length
+        
+        case Some(c) => c
       }
     }
   }
@@ -256,7 +252,7 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
   type IntersectionResult[T] = SortedMap[List[JValue], T]
 
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], 
-                     start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult[CountType]] = {
+                     start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[CountType]] = {
     intersectSeries(token, path, properties, Periodicity.Eternity, start, end).map { series => 
       import series.ordering
       series.map {
@@ -266,7 +262,7 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
   }
 
   def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], 
-                      periodicity: Periodicity, start: Option[DateTime], end: Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = {
+                      periodicity: Periodicity, start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[TimeSeriesType]] = {
     internalIntersectSeries(varValueSeriesC, token, path, properties, periodicity, start, end)
   }
 
@@ -377,17 +373,21 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
     histograms.flatMap { hist => 
       implicit def ordering: scala.math.Ordering[List[JValue]] = new scala.math.Ordering[List[JValue]] {
         override def compare(l1: List[JValue], l2: List[JValue]) = {
-          (l1 zip l2).zipWithIndex.foldLeft(0) {
-            case (0, ((v1, v2), i)) => hist(i) |> {
-                m => 
-                
-                variableDescriptors(i).sortOrder match {
-                  case SortOrder.Ascending  => -(m(v1) compare m(v2))
-                  case SortOrder.Descending => m(v1) compare m(v2)
-                }
+          val valueOrder = (l1 zip l2).zipWithIndex.foldLeft(0) {
+            case (0, ((v1, v2), i)) => 
+              val m = hist(i)  
+              variableDescriptors(i).sortOrder match {
+                case SortOrder.Ascending  => 
+                  -(m(v1) compare m(v2))
+
+                case SortOrder.Descending => 
+                  m(v1) compare m(v2)
               }
+             
             case (x, _) => x
           }
+
+          if (valueOrder == 0) ListJValueOrdering.compare(l1, l2) else valueOrder
         }
       }
 
@@ -534,5 +534,47 @@ class AggregationEngine(config: ConfigMap, logger: Logger, database: MongoDataba
     case "id" => Variable(JPath.Identity)
 
     case _ => JString(MongoEscaper.decode(name)).deserialize[Variable]
+  }
+}
+
+object AggregationEngine extends FutureDeliveryStrategySequential {
+  private val CollectionIndices = Map(
+    "variable_series" -> List(
+      "path",
+      "accountTokenId",
+      "period",
+      "order"
+    ),
+    "variable_value_series" -> List(
+      "path",
+      "accountTokenId",
+      "period",
+      "order"
+    ),
+    "variable_values" -> List(
+      "path",
+      "accountTokenId"
+    ),
+    "variable_children" -> List(
+      "path",
+      "accountTokenId"
+    ),
+    "path_children" -> List(
+      "path",
+      "accountTokenId"
+    )
+  )
+
+  private def createIndices(database: MongoDatabase): Future[Unit] = {
+    (CollectionIndices.foldLeft(Future.lift(())) {
+      case (future, (collection, indices)) =>
+        future.zip[JNothing.type](database[JNothing.type] {
+          ensureIndex(collection + "_index").on(collection, indices.map(j => JPath(j)): _*)
+        }).toUnit
+    })
+  }
+
+  def apply(config: ConfigMap, logger: Logger, database: MongoDatabase): Future[AggregationEngine] = {
+    createIndices(database).map(_ => new AggregationEngine(config, logger, database))
   }
 }

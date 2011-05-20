@@ -14,6 +14,7 @@ import blueeyes.json.JPath
 import blueeyes.json.JPathImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.persistence.mongo._
+import blueeyes.concurrent.Future
 
 import net.lag.configgy.{Configgy, Config, ConfigMap}
 import net.lag.logging.Logger
@@ -89,10 +90,10 @@ with ArbitraryEvent with FutureMatchers {
     }
   """)
 
-  val mongo = new MockMongo()//RealMongo(config.configMap("mongo"))
+  val mongo = new MockMongo()//
   val database = mongo.database("gluecon")
   
-  val engine = new AggregationEngine(config, Logger.get, database) 
+  val engine = get(AggregationEngine(config, Logger.get, database))
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(1000).milliseconds)
 
@@ -157,26 +158,33 @@ with ArbitraryEvent with FutureMatchers {
     }
 
     "retrieve intersection results" in {      
+      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-          val key = List(obj(".retweet"), obj(".recipientCount"))
-          map + (key -> map.get(key).map(_ + 1).getOrElse(1))
+          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+
+          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
         case (map, _) => map
       }
 
-      println("expected: " + expectedCounts.map(((_:List[JValue]).map(renderNormalized)).first))
+      //println("expected: " + expectedCounts.map(((_:List[JValue]).map(renderNormalized)).first))
 
-      engine.intersectCount(
-        Token.Test, "/gluecon", 
-        List(
-          VariableDescriptor(Variable(".tweeted.retweet"), 10, SortOrder.Descending),
-          VariableDescriptor(Variable(".tweeted.recipientCount"), 10, SortOrder.Descending)
-        ),
-        None, None
-      ) must whenDelivered {
+      engine.intersectCount(Token.Test, "/gluecon", descriptors) must whenDelivered (beEqualTo(expectedCounts)) /*{
         verify(x => (x ->- {m => println(m.map(((_:List[JValue]).map(renderNormalized)).first))}) must_== expectedCounts)
-      }
+      }*/
     }
+  }
+
+  private def get[A](f: Future[A]): A = {
+    val latch = new java.util.concurrent.CountDownLatch(1)
+
+    f.deliverTo(_ => latch.countDown())
+
+    latch.await()
+
+    f.value.get
   }
 }
