@@ -12,11 +12,9 @@ object SortOrder {
   case object Descending extends SortOrder
 
   implicit val SortOrderExtractor = new Extractor[SortOrder] {
-    def extract(jvalue: JValue): SortOrder = jvalue match {
-      case JString("Ascending")  => Ascending
-      case JString("Descending") => Descending
-      
-      case _ => error("Invalid sort order: " + jvalue)
+    def extract(jvalue: JValue): SortOrder = jvalue.deserialize[String].toLowerCase match {
+      case "ascending"  => Ascending
+      case "descending" => Descending
     }
   }
 
@@ -33,17 +31,17 @@ case class VariableDescriptor(variable: Variable, maxResults: Int, sortOrder: So
 object VariableDescriptor {
   implicit val VariableDescriptorExtractor = new Extractor[VariableDescriptor] {
     def extract(jvalue: JValue): VariableDescriptor = VariableDescriptor(
-      variable   = (jvalue \ "variable").deserialize[Variable],
-      maxResults = (jvalue \ "maxResults").deserialize[Int],
-      sortOrder  = (jvalue \ "sortOrder").deserialize[SortOrder]
+      variable   = (jvalue \ "property").deserialize[Variable],
+      maxResults = (jvalue \ "limit").deserialize[Int],
+      sortOrder  = (jvalue \ "order").deserialize[SortOrder]
     )
   }
 
   implicit val VariableDescriptorDecomposer = new Decomposer[VariableDescriptor] {
     def decompose(descriptor: VariableDescriptor): JValue = JObject(
-      JField("variable",    descriptor.variable.serialize)   ::
-      JField("maxResults",  descriptor.maxResults.serialize) ::
-      JField("sortOrder",   descriptor.sortOrder.serialize)  ::
+      JField("property",    descriptor.variable.serialize)   ::
+      JField("limit",       descriptor.maxResults.serialize) ::
+      JField("order",       descriptor.sortOrder.serialize)  ::
       Nil
     )
   }
