@@ -20,8 +20,8 @@ object SortOrder {
 
   implicit val SortOrderDecomposer = new Decomposer[SortOrder] {
     def decompose(order: SortOrder) = order match {
-      case Ascending  => JString("Ascending")
-      case Descending => JString("Descending")
+      case Ascending  => JString("ascending")
+      case Descending => JString("descending")
     }
   }
 }

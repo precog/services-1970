@@ -43,28 +43,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
     val collection = config.getString(prefix + ".collection").getOrElse(prefix)
 
-/*
-
-   type Mealy[A, B] = (A => (B, Mealy[A, B]))
-
-
-
-    Map[MongoCollection, Stage[MongoFilter, MongoUpdate]]
-
-
-
-    def aggregate(event, properties): Map[MongoCollection, MongoPatches]
-
-   
-   type Event = (String, JObject)
-
-   aggregator: Mealy[Event, Map[MongoCollection, MongoPatches]]
-               
-
-
-
-
-*/
     (new MongoStage(
       database   = database,
       collection = collection,
@@ -112,7 +90,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
       val accountPathFilter = forTokenAndPath(token, path)
 
-      val seriesCount = TimeSeriesAggregator.Eternity.aggregate(time, count)//DefaultAggregator.aggregate(time, count)
+      val seriesCount = DefaultAggregator.aggregate(time, count)
 
       val events = jobject.children.collect {
         case JField(eventName, properties) => (eventName, JObject(JField(eventName, properties) :: Nil))
@@ -445,6 +423,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     val start = _start.getOrElse(EarliestTime)
     val end   = _end.getOrElse(LatestTime)
 
+    //println("periodicity = " + periodicity + ", observation = " + observation)
+
     database {
       select(".count").from(col).where {
         filterTokenAndPath &
@@ -462,7 +442,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       } 
     }.map { results =>
       results.map { result =>
-        ((result \ "count").deserialize[TimeSeriesType]) ->- lp("internalSearchSeries - count")
+        ((result \ "count").deserialize[TimeSeriesType]) //->- lp("internalSearchSeries - count")
 
       }.foldLeft[TimeSeriesType](TimeSeries.empty) { _ + _ }.fillGaps
     }
