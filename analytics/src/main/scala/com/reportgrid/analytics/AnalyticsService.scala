@@ -336,12 +336,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }.toSet
 
                     val start = (content \ "start") match {
-                      case JNothing => None
+                      case JNothing | JNull => None
                       case jvalue   => Some(jvalue.deserialize[DateTime])
                     }
 
                     val end = (content \ "end") match {
-                      case JNothing => None
+                      case JNothing | JNull => None
                       case jvalue   => Some(jvalue.deserialize[DateTime])
                     }
 
@@ -374,12 +374,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   val select = Selection((content \ "select").deserialize[String].toLowerCase)
 
                   val start = (content \ "start") match {
-                    case JNothing => None
+                    case JNothing | JNull => None
                     case jvalue   => Some(jvalue.deserialize[DateTime])
                   }
 
                   val end = (content \ "end") match {
-                    case JNothing => None
+                    case JNothing | JNull => None
                     case jvalue   => Some(jvalue.deserialize[DateTime])
                   }
 
