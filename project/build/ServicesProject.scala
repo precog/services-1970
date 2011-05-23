@@ -34,8 +34,8 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val jodatime    = "joda-time"                   % "joda-time"         % "1.6.2"   % "compile"
     val configgy    = "net.lag"                     % "configgy"          % "2.0.0"   % "compile"
 
-    //override def mainClass = Some("com.reportgrid.analytics.AnalyticsServer")
-    override def mainClass = Some("com.reportgrid.analytics.TestAnalyticsServer")
+    override def mainClass = Some("com.reportgrid.analytics.AnalyticsServer")
+    //override def mainClass = Some("com.reportgrid.analytics.TestAnalyticsServer")
 
     override def packageDocsJar = defaultJarPath("-javadoc.jar")
     override def packageSrcJar  = defaultJarPath("-sources.jar")
