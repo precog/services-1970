@@ -7,9 +7,8 @@ import net.lag.configgy.Configgy
 import net.lag.configgy.Config
 
 import org.specs._
-import GlueConGnipDigester._
 
-class DigestServerSpec extends Specification {
+class GlueConGnipDigesterSpec extends Specification {
   val sampleData = """
     {
         "id": "tag:search.twitter.com,2005:72418830005182464",
@@ -259,6 +258,8 @@ class DigestServerSpec extends Specification {
     JField("startups",JArray(List(JString("ReportGrid")))), 
     JField("client",JString("web"))
   )
+
+  val digester = new GlueConGnipDigester("", new GlueConCompanies(None))
   
   "Processing an entry from the Gnip json stream of tweets" should {
     "correctly identify property information" in {
@@ -266,7 +267,7 @@ class DigestServerSpec extends Specification {
       val parser = jsonFactory.createJsonParser(sampleData)
       parser.nextToken match {
         case JsonToken.START_OBJECT => 
-          val Tweet(startups, properties, time) = extractTweet(parser) 
+          val Tweet(startups, properties, time) = digester.extractTweet(parser) 
           startups mustNot beEmpty
           properties must beLike {
             case JObject(fields) => fields must haveTheSameElementsAs(expectedFields1)
@@ -280,7 +281,7 @@ class DigestServerSpec extends Specification {
       val jsonFactory = (new ObjectMapper).getJsonFactory()
       val parser = jsonFactory.createJsonParser(sampleData)
 
-      val tweets = parse(parser).toList
+      val tweets = digester.parse(parser).toList
 
       tweets must haveSize(2)
       List(expectedFields1, expectedFields2).forall {
@@ -292,6 +293,21 @@ class DigestServerSpec extends Specification {
       }
     }
   }
+
+//  "uploading rules to Gnip" should {
+//    "update the rules" in {
+//      val conf = """
+//        gnipHost = "reportgrid-powertrack.gnip.com"
+//        gnipPath = "data_collectors/1"
+//        username = "reportgrid"
+//        password = "trippyvizy"
+//        tokenId = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D"
+//      """
+//
+//      Configgy.configureFromString(conf)
+//      GlueConDemoServer.loadRules(Configgy.config, new GlueConCompanies(None))
+//    }
+//  }
 
 //  "connecting to the Gnip service" should {
 //    "correctly handle the stream" in {
@@ -305,7 +321,7 @@ class DigestServerSpec extends Specification {
 //      """
 //
 //      Configgy.configureFromString(conf)
-//      GlueConDemoServer.run(Configgy.config)
+//      GlueConDemoServer.run(Configgy.config, new GlueConCompanies(None))
 //    }
 //  }
 }

@@ -16,6 +16,7 @@ import net.lag.configgy.Config
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
+import scala.io.Source
 import scalaz._
 import Scalaz._
 
@@ -36,20 +37,29 @@ object GlueConDemoServer {
 
     if (args.parameters.get("configFile").isDefined) {
       Configgy.configure(args.parameters.get("configFile").get)
+      val companies = new GlueConCompanies(args.parameters.get("companyFile"))
 
       if (args.parameters.get("action").exists(_ == "load_rules")) {        
-        loadRules(Configgy.config)
+        loadRules(Configgy.config, companies)
       } else {
-        run(Configgy.config)
+        run(Configgy.config, companies)
       }
     } else {
       println("Usage: --configFile [filename] [--action [run|load_rules]]")
+      println("Config file format:")
+      println("""
+        gnipHost = "your-host.gnip.com"
+        gnipPath = "data_collectors/1
+        username = "me"
+        password = "woo"
+        tokenId = "your-token"
+      """)
             
       System.exit(-1)
     }
   }
 
-  def run(config: Config): Unit = {
+  def run(config: Config, companies: GlueConCompanies): Unit = {
     //val reportGridUrl = config.getString("reportGridUrl").map(new URL(_))
     val http = new Http
   
@@ -63,19 +73,22 @@ object GlueConDemoServer {
       val gnipUrl = new URL("https://" + host + "/" + path + "/track.json")
       val gnipHost = new HttpHost(host, config.getInt("port", 80))      
 
-      new GlueConGnipDigester(token).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
+      new GlueConGnipDigester(token, companies).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
     }
   }
 
-  def loadRules(config: Config) = {
+  def loadRules(config: Config, companies: GlueConCompanies) = {
     val rules = {
-      def rule(value: String, tag: String) = JObject(List(
-        JField("value", JString(value)),
-        JField("tag", JString(tag))
-      ))
+      def rule(value: String, tag: String) = {
+        val v = if (value.matches(""".*(\s+|\.).*""")) "\"" + value + "\"" else value
+        JObject(List(
+          JField("value", JString(v)),
+          JField("tag", JString(tag))
+        ))
+      }
 
-      val podcos = GlueConGnipDigester.podCompanies.map{ case (_, b) => rule(b, "pods") }
-      val others = GlueConGnipDigester.allCompanies.map(rule(_, "startups"))
+      val podcos = companies.podCompanies.map{ case (a, _) => rule(a, "pods") }
+      val others = companies.allCompanies.map(rule(_, "startups"))
 
       JObject(List(
         JField("rules", JArray((podcos ++ others).toList))
@@ -86,42 +99,54 @@ object GlueConDemoServer {
     for {
       host <- config.getString("gnipHost")
       path <- config.getString("gnipPath")
-      creds <- (config.getString("username") <**> config.getString("password"))((_, _))
+      username <- config.getString("username") 
+      password <- config.getString("password")
     } {
-      val req = :/("gnipHost") / path / "rules.json"
-      http(req.secure << renderNormalized(rules) as (creds._1, creds._2) >|)
+      val req = :/(host) / path / "rules.json"
+      http(req.secure << renderNormalized(rules) <:< Map("Content-Type" -> "application/json") as (username, password) >|)
     }
   }
 }
 
-object GlueConGnipDigester {
+class GlueConCompanies(companyFile: Option[String]) {
   val podCompanies: Map[String, String] = Map(
     "report grid" -> "ReportGrid",
     "ReportGrid" -> "ReportGrid",
     "Sing.ly" -> "Sing.ly",
     "BigDoor" -> "BigDoor",
-    "BigDoorMedia" -> "BigDoor",
+    "@BigDoorMedia" -> "BigDoor",
     "StreamStep" -> "StreamStep",
     "WanderFly" -> "WanderFly",
-    "Proxomo" -> "Proxomo",
+    "@Proxomo" -> "Proxomo",
     "LocVox" -> "LocVox",
     "Eclipse Foundation" -> "Eclipse Foundation",
-    "Standing_Cloud" -> "Standing Cloud",
+    "@Standing_Cloud" -> "Standing Cloud",
     "Standing Cloud" -> "Standing Cloud",
     "Flomio" -> "Flomio",
-    "jexyco" -> "Jexy",
+    "@jexyco" -> "Jexy",
     "Axiomatics" -> "Axiomatics",
-    "Get_Rainmaker" -> "Rainmaker",
+    "@Get_Rainmaker" -> "Rainmaker",
     "rainmaker.cc" -> "Rainmaker",
     "StatsMix" -> "StatsMix",
-    "Tendril" -> "Tendril",
+    "@Tendril" -> "Tendril",
     "Tendril Networks" -> "Tendril"
-  ) map {
-    case (k, v) => (Stemmer.stem(k.toLowerCase), v)
-  }
+  ) 
 
-  val allCompanies: Set[String] = Set(
-  )
+  val allCompanies: Set[String] = companyFile.map((f: String) => Source.fromFile(f).getLines.map(_.trim).toSet).getOrElse(Set())
+}
+
+case class Tweet(
+  startups: List[String],
+  properties: JObject,
+  time: Option[DateTime]
+)
+
+class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
+  val api = new ReportGrid(tokenId)
+
+  val podCompaniesStemmed = companies.podCompanies map {
+    case (k, v) => (Stemmer.stem(k.replaceAll("@", "").toLowerCase), v)
+  }
 
   def bucketCounts(i: Int) = {
     if (i / 25000 > 0) (i / 10000) * 10000
@@ -131,11 +156,51 @@ object GlueConGnipDigester {
     else i
   }
 
-  case class Tweet(
-    startups: List[String],
-    properties: JObject,
-    time: Option[DateTime]
-  )
+  def ingestGnipJsonStream(http: Http, host: HttpHost, uri: URI, credentials: Credentials): Unit = {
+    val req = new HttpGet(uri)
+    @volatile var done = false
+
+    def printStream(resp: HttpResponse): Unit = {
+      import java.io._
+      for (entity <- Option(resp.getEntity)) {
+        val reader = new BufferedReader(new InputStreamReader(entity.getContent))
+        var line = reader.readLine
+        while (line != null) {
+          println(line)
+          line = reader.readLine
+        }
+      }
+    }
+
+    def handleStream(resp: HttpResponse): Unit = {
+      if (resp.getStatusLine.getStatusCode == 200) {
+        for (entity <- Option(resp.getEntity)) {
+          val jsonFactory = (new ObjectMapper).getJsonFactory()
+          val parser = jsonFactory.createJsonParser(entity.getContent)
+          for (Tweet(startups, properties, time) <- parse(parser)) {
+            if (companies.podCompanies.values.exists(startups.contains)) {
+              sendToReportGrid("pods", properties, time.map(_.toDate))
+            }
+
+            sendToReportGrid("all", properties, time.map(_.toDate))
+          }
+        }
+      } else {
+        println("Obtained a non-OK response from the Gnip server:")
+        println("host: " + host + "; uri = " + uri + "; credentials = " + credentials)
+        printStream(resp)
+        //done = true
+      }
+    }
+
+    while(!done) {
+      http.execute(host, Some(credentials), req, handleStream _, { 
+        case t: Throwable => 
+          println("Got an error handling the gnip stream: " + t.getMessage)
+          t.printStackTrace
+      })
+    }
+  }
 
   def parse(parser: JsonParser): Stream[Tweet] = {
     def cons: Stream[Tweet] = {
@@ -166,8 +231,7 @@ object GlueConGnipDigester {
     } yield value
     
     val words = body.toList.flatMap(_.toLowerCase.split("""\s+""").map(s => Stemmer.stem(s.replaceAll("@", ""))))
-    val startups = words.flatMap(podCompanies.get) ++ words.filter(allCompanies)
-
+    val startups = words.flatMap(podCompaniesStemmed.get) ++ words.filter(companies.allCompanies)
 
     def locName(node: JsonNode) = for {
       loc <- Option(node.get("location"))
@@ -219,86 +283,6 @@ object GlueConGnipDigester {
 
     Tweet(startups, jstate(JObject(Nil))._1, time)
   }
-}
-
-class GlueConGnipDigester(tokenId: String) {
-  import GlueConGnipDigester._
-  val api = new ReportGrid(tokenId)
-
-
-  def ingestGnipJsonStream(http: Http, host: HttpHost, uri: URI, credentials: Credentials): Unit = {
-    val req = new HttpGet(uri)
-    @volatile var done = false
-
-    def printStream(resp: HttpResponse): Unit = {
-      import java.io._
-      for (entity <- Option(resp.getEntity)) {
-        val reader = new BufferedReader(new InputStreamReader(entity.getContent))
-        var line = reader.readLine
-        while (line != null) {
-          println(line)
-          line = reader.readLine
-        }
-      }
-    }
-
-    def handleStream(resp: HttpResponse): Unit = {
-      if (resp.getStatusLine.getStatusCode == 200) {
-        for (entity <- Option(resp.getEntity)) {
-          val jsonFactory = (new ObjectMapper).getJsonFactory()
-          val parser = jsonFactory.createJsonParser(entity.getContent)
-          for (Tweet(startups, properties, time) <- parse(parser)) {
-            if (podCompanies.values.exists(startups.contains)) {
-              sendToReportGrid("pods", properties, time.map(_.toDate))
-            }
-
-            sendToReportGrid("all", properties, time.map(_.toDate))
-          }
-        }
-      } else {
-        println("host: " + host + "; uri = " + uri + "; credentials = " + credentials)
-        printStream(resp)
-        done = true
-      }
-    }
-
-
-    while(!done) {
-      http.execute(host, Some(credentials), req, handleStream _, { 
-        case t: Throwable => 
-          println("Got an error handling the gnip stream: " + t.getMessage)
-          t.printStackTrace
-      })
-    }
-  }
-
-
-//  def ingestGnipXmlStream(http: Http, host: HttpHost, uri: URI, credentials: Credentials): Unit = {
-//    val req = new HttpGet(uri)
-//
-//    def handleStream(resp: HttpResponse): Unit = {
-//      for (entity <- Option(resp.getEntity)) {
-//        val factory = XMLInputFactory.newInstance();
-//        val parser = factory.createXMLStreamReader(entity.getContent);
-//        parse(parser)
-//      }
-//    }
-//
-//    @tailrec def parse(parser: XMLStreamReader): Unit = {
-//      parser.next match {
-//        case XMLStreamConstants.START_ELEMENT if parser.getLocalName == "entry" => processEntry(parser, JObject(Nil))
-//        case XMLStreamConstants.END_ELEMENT if parser.getLocalName == "entry"   => parse(parser)
-//      }
-//    }
-//
-//    def processEntry(parser: XMLStreamReader, jobject: JObject): Unit = {
-//      parser.next match {
-//        case XMLStreamConstants.START_ELEMENT => 
-//      }
-//    }
-//
-//    http.execute(host, Some(credentials), req, handleStream _, { case t: Throwable => t.printStackTrace })
-//  }
 
   def sendToReportGrid(path: String, jobject: JObject, time: Option[java.util.Date]) = {
     println("tracking event: " + jobject)
