@@ -7,7 +7,7 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
   lazy val examples  = project("examples",  "Examples",  new ExamplesProject(_), common)
 
 
-  class CommonProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {
+  class CommonProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with IdeaProject {
     val scalaspec   = "org.scala-tools.testing"     % "specs_2.8.0"       % "1.6.6-SNAPSHOT"  % "test"
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
 
@@ -37,6 +37,7 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val configgy    = "net.lag"                     % "configgy"          % "2.0.0"
 
     override def mainClass = Some("com.reportgrid.analytics.AnalyticsServer")
+    //override def mainClass = Some("com.reportgrid.analytics.TestAnalyticsServer")
 
     override def packageDocsJar = defaultJarPath("-javadoc.jar")
     override def packageSrcJar  = defaultJarPath("-sources.jar")

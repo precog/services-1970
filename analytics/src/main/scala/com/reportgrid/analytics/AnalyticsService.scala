@@ -81,6 +81,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           def valueOf(request: HttpRequest[_]): JValue = {
             val value = request.parameters('value)
 
+            println("Getting value of: " + value)
+
             try JsonParser.parse(value)
             catch {
               case _ => JString(value)
@@ -469,11 +471,6 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
 }
 
 object TestAnalyticsServer extends BlueEyesServer with AnalyticsService {
-  val configuration = """
-  """
-
-  Configgy.configureFromString(configuration)
-
   def mongoFactory(config: ConfigMap) = {
     new blueeyes.persistence.mongo.mock.MockMongo()
   }
