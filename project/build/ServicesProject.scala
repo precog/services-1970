@@ -12,14 +12,13 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
 
     val jodatime    = "joda-time"                   % "joda-time"         % "1.6.2"
-    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.15"
+    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.17"
+    val configgy    = "net.lag"                     % "configgy"          % "2.0.0"
   }
 
   class BillingProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {
     val scalaspec   = "org.scala-tools.testing"     % "specs_2.8.0"       % "1.6.6-SNAPSHOT"  % "test"
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
-
-    val configgy    = "net.lag"                     % "configgy"          % "2.0.0"
 
     override def mainClass = Some("com.reportgrid.billing.BillingServer")
 
@@ -33,9 +32,6 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
     val junit       = "junit"                       % "junit"             % "4.7"             % "test"
 
-    val jodatime    = "joda-time"                   % "joda-time"         % "1.6.2"
-    val configgy    = "net.lag"                     % "configgy"          % "2.0.0"
-
     override def mainClass = Some("com.reportgrid.analytics.AnalyticsServer")
     //override def mainClass = Some("com.reportgrid.analytics.TestAnalyticsServer")
 
@@ -48,12 +44,9 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val scalaspec   = "org.scala-tools.testing"     % "specs_2.8.0"       % "1.6.6-SNAPSHOT"  % "test"
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
 
-    val jodatime    = "joda-time"                   % "joda-time"         % "1.6.2"
-    val configgy    = "net.lag"                     % "configgy"          % "2.0.0"
     val dispatch_http = "net.databinder"            %% "dispatch-http"    % "0.8.1"
-    val client      = "com.reportgrid"              %% "scala-client"     % "0.2"
-    val jackson     = "org.codehaus.jackson"        % "jackson-core-asl"  % "1.8.1"
-    val jackmap     = "org.codehaus.jackson"        % "jackson-mapper-asl"  % "1.8.1"
+    val client        = "com.reportgrid"            %% "scala-client"     % "0.2.1"
+    val jackmap       = "org.codehaus.jackson"      % "jackson-mapper-asl"  % "1.8.1"
 
     override def mainClass = Some("com.reportgrid.examples.gluecon.DigestServer")
     override def packageDocsJar = defaultJarPath("-javadoc.jar")

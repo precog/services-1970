@@ -30,36 +30,66 @@ import javax.xml.stream.XMLStreamReader
 import org.joda.time.DateTime
 import nlp.Stemmer
 
-object DigestServer {
+object GlueConDemoServer {
   def main(argv: Array[String]) {
     val args = CommandLineArguments(argv: _*)
 
-    if (args.size == 0 || !args.parameters.get("help").isEmpty) {
-      println("Usage: --configFile [config file]")
+    if (args.parameters.get("configFile").isDefined) {
+      Configgy.configure(args.parameters.get("configFile").get)
+
+      if (args.parameters.get("action").exists(_ == "load_rules")) {        
+        loadRules(Configgy.config)
+      } else {
+        run(Configgy.config)
+      }
+    } else {
+      println("Usage: --configFile [filename] [--action [run|load_rules]]")
             
       System.exit(-1)
-    } else {        
-      Configgy.configure(args.parameters.get("configFile").getOrElse(error("Expected --configFile option")))
-      run(Configgy.config)
     }
   }
 
   def run(config: Config): Unit = {
     //val reportGridUrl = config.getString("reportGridUrl").map(new URL(_))
-    val credentials = (config.getString("username") <**> config.getString("password"))(Credentials.apply)
-
     val http = new Http
   
     for {
       token <- config.getString("tokenId")
       host <- config.getString("gnipHost")
       path <- config.getString("gnipPath")
-      creds <- credentials
+      creds <- (config.getString("username") <**> config.getString("password"))(Credentials.apply)
     } {
       println("Starting digester service...")
-      val gnipUrl = new URL("https://" + host + "/" + path)
+      val gnipUrl = new URL("https://" + host + "/" + path + "/track.json")
       val gnipHost = new HttpHost(host, config.getInt("port", 80))      
+
       new GlueConGnipDigester(token).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
+    }
+  }
+
+  def loadRules(config: Config) = {
+    val rules = {
+      def rule(value: String, tag: String) = JObject(List(
+        JField("value", JString(value)),
+        JField("tag", JString(tag))
+      ))
+
+      val podcos = GlueConGnipDigester.podCompanies.map{ case (_, b) => rule(b, "pods") }
+      val others = GlueConGnipDigester.allCompanies.map(rule(_, "startups"))
+
+      JObject(List(
+        JField("rules", JArray((podcos ++ others).toList))
+      ))
+    }
+
+    val http = new Http
+    for {
+      host <- config.getString("gnipHost")
+      path <- config.getString("gnipPath")
+      creds <- (config.getString("username") <**> config.getString("password"))((_, _))
+    } {
+      val req = :/("gnipHost") / path / "rules.json"
+      http(req.secure << renderNormalized(rules) as (creds._1, creds._2) >|)
     }
   }
 }
@@ -236,7 +266,7 @@ class GlueConGnipDigester(tokenId: String) {
     while(!done) {
       http.execute(host, Some(credentials), req, handleStream _, { 
         case t: Throwable => 
-          println(t.getMessage)
+          println("Got an error handling the gnip stream: " + t.getMessage)
           t.printStackTrace
       })
     }

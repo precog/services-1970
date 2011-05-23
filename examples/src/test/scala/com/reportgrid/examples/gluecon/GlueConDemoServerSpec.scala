@@ -293,21 +293,21 @@ class DigestServerSpec extends Specification {
     }
   }
 
-  "connecting to the Gnip service" should {
-    "correctly handle the stream" in {
-      val conf = """
-        gnipHost = "reportgrid-powertrack.gnip.com"
-        gnipPath = "data_collectors/1/track.json"
-        username = "reportgrid"
-        password = "trippyvizy"
-        reportGridURL = "http://api.reportgrid.com/services/analytics/v0/"
-        tokenId = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D"
-      """
-
-      Configgy.configureFromString(conf)
-      DigestServer.run(Configgy.config)
-    }
-  }
+//  "connecting to the Gnip service" should {
+//    "correctly handle the stream" in {
+//      val conf = """
+//        gnipHost = "reportgrid-powertrack.gnip.com"
+//        gnipPath = "data_collectors/1/track.json"
+//        username = "reportgrid"
+//        password = "trippyvizy"
+//        reportGridURL = "http://api.reportgrid.com/services/analytics/v0/"
+//        tokenId = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D"
+//      """
+//
+//      Configgy.configureFromString(conf)
+//      GlueConDemoServer.run(Configgy.config)
+//    }
+//  }
 }
 
 
