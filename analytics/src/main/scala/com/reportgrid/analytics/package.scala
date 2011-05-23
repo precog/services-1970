@@ -45,24 +45,6 @@ package object analytics extends AggregatorImplicits {
 
   /** Normalizes the JValue, basically by sorting according to a default JValue ordering.
    */
-  def normalize[T <: JValue](jvalue: T): T = {
-    import blueeyes.json.xschema.DefaultOrderings.JValueOrdering
-
-    jvalue match {
-      case JObject(fields) => JObject(fields.map(normalize _).sorted(JValueOrdering)).asInstanceOf[T]
-
-      case JArray(elements) => JArray(elements.map(normalize _).sorted(JValueOrdering)).asInstanceOf[T]
-
-      case JField(name, value) => JField(name, normalize(value)).asInstanceOf[T]
-
-      case _ => jvalue
-    }
-  }
-
-  /** Renders a normalized JValue.
-   */
-  def renderNormalized(jvalue: JValue): String = compact(render(normalize(jvalue)))
-
   def flatten(list: List[Map[JPath, JValue]]): Map[JPath, List[JValue]] = {
     list.foldLeft[Map[JPath, List[JValue]]](Map()) { (all, cur) =>
       cur.foldLeft(all) { (all, entry: (JPath, JValue)) =>
