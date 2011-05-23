@@ -71,7 +71,7 @@ trait Repositories {
   val scalablerepo    = MavenRepository("Scalable Solutions Repo",    "http://akka.io/repository/")
 }
 
-trait OneJar { this: DefaultProject =>
+trait OneJar { self: DefaultProject =>
   lazy val oneJar = oneJarAction
 
   def oneJarAction = oneJarTask.dependsOn(`package`) describedAs("Creates a single JAR containing all dependencies that runs the project's mainClass")
@@ -84,7 +84,7 @@ trait OneJar { this: DefaultProject =>
 
     val manifest = new Manifest(new ByteArrayInputStream((
       "Manifest-Version: 1.0\n" +
-      "Main-Class: " + mainClass.get + "\n").getBytes))
+      "Main-Class: " + self.mainClass.get + "\n").getBytes))
 
     val versionString = version match {
       case BasicVersion(major, _, _, _) => "-v" + major.toString

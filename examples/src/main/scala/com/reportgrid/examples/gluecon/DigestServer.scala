@@ -12,6 +12,7 @@ import org.apache.http.client.methods.HttpGet
 import org.codehaus.jackson._
 import org.codehaus.jackson.map._
 import net.lag.configgy.Configgy
+import net.lag.configgy.Config
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
@@ -39,27 +40,26 @@ object DigestServer {
       System.exit(-1)
     } else {        
       Configgy.configure(args.parameters.get("configFile").getOrElse(error("Expected --configFile option")))
-      
-      val config = Configgy.config
+      run(Configgy.config)
+    }
+  }
 
-      val gnipHost = for (host <- config.getString("gnipHost")) yield {
-        new HttpHost(host, config.getInt("port", 80))      
-      }
+  def run(config: Config): Unit = {
+    //val reportGridUrl = config.getString("reportGridUrl").map(new URL(_))
+    val credentials = (config.getString("username") <**> config.getString("password"))(Credentials.apply)
 
-      val reportGridUrl = config.getString("reportGridUrl").map(new URL(_))
-      val credentials = (config.getString("username") <**> config.getString("password"))(Credentials.apply)
-
-      val http = new Http
-    
-      for {
-        token <- config.getString("tokenId")
-        host <- gnipHost
-        path <- config.getString("gnipPath")
-        creds <- credentials
-      } {
-        val gnipUrl = new URL("http://" + gnipHost + "/" + path)
-        new GlueConGnipDigester(token).ingestGnipJsonStream(http, host, gnipUrl.toURI, creds)
-      }
+    val http = new Http
+  
+    for {
+      token <- config.getString("tokenId")
+      host <- config.getString("gnipHost")
+      path <- config.getString("gnipPath")
+      creds <- credentials
+    } {
+      println("Starting digester service...")
+      val gnipUrl = new URL("https://" + host + "/" + path)
+      val gnipHost = new HttpHost(host, config.getInt("port", 80))      
+      new GlueConGnipDigester(token).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
     }
   }
 }
@@ -198,22 +198,48 @@ class GlueConGnipDigester(tokenId: String) {
 
   def ingestGnipJsonStream(http: Http, host: HttpHost, uri: URI, credentials: Credentials): Unit = {
     val req = new HttpGet(uri)
+    @volatile var done = false
 
-    def handleStream(resp: HttpResponse): Unit = {
+    def printStream(resp: HttpResponse): Unit = {
+      import java.io._
       for (entity <- Option(resp.getEntity)) {
-        val jsonFactory = (new ObjectMapper).getJsonFactory()
-        val parser = jsonFactory.createJsonParser(entity.getContent)
-        for (Tweet(startups, properties, time) <- parse(parser)) {
-          if (podCompanies.values.exists(startups.contains)) {
-            sendToReportGrid("pods", properties, time.map(_.toDate))
-          }
-
-          sendToReportGrid("all", properties, time.map(_.toDate))
+        val reader = new BufferedReader(new InputStreamReader(entity.getContent))
+        var line = reader.readLine
+        while (line != null) {
+          println(line)
+          line = reader.readLine
         }
       }
     }
 
-    http.execute(host, Some(credentials), req, handleStream _, { case t: Throwable => ingestGnipJsonStream(http, host, uri, credentials) })
+    def handleStream(resp: HttpResponse): Unit = {
+      if (resp.getStatusLine.getStatusCode == 200) {
+        for (entity <- Option(resp.getEntity)) {
+          val jsonFactory = (new ObjectMapper).getJsonFactory()
+          val parser = jsonFactory.createJsonParser(entity.getContent)
+          for (Tweet(startups, properties, time) <- parse(parser)) {
+            if (podCompanies.values.exists(startups.contains)) {
+              sendToReportGrid("pods", properties, time.map(_.toDate))
+            }
+
+            sendToReportGrid("all", properties, time.map(_.toDate))
+          }
+        }
+      } else {
+        println("host: " + host + "; uri = " + uri + "; credentials = " + credentials)
+        printStream(resp)
+        done = true
+      }
+    }
+
+
+    while(!done) {
+      http.execute(host, Some(credentials), req, handleStream _, { 
+        case t: Throwable => 
+          println(t.getMessage)
+          t.printStackTrace
+      })
+    }
   }
 
 
@@ -244,14 +270,24 @@ class GlueConGnipDigester(tokenId: String) {
 //    http.execute(host, Some(credentials), req, handleStream _, { case t: Throwable => t.printStackTrace })
 //  }
 
-  def sendToReportGrid(path: String, jobject: JObject, time: Option[java.util.Date]) = api.track(
-    path       = "/gluecon/" + path,
-    name       = "tweet",
-    properties = jobject,
-    rollup     = true,
-    timestamp  = time,
-    count = Some(1)
-  )
+  def sendToReportGrid(path: String, jobject: JObject, time: Option[java.util.Date]) = {
+    println("tracking event: " + jobject)
+    try {
+      api.track(
+        path       = "/gluecon/" + path,
+        name       = "tweet",
+        properties = jobject,
+        rollup     = true,
+        timestamp  = time,
+        count = Some(1)
+      )
+    } catch {
+      case t: Throwable => 
+        println("Got an error sending to the ReportGrid API: " + t.getMessage)
+        println("Message was not logged: " + jobject)
+        t.printStackTrace
+    }
+  }
 }
 
 
