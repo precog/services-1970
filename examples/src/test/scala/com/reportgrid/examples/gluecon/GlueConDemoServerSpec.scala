@@ -281,14 +281,15 @@ class GlueConGnipDigesterSpec extends Specification {
       val jsonFactory = (new ObjectMapper).getJsonFactory()
       val parser = jsonFactory.createJsonParser(sampleData)
 
-      val tweets = digester.parse(parser).toList
+      val tweets = digester.parse(parser).take(2).toList
 
-      tweets must haveSize(2)
       List(expectedFields1, expectedFields2).forall {
         fields => tweets must exist {
           case Tweet(_, properties, _) => properties must beLike {
             case JObject(fields) => fields must haveTheSameElementsAs(fields)
           }
+
+          case _ => fail("Shouldn't see a none.")
         }
       }
     }

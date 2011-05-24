@@ -73,7 +73,13 @@ object GlueConDemoServer {
       val gnipUrl = new URL("https://" + host + "/" + path + "/track.json")
       val gnipHost = new HttpHost(host, config.getInt("port", 80))      
 
-      new GlueConGnipDigester(token, companies).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
+      while(true) {
+        try {
+          new GlueConGnipDigester(token, companies).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
+        } catch {
+          case t: Throwable => println(t.getMessage); t.printStackTrace
+        }
+      }
     }
   }
 
@@ -202,18 +208,13 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
     }
   }
 
-  def parse(parser: JsonParser): Stream[Tweet] = {
-    def cons: Stream[Tweet] = {
+  def parse(parser: JsonParser): Iterator[Tweet] = {
+    Iterator.continually {
       parser.nextToken match {
-        case JsonToken.START_OBJECT => 
-          Stream.cons(extractTweet(parser), cons)
-
-        case null => Stream.empty[Tweet]
+        case JsonToken.START_OBJECT => extractTweet(parser)
         case tok => error("Got an unexpected token at the root; should only be objects here: " + tok + ": " + parser.getText)
       }
     }
-
-    cons
   }
 
   def extractTweet(parser: JsonParser): Tweet = {
