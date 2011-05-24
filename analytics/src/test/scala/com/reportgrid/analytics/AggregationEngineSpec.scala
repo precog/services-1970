@@ -124,6 +124,31 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
     }
 
+    "retrieve values" in {
+      val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+          obj.flattenWithPath.foldLeft(map) {
+            case (map, (path, value)) => 
+              val key = (eventName, path)
+
+              val oldValues = map.getOrElse(key, Set.empty)
+
+              map + (key -> (oldValues + value))
+          }
+
+        case (map, _) => map
+      }
+
+      println("Values = " + values)
+
+      values.foreach {
+        case ((eventName, path), values) =>
+          engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)) must whenDelivered {
+            haveSameElementsAs(values)
+          }
+      }
+    }
+
     "retrieve the top results of a histogram" in {
       val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
