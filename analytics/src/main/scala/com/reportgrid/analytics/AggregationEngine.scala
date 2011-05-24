@@ -413,7 +413,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           case (m, result) =>
             // generate the key for the count in the results
             val values: List[JValue] = (variableDescriptors.sortBy(_.variable).zipWithIndex.map { 
-              case (vd, i) => (result.get(JPath(".where.variable" + i)).deserialize[Variable], result.get(JPath(".where.predicate" + i))
+              case (vd, i) => (result.get(JPath(".where.variable" + i)).deserialize[Variable], result.get(JPath(".where.predicate" + i)))
             }).map {
               case (variable, value) => (variableDescriptors.map(_.variable).indexOf(variable), value)
             }.sortBy(_._1).map(_._2).toList
