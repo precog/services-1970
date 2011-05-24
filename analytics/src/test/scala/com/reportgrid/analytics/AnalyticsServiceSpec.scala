@@ -5,7 +5,8 @@ import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test._
-import blueeyes.concurrent.Duration._
+import blueeyes.util.metrics.Duration._
+import blueeyes.json.JsonDSL._
 
 import MimeTypes._
 
@@ -143,7 +144,7 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers {
       } must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(result), _) =>
-            println(status, renderNormalized(result))
+            println((status, renderNormalized(result)))
             fail
         }
       }

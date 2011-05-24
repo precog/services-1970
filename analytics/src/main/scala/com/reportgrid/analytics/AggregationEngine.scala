@@ -5,6 +5,7 @@ import blueeyes.concurrent.{Future, FutureDeliveryStrategySequential}
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.json.JsonAST._
+import blueeyes.json.JsonDSL._
 import blueeyes.json.{JsonParser, JPath}
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
@@ -381,13 +382,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         select(".count", ".where").from(col).where {
           filterTokenAndPath &
           JPath(".period.periodicity") === periodicity.serialize &
-          JPath(".period.start")       >=  start.serialize &
-          JPath(".period.start")        <  end.serialize &
+          MongoFilterBuilder(JPath(".period.start"))        >= start.serialize &
+          MongoFilterBuilder(JPath(".period.start"))        <  end.serialize &
           JPath(".order") === variableDescriptors.length & {
             variableDescriptors.foldLeft[MongoFilter](MongoFilterAll) { 
               case (filter, VariableDescriptor(variable, limit, order)) =>
                 filter & {
-                  JPath(".where." + variableToFieldName(variable)) exists
+                  JPath(".where." + variableToFieldName(variable)) isDefined
                 }
             } 
           }
@@ -429,8 +430,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       select(".count").from(col).where {
         filterTokenAndPath &
         JPath(".period.periodicity") === periodicity.serialize &
-        JPath(".period.start")       >=  start.serialize &
-        JPath(".period.start")        <  end.serialize &
+        MongoFilterBuilder(JPath(".period.start"))      >=  start.serialize &
+        MongoFilterBuilder(JPath(".period.start"))       <  end.serialize &
         JPath(".order") === observation.size & {
           observation.foldLeft[MongoFilter](MongoFilterAll) { 
             case (filter, (variable, predicate)) => 
@@ -549,7 +550,7 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
     (CollectionIndices.foldLeft(Future.lift(())) {
       case (future, (collection, indices)) =>
         future.zip[JNothing.type](database[JNothing.type] {
-          ensureIndex(collection + "_index").on(collection, indices.map(j => JPath(j)): _*)
+          ensureIndex(collection + "_index").on(indices.map(j => JPath(j)): _*).in(collection)
         }).toUnit
     })
   }

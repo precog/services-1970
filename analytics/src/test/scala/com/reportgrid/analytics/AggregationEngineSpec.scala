@@ -5,8 +5,8 @@ import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test.FutureMatchers
-import blueeyes.concurrent.Duration
-import blueeyes.concurrent.Duration.toDuration
+import blueeyes.util.metrics.Duration
+import blueeyes.util.metrics.Duration.toDuration
 import MimeTypes._
 
 import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
