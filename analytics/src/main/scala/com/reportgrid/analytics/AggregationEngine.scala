@@ -412,10 +412,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         results.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
           case (m, result) =>
             // generate the key for the count in the results
-            val values: List[JValue] = (variableDescriptors.sortBy(_.variable).zipWithIndex.map { 
-              case (vd, i) => (result.get(JPath(".where.variable" + i)).deserialize[Variable], result.get(JPath(".where.predicate" + i)))
-            }).map {
-              case (variable, value) => (variableDescriptors.map(_.variable).indexOf(variable), value)
+            val values: List[JValue] = variableDescriptors.sortBy(_.variable).zipWithIndex.map { 
+              case (vd, i) => (
+                variableDescriptors.map(_.variable).indexOf(result.get(JPath(".where.variable" + i)).deserialize[Variable]), 
+                result.get(JPath(".where.predicate" + i))
+              )
             }.sortBy(_._1).map(_._2).toList
 
             values.filter(_ == JNothing).map(_ => println("JNothing found"))
