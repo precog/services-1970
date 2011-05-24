@@ -82,7 +82,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           def valueOf(request: HttpRequest[_]): JValue = {
             import java.net.URLDecoder
 
-            val value = URLDecoder.decode(request.parameters('value), "UTF-8")
+            val value = request.parameters('value) // URLDecoder.decode(request.parameters('value), "UTF-8")
 
             try JsonParser.parse(value)
             catch {
