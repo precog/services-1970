@@ -134,7 +134,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
 
       engine.getHistogramTop(Token.Test, "/gluecon", Variable(".tweeted.retweet"), 10) must whenDelivered {
-        verify(x => {println(x); x ==  retweetCounts})
+        beEqualTo(retweetCounts)
       }
     }
 
@@ -152,8 +152,6 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
         case x => error("Anomaly detected in the fabric of spacetime: " + x)
       }
-
-      //println("Expected: " + expectedTotals)
 
       expectedTotals.foreach {
         case ((eventName, path, value), count) =>

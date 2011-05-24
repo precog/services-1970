@@ -289,16 +289,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     report.observationCounts.foldLeft(MongoPatches.empty) { (patches, tuple) =>
       val (observation, _) = tuple
 
-      observation.foldLeft(patches) { (patches, tuple) =>
-        val (variable, predicate) = tuple
+      observation.foldLeft(patches) {
+        case (patches, (variable, predicate)) =>
 
-        val filterVariable = filter & forVariable(variable)
+          val filterVariable = filter & forVariable(variable)
+          val predicateField = MongoEscaper.encode(renderNormalized(predicate.serialize))
 
-        val predicateField = MongoEscaper.encode(renderNormalized(predicate.serialize))
+          val valuesUpdate = (".values." + predicateField) inc 1
 
-        val valuesUpdate = (".values." + predicateField) inc 1
-
-        patches + (filterVariable -> valuesUpdate)
+          patches + (filterVariable -> valuesUpdate)
       }
     }
   }
@@ -314,8 +313,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     def whereVariablesEqual[P <: Predicate : Decomposer](observation: Observation[P]): MongoFilter = {
       observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoFilter](filter) {
         case (filter, ((variable, predicate), index)) =>
-          val varName  = ".variable"  + (index + 1).toString
-          val predName = ".predicate" + (index + 1).toString
+          val varName  = ".variable"  + index
+          val predName = ".predicate" + index
 
           filter & 
           JPath(".where" + varName)  === variable.serialize &
@@ -326,7 +325,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     def whereVariablesExist(variables: Seq[Variable]): MongoFilter = {
       variables.sorted.zipWithIndex.foldLeft[MongoFilter](filter) {
         case (filter, (variable, index)) =>
-          val varName  = ".variable"  + (index + 1).toString
+          val varName  = ".variable"  + index
 
           filter & 
           (JPath(".where" + varName) === variable.serialize)
@@ -394,8 +393,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         }
       }
 
-      //println(hist)
-
       val filterTokenAndPath = forTokenAndPath(token, path)
 
       val start = _start.getOrElse(EarliestTime)
@@ -415,9 +412,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         results.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
           case (m, result) =>
             // generate the key for the count in the results
-            val values: List[JValue] = variableDescriptors.sortBy(_.variable).zipWithIndex.map { 
-              case (vd, i) => result.get(JPath(".where.predicate" + i))
-            }
+            val values: List[JValue] = (variableDescriptors.sortBy(_.variable).zipWithIndex.map { 
+              case (vd, i) => (result.get(JPath(".where.variable" + i)).deserialize[Variable], result.get(JPath(".where.predicate" + i))
+            }).map {
+              case (variable, value) => (variableDescriptors.map(_.variable).indexOf(variable), value)
+            }.sortBy(_._1).map(_._2).toList
+
+            values.filter(_ == JNothing).map(_ => println("JNothing found"))
 
             // ensure that all the variables are within the set of values selected by
             // the histogram that is used for sorting.
@@ -506,14 +507,52 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
       "accountTokenId",
       "period",
       "order",
-      "where"
+      "where.variable0",
+      "where.variable1",
+      "where.variable2",
+      "where.variable3",
+      "where.variable4",
+      "where.variable5",
+      "where.variable6",
+      "where.variable7",
+      "where.variable8",
+      "where.variable9",
+      "where.predicate0",
+      "where.predicate1",
+      "where.predicate2",
+      "where.predicate3",
+      "where.predicate4",
+      "where.predicate5",
+      "where.predicate6",
+      "where.predicate7",
+      "where.predicate8",
+      "where.predicate9"
     ),
     "variable_value_series" -> List(
       "path",
       "accountTokenId",
       "period",
       "order",
-      "where"
+      "where.variable0",
+      "where.variable1",
+      "where.variable2",
+      "where.variable3",
+      "where.variable4",
+      "where.variable5",
+      "where.variable6",
+      "where.variable7",
+      "where.variable8",
+      "where.variable9",
+      "where.predicate0",
+      "where.predicate1",
+      "where.predicate2",
+      "where.predicate3",
+      "where.predicate4",
+      "where.predicate5",
+      "where.predicate6",
+      "where.predicate7",
+      "where.predicate8",
+      "where.predicate9"
     ),
     "variable_values" -> List(
       "path",
