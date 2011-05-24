@@ -154,7 +154,7 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
     case (k, v) => (Stemmer.stem(k.replaceAll("@", "").toLowerCase), v)
   }
 
-  val allCompaniesStripped = companies.allCompanies.map(_.replaceAll("""[^\w\d_\-]""", ""))
+  val allCompaniesStripped = companies.allCompanies.map(_.toLowerCase.replaceAll("""[^\w\d_\-]""", ""))
 
   def bucketCounts(i: Int) = {
     if (i / 25000 > 0) (i / 10000) * 10000
@@ -236,7 +236,6 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
     } yield value
     
     val words = body.toList.flatMap(_.toLowerCase.split("""\s+""").map(s => s.replaceAll("""[^\w\d_\-]""", "")))
-    println(words)
     val startups = words.map(Stemmer.stem).flatMap(podCompaniesStemmed.get) ++ words.filter(allCompaniesStripped)
 
     def locName(node: JsonNode) = for {
@@ -300,7 +299,7 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
         path       = "/gluecon/" + path,
         name       = "tweet",
         properties = jobject,
-        rollup     = true,
+        rollup     = false,
         timestamp  = time,
         count = Some(1)
       )

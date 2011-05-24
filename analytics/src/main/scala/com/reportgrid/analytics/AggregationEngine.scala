@@ -303,6 +303,38 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
+  private implicit def filterWhereObserved(filter: MongoFilter) = FilterWhereObserved(filter)
+  private case class FilterWhereObserved(filter: MongoFilter) {
+    /*
+     * "where": {
+     *   "variable1":  ".click.gender",
+     *   "predicate1": "male"
+     * }
+     */
+    def whereVariablesEqual[P <: Predicate : Decomposer](observation: Observation[P]): MongoFilter = {
+      observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoFilter](filter) {
+        case (filter, ((variable, predicate), index)) =>
+          val varName  = ".variable"  + (index + 1).toString
+          val predName = ".predicate" + (index + 1).toString
+
+          filter & 
+          JPath(".where" + varName)  === variable.serialize &
+          JPath(".where" + predName) === predicate.serialize
+      }
+    }
+
+    def whereVariablesExist(variables: Seq[Variable]): MongoFilter = {
+      variables.sorted.zipWithIndex.foldLeft[MongoFilter](filter) {
+        case (filter, (variable, index)) =>
+          val varName  = ".variable"  + (index + 1).toString
+
+          filter & 
+          (JPath(".where" + varName) isDefined)
+      }
+    }
+  }
+
+
   private def updateTimeSeries[P <: Predicate](filter: MongoFilter, report: Report[TimeSeriesType, P])
     (implicit tsUpdater: (JPath, TimeSeriesType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
     
@@ -320,15 +352,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
         report.observationCounts.foldLeft(patches) { 
           case (patches, (observation, count)) =>
-            val filterWhereClause = observation.foldLeft[MongoFilter](filterOrderPeriod) {
-              case (filter, (variable, predicate)) =>
-                filter & {
-                  (".where." + variableToFieldName(variable)) === predicate.serialize
-                }
-            }
-
-            //println(renderNormalized(filterWhereClause.filter))
-
+            val filterWhereClause = filterOrderPeriod.whereVariablesEqual(observation)
             val timeSeriesUpdate = tsUpdater(".count", count)
 
             patches + (filterWhereClause -> timeSeriesUpdate)
@@ -380,31 +404,20 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
       database {
         select(".count", ".where").from(col).where {
-          filterTokenAndPath &
+          (filterTokenAndPath &
           JPath(".period.periodicity") === periodicity.serialize &
           MongoFilterBuilder(JPath(".period.start"))        >= start.serialize &
           MongoFilterBuilder(JPath(".period.start"))        <  end.serialize &
-          JPath(".order") === variableDescriptors.length & {
-            variableDescriptors.foldLeft[MongoFilter](MongoFilterAll) { 
-              case (filter, VariableDescriptor(variable, limit, order)) =>
-                filter & {
-                  JPath(".where." + variableToFieldName(variable)) isDefined
-                }
-            } 
-          }
+          JPath(".order") === variableDescriptors.length).
+          whereVariablesExist(variableDescriptors.map(_.variable))
         }
       } map { results =>
         results.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
           case (m, result) =>
-            //println(renderNormalized(result.get(JPath(".where"))))
-
             // generate the key for the count in the results
-            val values: List[JValue] = variableDescriptors.map { vd => 
-              result.get(JPath(".where") \ variableToFieldName(vd.variable))
+            val values: List[JValue] = variableDescriptors.sortBy(_.variable).zipWithIndex.map { 
+              case (vd, i) => result.get(JPath(".where.predicate" + i))
             }
-
-            // TODO: Delete these 3 lines of code
-            values.foreach { case JNothing => new Exception("Gone to hell").printStackTrace(); true; case _ => false }
 
             // ensure that all the variables are within the set of values selected by
             // the histogram that is used for sorting.
@@ -424,22 +437,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     val start = _start.getOrElse(EarliestTime)
     val end   = _end.getOrElse(LatestTime)
 
-    //println("periodicity = " + periodicity + ", observation = " + observation)
-
     database {
       select(".count").from(col).where {
-        filterTokenAndPath &
+        (filterTokenAndPath &
         JPath(".period.periodicity") === periodicity.serialize &
         MongoFilterBuilder(JPath(".period.start"))      >=  start.serialize &
         MongoFilterBuilder(JPath(".period.start"))       <  end.serialize &
-        JPath(".order") === observation.size & {
-          observation.foldLeft[MongoFilter](MongoFilterAll) { 
-            case (filter, (variable, predicate)) => 
-              filter & {
-                JPath(".where." + variableToFieldName(variable)) === predicate.serialize
-              }
-          }
-        }
+        JPath(".order") === observation.size).whereVariablesEqual(observation)
       } 
     }.map { results =>
       results.map { result =>
@@ -458,41 +462,30 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         ".order"  === order.serialize
       })
 
-      report.observationCounts.foldLeft(patches) { (patches, tuple) =>
-        val (observation, count) = tuple
+      report.observationCounts.foldLeft(patches) {
+        case (patches, (observation, count)) =>
+          val filterWhereClause = filterOrder.whereVariablesEqual(observation)
+          val countUpdate = cUpdater(".count", count)
 
-        val filterWhereClause = observation.foldLeft[MongoFilter](filterOrder) { (filter, tuple) =>
-          val (variable, predicate) = tuple
-
-          filter & {
-            (".where." + variableToFieldName(variable)) === predicate.serialize
-          }
-        }
-
-        val countUpdate = cUpdater(".count", count)
-
-        patches + (filterWhereClause -> countUpdate)
+          patches + (filterWhereClause -> countUpdate)
       }
     }
   }
 
+
   private def extractValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
     database {
-      selectOne(".values").from(collection).where {
-        filter
-      }
-    }.map { option =>
-      option match {
-        case None => Nil
+      selectOne(".values").from(collection).where(filter)
+    } map { 
+      case None => Nil
 
-        case Some(result) =>
-          (result \ "values").children.collect {
-            case JField(name, count) =>
-              val jvalue = JsonParser.parse(MongoEscaper.decode(name))
+      case Some(result) =>
+        (result \ "values").children.collect {
+          case JField(name, count) =>
+            val jvalue = JsonParser.parse(MongoEscaper.decode(name))
 
-              extractor(jvalue, count.deserialize[CountType])
-          }
-      }
+            extractor(jvalue, count.deserialize[CountType])
+        }
     }
   }
 

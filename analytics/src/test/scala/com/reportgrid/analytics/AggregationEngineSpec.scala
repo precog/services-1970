@@ -105,35 +105,35 @@ with ArbitraryEvent with FutureMatchers {
       engine.aggregate(Token.Test, "/gluecon", event.timestamp, event.data, 1)
     }
 
-//    "aggregate simple events" in {
-//      def countEvents(eventName: String) = sampleEvents.count {
-//        case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
-//        case _ => false
-//      }
-//
-//      val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
-//
-//      eventCounts.foreach {
-//        case (eventName, count) =>
-//          engine.getVariableCount(Token.Test, "/gluecon/", Variable("." + eventName)) must whenDelivered {
-//            beEqualTo(count)
-//          }
-//      }
-//    }
-//
-//    "retrieve the top results of a histogram" in {
-//      val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
-//        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
-//          val key = obj(".retweet")
-//          map + (key -> map.get(key).map(_ + 1).getOrElse(1))
-//
-//        case (map, _) => map
-//      }
-//
-//      engine.getHistogramTop(Token.Test, "/gluecon", Variable(".tweeted.retweet"), 10) must whenDelivered {
-//        beEqualTo(retweetCounts)
-//      }
-//    }
+    "aggregate simple events" in {
+      def countEvents(eventName: String) = sampleEvents.count {
+        case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
+        case _ => false
+      }
+
+      val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
+
+      eventCounts.foreach {
+        case (eventName, count) =>
+          engine.getVariableCount(Token.Test, "/gluecon/", Variable("." + eventName)) must whenDelivered {
+            beEqualTo(count)
+          }
+      }
+    }
+
+    "retrieve the top results of a histogram" in {
+      val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
+        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
+          val key = obj(".retweet")
+          map + (key -> map.get(key).map(_ + 1).getOrElse(1))
+
+        case (map, _) => map
+      }
+
+      engine.getHistogramTop(Token.Test, "/gluecon", Variable(".tweeted.retweet"), 10) must whenDelivered {
+        beEqualTo(retweetCounts)
+      }
+    }
 
     "retrieve totals" in {
       val expectedTotals = sampleEvents.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
@@ -160,48 +160,48 @@ with ArbitraryEvent with FutureMatchers {
       }
     }
 
-    // "search for intersection results" in {
-    //   val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+     "search for intersection results" in {
+       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
 
-    //   val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-    //     case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-    //       val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
+         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
 
-    //       map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
-    //     case (map, _) => map
-    //   }
+         case (map, _) => map
+       }
 
-    //   //println("Expected: " + expectedCounts)
+       //println("Expected: " + expectedCounts)
 
-    //   expectedCounts.map {
-    //     case (values, count) =>
-    //       val observation = variables.zip(values.map(v => HasValue(v))).toSet
+       expectedCounts.map {
+         case (values, count) =>
+           val observation = variables.zip(values.map(v => HasValue(v))).toSet
 
-    //       engine.searchCount(Token.Test, "/gluecon", observation) must whenDelivered (beEqualTo(count))
-    //   }
-    // }
+           engine.searchCount(Token.Test, "/gluecon", observation) must whenDelivered (beEqualTo(count))
+       }
+     }
 
-  //   "retrieve intersection results" in {      
-  //     val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
-  //     val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+     "retrieve intersection results" in {      
+       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
-  //     val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-  //       case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-  //         val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
+         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
 
-  //         map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
-  //       case (map, _) => map
-  //     }
+         case (map, _) => map
+       }
 
-  //     //println("expected: " + expectedCounts.map(((_:List[JValue]).map(renderNormalized)).first))
+       //println("expected: " + expectedCounts.map(((_:List[JValue]).map(renderNormalized)).first))
 
-  //     engine.intersectCount(Token.Test, "/gluecon", descriptors) must whenDelivered (beEqualTo(expectedCounts)) /*{
-  //       verify(x => (x ->- {m => println(m.map(((_:List[JValue]).map(renderNormalized)).first))}) must_== expectedCounts)
-  //     }*/
-  //   }
+       engine.intersectCount(Token.Test, "/gluecon", descriptors) must whenDelivered (beEqualTo(expectedCounts)) /*{
+         verify(x => (x ->- {m => println(m.map(((_:List[JValue]).map(renderNormalized)).first))}) must_== expectedCounts)
+       }*/
+     }
 
   }
 
