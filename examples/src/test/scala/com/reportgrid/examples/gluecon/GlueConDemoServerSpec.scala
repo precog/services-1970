@@ -6,9 +6,12 @@ import blueeyes.json.JsonAST._
 import net.lag.configgy.Configgy
 import net.lag.configgy.Config
 
+import com.reportgrid.api._
+import com.reportgrid.api.blueeyes.ReportGrid
+
 import org.specs._
 
-class GlueConGnipDigesterSpec extends Specification {
+class GlueConDemoServerSpec extends Specification {
   val sampleData = """
     {
         "id": "tag:search.twitter.com,2005:72418830005182464",
@@ -259,7 +262,7 @@ class GlueConGnipDigesterSpec extends Specification {
     JField("client",JString("web"))
   )
 
-  val digester = new GlueConGnipDigester("", new GlueConCompanies(None))
+  val digester = new GlueConGnipDigester(new ReportGrid("", ReportGridConfig.Local), new GlueConCompanies(None))
   
   "Processing an entry from the Gnip json stream of tweets" should {
     "correctly identify property information" in {

@@ -20,8 +20,8 @@ import scala.io.Source
 import scalaz._
 import Scalaz._
 
-import com.reportgrid.api.blueeyes.ReportGrid
 import com.reportgrid.api._
+import com.reportgrid.api.blueeyes.ReportGrid
 
 import java.net.URI
 import java.net.URL
@@ -64,7 +64,7 @@ object GlueConDemoServer {
     val http = new Http
   
     for {
-      token <- config.getString("tokenId")
+      tokenId <- config.getString("tokenId")
       host <- config.getString("gnipHost")
       path <- config.getString("gnipPath")
       creds <- (config.getString("username") <**> config.getString("password"))(Credentials.apply)
@@ -72,10 +72,14 @@ object GlueConDemoServer {
       println("Starting digester service...")
       val gnipUrl = new URL("https://" + host + "/" + path + "/track.json")
       val gnipHost = new HttpHost(host, config.getInt("port", 80))      
+      val api = new ReportGrid(
+        tokenId, 
+        if (config.getBool("local", false)) ReportGridConfig.Local else ReportGridConfig.Production
+      )
 
       while(true) {
         try {
-          new GlueConGnipDigester(token, companies).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
+          new GlueConGnipDigester(api, companies).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
         } catch {
           case t: Throwable => println(t.getMessage); t.printStackTrace
         }
@@ -147,8 +151,7 @@ case class Tweet(
   time: Option[DateTime]
 )
 
-class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
-  val api = new ReportGrid(tokenId)
+class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
 
   val podCompaniesStemmed = companies.podCompanies map {
     case (k, v) => (Stemmer.stem(k.replaceAll("@", "").toLowerCase), v)
