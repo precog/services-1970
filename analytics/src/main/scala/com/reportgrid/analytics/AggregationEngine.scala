@@ -495,19 +495,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   }
 
   private def forVariable(variable: Variable): MongoFilter = {
-     ".variable" === variableToFieldName(variable)
-  }
-
-  private def variableToFieldName(variable: Variable): String = variable match {
-    case Variable(JPath.Identity) => "id"
-
-    case _ => MongoEscaper.encode((variable.serialize --> classOf[JString]).value)
-  }
-
-  private def fieldNameToVariable(name: String): Variable = name match {
-    case "id" => Variable(JPath.Identity)
-
-    case _ => JString(MongoEscaper.decode(name)).deserialize[Variable]
+     ".variable" === variable.serialize
   }
 }
 
@@ -527,11 +515,13 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
     ),
     "variable_values" -> List(
       "path",
-      "accountTokenId"
+      "accountTokenId",
+      "variable"
     ),
     "variable_children" -> List(
       "path",
-      "accountTokenId"
+      "accountTokenId",
+      "variable"
     ),
     "path_children" -> List(
       "path",
