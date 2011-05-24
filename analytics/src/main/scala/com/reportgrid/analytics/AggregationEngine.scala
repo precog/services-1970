@@ -505,13 +505,15 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
       "path",
       "accountTokenId",
       "period",
-      "order"
+      "order",
+      "where"
     ),
     "variable_value_series" -> List(
       "path",
       "accountTokenId",
       "period",
-      "order"
+      "order",
+      "where"
     ),
     "variable_values" -> List(
       "path",
