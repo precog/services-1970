@@ -3,7 +3,6 @@ package com.reportgrid.analytics
 import blueeyes.core.data.Bijection.identity
 import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
-import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test.FutureMatchers
 import blueeyes.util.metrics.Duration
 import blueeyes.util.metrics.Duration.toDuration
@@ -26,15 +25,13 @@ import Gen._
 import scalaz._
 import Scalaz._
 
-class AggregationEngineSpec extends Specification with PendingUntilFixed with ScalaCheck 
-with ArbitraryEvent with FutureMatchers {
-  val config = new Config()
-
-  config.load("""
+trait LocalMongo {
+  val mongoConfigFileData = """
     mongo {
       database = "analytics"
       servers  = ["localhost:27017"]
     }
+
     variable_series {
       collection = "variable_series"
       time_to_idle_millis = 500
@@ -88,9 +85,15 @@ with ArbitraryEvent with FutureMatchers {
       level   = "debug"
       console = true
     }
-  """)
+  """
+}
 
-  val mongo = new RealMongo(config.configMap("mongo"))//MockMongo()//
+class AggregationEngineSpec extends Specification with PendingUntilFixed with ScalaCheck 
+with ArbitraryEvent with FutureMatchers with LocalMongo {
+  val config = new Config()
+  config.load(mongoConfigFileData)
+
+  val mongo = new RealMongo(config.configMap("mongo")) // MockMongo()
   val database = mongo.database("gluecon")
   
   val engine = get(AggregationEngine(config, Logger.get, database))
@@ -131,7 +134,7 @@ with ArbitraryEvent with FutureMatchers {
       }
 
       engine.getHistogramTop(Token.Test, "/gluecon", Variable(".tweeted.retweet"), 10) must whenDelivered {
-        beEqualTo(retweetCounts)
+        verify(x => {println(x); x ==  retweetCounts})
       }
     }
 
@@ -156,7 +159,9 @@ with ArbitraryEvent with FutureMatchers {
         case ((eventName, path, value), count) =>
           val variable = Variable(JPath(eventName) \ path) 
 
-          engine.getValueCount(Token.Test, "/gluecon", variable, value) must whenDelivered (beEqualTo(count.toLong))
+          engine.getValueCount(Token.Test, "/gluecon", variable, value) must whenDelivered {
+            beEqualTo(count.toLong)
+          }
       }
     }
 
