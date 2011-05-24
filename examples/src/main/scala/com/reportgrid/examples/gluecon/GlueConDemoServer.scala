@@ -154,6 +154,8 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
     case (k, v) => (Stemmer.stem(k.replaceAll("@", "").toLowerCase), v)
   }
 
+  val allCompaniesStripped = companies.allCompanies.map(_.replaceAll("""[^\w\d_\-]""", ""))
+
   def bucketCounts(i: Int) = {
     if (i / 25000 > 0) (i / 10000) * 10000
     else if (i / 2500 > 0) (i / 1000) * 1000
@@ -183,12 +185,14 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
         for (entity <- Option(resp.getEntity)) {
           val jsonFactory = (new ObjectMapper).getJsonFactory()
           val parser = jsonFactory.createJsonParser(entity.getContent)
-          for (Tweet(startups, properties, time) <- parse(parser)) {
-            if (companies.podCompanies.values.exists(startups.contains)) {
-              sendToReportGrid("pods", properties, time.map(_.toDate))
-            }
+          for (tweetOption <- parse(parser)) {
+            for (Tweet(startups, properties, time) <- tweetOption) {
+              if (companies.podCompanies.values.exists(startups.contains)) {
+                sendToReportGrid("pods", properties, time.map(_.toDate))
+              }
 
-            sendToReportGrid("all", properties, time.map(_.toDate))
+              sendToReportGrid("all", properties, time.map(_.toDate))
+            }
           }
         }
       } else {
@@ -208,7 +212,7 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
     }
   }
 
-  def parse(parser: JsonParser): Iterator[Tweet] = {
+  def parse(parser: JsonParser): Iterator[Option[Tweet]] = {
     Iterator.continually {
       parser.nextToken match {
         case JsonToken.START_OBJECT => extractTweet(parser)
@@ -217,7 +221,7 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
     }
   }
 
-  def extractTweet(parser: JsonParser): Tweet = {
+  def extractTweet(parser: JsonParser): Option[Tweet] = {
     val entry = parser.readValueAsTree
     val actor = Option(entry.get("actor")) 
     val obj   = Option(entry.get("object")) 
@@ -231,8 +235,9 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
       value    <- Option(nameNode.getTextValue) 
     } yield value
     
-    val words = body.toList.flatMap(_.toLowerCase.split("""\s+""").map(s => Stemmer.stem(s.replaceAll("@", ""))))
-    val startups = words.flatMap(podCompaniesStemmed.get) ++ words.filter(companies.allCompanies)
+    val words = body.toList.flatMap(_.toLowerCase.split("""\s+""").map(s => s.replaceAll("""[^\w\d_\-]""", "")))
+    println(words)
+    val startups = words.map(Stemmer.stem).flatMap(podCompaniesStemmed.get) ++ words.filter(allCompaniesStripped)
 
     def locName(node: JsonNode) = for {
       loc <- Option(node.get("location"))
@@ -272,17 +277,20 @@ class GlueConGnipDigester(tokenId: String, companies: GlueConCompanies) {
       opt.map(v => obj.set(JPath(path), f(v)).asInstanceOf[JObject]).getOrElse(obj)
     }
     
-    val jstate =  init[JObject] <*
-                  modify(extract("client", client.map(_.replaceAll("""\d\.""", "")))) <*
-                  modify(extract("startups", startups.toNel.map(_.list))) <*
-                  modify(extract("location", location)) <*
-                  modify(extract("emotion", emotion)) <*
-                  modify(extract("followersCount", followersCount)) <*
-                  modify(extract("friendsCount", friendsCount)) <*
-                  modify(extract("clout", clout)) <*
-                  modify(extract("languages", languages))
+    for (startups <- startups.toNel) yield {
+      val startupList = startups.list
+      val jstate =  init[JObject] <*
+                    modify(extract("client", client.map(_.replaceAll("""\d\.""", "")))) <*
+                    modify(extract("startups", Some(startupList))) <*
+                    modify(extract("location", location)) <*
+                    modify(extract("emotion", emotion)) <*
+                    modify(extract("followersCount", followersCount)) <*
+                    modify(extract("friendsCount", friendsCount)) <*
+                    modify(extract("clout", clout)) <*
+                    modify(extract("languages", languages))
 
-    Tweet(startups, jstate(JObject(Nil))._1, time)
+      Tweet(startupList, jstate(JObject(Nil))._1, time)
+    }
   }
 
   def sendToReportGrid(path: String, jobject: JObject, time: Option[java.util.Date]) = {

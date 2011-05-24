@@ -267,7 +267,7 @@ class GlueConGnipDigesterSpec extends Specification {
       val parser = jsonFactory.createJsonParser(sampleData)
       parser.nextToken match {
         case JsonToken.START_OBJECT => 
-          val Tweet(startups, properties, time) = digester.extractTweet(parser) 
+          val Some(Tweet(startups, properties, time)) = digester.extractTweet(parser) 
           startups mustNot beEmpty
           properties must beLike {
             case JObject(fields) => fields must haveTheSameElementsAs(expectedFields1)
@@ -285,7 +285,7 @@ class GlueConGnipDigesterSpec extends Specification {
 
       List(expectedFields1, expectedFields2).forall {
         fields => tweets must exist {
-          case Tweet(_, properties, _) => properties must beLike {
+          case Some(Tweet(_, properties, _)) => properties must beLike {
             case JObject(fields) => fields must haveTheSameElementsAs(fields)
           }
 
