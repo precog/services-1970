@@ -8,6 +8,7 @@ import blueeyes.core.http.MimeTypes.{application, json}
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.json.JsonAST._
+import blueeyes.json.JsonDSL._
 import blueeyes.json.{JPath, JsonParser, JPathField}
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.core.data.{Chunk, BijectionsChunkJson, BijectionsChunkString}
