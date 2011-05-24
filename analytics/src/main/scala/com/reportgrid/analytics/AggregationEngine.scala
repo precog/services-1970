@@ -329,7 +329,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           val varName  = ".variable"  + (index + 1).toString
 
           filter & 
-          (JPath(".where" + varName) isDefined)
+          (JPath(".where" + varName) === variable.serialize)
       }
     }
   }
