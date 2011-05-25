@@ -166,19 +166,25 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
   
-  def getHistogram(token: Token, path: Path, variable: Variable) = 
+  def getHistogram(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = 
     getHistogramInternal(token, path, variable).map(_.toMap)
 
-  def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int) = 
-    getHistogramInternal(token, path, variable).map(_.sortBy(- _._2).take(n)).map(_.toMap)
+  def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int): Future[List[(JValue, CountType)]] = 
+    getHistogramInternal(token, path, variable).map(_.sortBy(- _._2).take(n))
 
-  def getHistogramBottom(token: Token, path: Path, variable: Variable, n: Int) = 
-    getHistogramInternal(token, path, variable).map(_.sortBy(_._2).take(n)).map(_.toMap)
+  def getHistogramBottom(token: Token, path: Path, variable: Variable, n: Int): Future[List[(JValue, CountType)]] = 
+    getHistogramInternal(token, path, variable).map(_.sortBy(_._2).take(n))
 
   /** Retrieves values of the specified variable.
    */
   def getValues(token: Token, path: Path, variable: Variable): Future[List[JValue]] = 
     getHistogramInternal(token, path, variable).map(_.map(_._1))
+
+  def getValuesTop(token: Token, path: Path, variable: Variable, n: Int): Future[List[JValue]] = 
+    getHistogramTop(token, path, variable, n).map(_.map(_._1))
+
+  def getValuesBottom(token: Token, path: Path, variable: Variable, n: Int): Future[List[JValue]] = 
+    getHistogramBottom(token, path, variable, n).map(_.map(_._1))
 
   /** Retrieves a count of how many times the specified variable appeared in
    * an event.
