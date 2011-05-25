@@ -180,10 +180,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Retrieves the length of array properties, or 0 if the property is not an array.
    */
-  def getValueLength(token: Token, path: Path, variable: Variable): Future[Int] = {
+  def getVariableLength(token: Token, path: Path, variable: Variable): Future[Int] = {
     getChildren(token, path, variable).map { children =>
-      println("getValueLength: children: " + children)
-
       children.filterNot(_.endsWith("/")).map(JPath(_)).foldLeft(0) {
         case (length, jpath) =>
           jpath.nodes match {
@@ -459,7 +457,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   /** Retrieves a histogram of the values a variable acquires over its lifetime.
    */
   private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = {
-    getValueLength(token, path, variable).flatMap { 
+    getVariableLength(token, path, variable).flatMap { 
       case 0 =>
         (extractValues(forTokenAndPath(token, path) & forVariable(variable), varValueC) { 
           (jvalue, count) => (jvalue.deserialize[HasValue].value, count)
@@ -475,6 +473,19 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         }
     }    
   }
+
+  /*private def expandArrayObservation[P <: Predicate](token: Token, path: Path, variable: Variable, predicate: P): Future[List[Observation[P]]] = {
+    observation.foldLeft(Future.lift(Nil)) {
+      case (future, (variable, predicate)) =>
+        future.flatMap { list =>
+          (getVariableLength(token, path, variable).map { 
+            case 0 => 
+
+            case length =>
+          }) ++ list
+        }
+    }
+  }*/
 
   private def internalSearchSeries[P <: Predicate](col: MongoCollection, token: Token, path: Path, periodicity: Periodicity, observation: Observation[P],
     _start : Option[DateTime] = None, _end : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
@@ -493,7 +504,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       } 
     }.map { results =>
       results.map { result =>
-        ((result \ "count").deserialize[TimeSeriesType]) //->- lp("internalSearchSeries - count")
+        ((result \ "count").deserialize[TimeSeriesType])
 
       }.foldLeft[TimeSeriesType](TimeSeries.empty) { _ + _ }.fillGaps
     }

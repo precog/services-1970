@@ -277,7 +277,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         val path     = fullPathOf(token, request)
                         val variable = variableOf(request)
 
-                        aggregationEngine.getValueLength(token, path, variable).map { length =>
+                        aggregationEngine.getVariableLength(token, path, variable).map { length =>
                           HttpResponse[JValue](content = Some(length.serialize))
                         }
                       }
