@@ -220,6 +220,32 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         }
                       }
                     } ~
+                    path("top/'limit") {
+                      get { request: HttpRequest[JValue] =>
+                        tokenOf(request).flatMap { token =>
+                          val path     = fullPathOf(token, request)
+                          val variable = variableOf(request)
+                          val limit    = request.parameters('limit).toInt
+
+                          aggregationEngine.getValuesTop(token, path, variable, limit).map { values =>
+                            HttpResponse[JValue](content = Some(values.serialize))
+                          }
+                        }
+                      }
+                    } ~
+                    path("bottom/'limit") {
+                      get { request: HttpRequest[JValue] =>
+                        tokenOf(request).flatMap { token =>
+                          val path     = fullPathOf(token, request)
+                          val variable = variableOf(request)
+                          val limit    = request.parameters('limit).toInt
+
+                          aggregationEngine.getValuesBottom(token, path, variable, limit).map { values =>
+                            HttpResponse[JValue](content = Some(values.serialize))
+                          }
+                        }
+                      }
+                    } ~
                     path('value) {
                       $ {
                         get { request: HttpRequest[JValue] =>

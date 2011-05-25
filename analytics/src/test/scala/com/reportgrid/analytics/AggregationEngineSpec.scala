@@ -139,8 +139,6 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      println("Values = " + values)
-
       values.foreach {
         case ((eventName, path), values) =>
           engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)) must whenDelivered {

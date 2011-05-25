@@ -14,7 +14,7 @@ case class Limits(order: Int, limit: Int, depth: Int) {
   def limitTo(that: Limits) = Limits(
     order = min(this.order, that.order),
     limit = min(this.limit, that.limit),
-    depth = min(this.limit, that.limit)
+    depth = min(this.depth, that.depth)
   )
 }
 
@@ -32,8 +32,8 @@ object Limits {
   implicit val LimitsDecomposer = new Decomposer[Limits] {
     def decompose(limits: Limits): JValue = JObject(
       JField("order", limits.order.serialize) ::
-      JField("limit", limits.order.serialize) ::
-      JField("depth", limits.order.serialize) ::
+      JField("limit", limits.limit.serialize) ::
+      JField("depth", limits.depth.serialize) ::
       Nil
     )
   }
