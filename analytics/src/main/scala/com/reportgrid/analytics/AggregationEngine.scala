@@ -474,15 +474,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }    
   }
 
-  /*private def expandArrayObservation[P <: Predicate](token: Token, path: Path, variable: Variable, predicate: P): Future[List[Observation[P]]] = {
-    observation.foldLeft(Future.lift(Nil)) {
-      case (future, (variable, predicate)) =>
-        future.flatMap { list =>
-          (getVariableLength(token, path, variable).map { 
-            case 0 => 
+  /*private def expandPredicate[P <: Predicate](token: Token, path: Path, variable: Variable, predicate: P): Future[List[(Variable, P)]] = {    
+    getVariableLength(token, path, variable).map { 
+      case 0 => (variable, predicate) :: Nil
 
-            case length =>
-          }) ++ list
+      case length =>
+        (0 until length).toList.map { index =>
+          (Variable(variable.name \ JPathIndex(index)), predicate)
         }
     }
   }*/
