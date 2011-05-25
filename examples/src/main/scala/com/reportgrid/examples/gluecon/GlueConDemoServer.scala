@@ -151,8 +151,31 @@ case class Tweet(
   time: Option[DateTime]
 )
 
-class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
+object GlueConGnipDigester {
+  def detectEmotion(tokens: List[String]) = {
+    val Happy = """[:;B]-?[)D]""".r
+    val Sad = """[:;]-?[(Pp]""".r
+    val Surprised = """[:;]-?[oO]""".r
+    val Excited = """\w+\s*!""".r
 
+    val detected = tokens.flatMap {
+      case Happy() => Some("happy")
+      case Sad() => Some("unhappy")
+      case Surprised() => Some("surprised")
+      case Excited() => Some("excited")
+      case _ => None
+    }
+
+    if (detected.contains("happy")) Some("happy")
+    else if (detected.contains("excited")) Some("excited")
+    else if (detected.contains("surprised")) Some("surprised")
+    else if (detected.contains("unhappy")) Some("unhappy")
+    else None
+  }
+}
+
+class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
+  import GlueConGnipDigester._
   val podCompaniesStemmed = companies.podCompanies map {
     case (k, v) => (Stemmer.stem(k.replaceAll("@", "").toLowerCase), v)
   }
@@ -224,6 +247,7 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
     }
   }
 
+
   def extractTweet(parser: JsonParser): Option[Tweet] = {
     val entry = parser.readValueAsTree
     val actor = Option(entry.get("actor")) 
@@ -254,27 +278,7 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
     val friendsCount = actor.flatMap(a => Option(a.get("friendsCount")).flatMap(v => Option(v.getValueAsInt).map(bucketCounts)))
     val clout = for (friends <- friendsCount; followers <- followersCount) yield bucketCounts(((followers.toDouble / friends.toDouble) * 10).toInt)
     val languages = actor.flatMap(a => Option(a.get("languages")).map(_.getElements.asScala.toSeq.flatMap(e => Option(e.getTextValue))))
-
-    val Happy = """[:;B]-?[)D]""".r
-    val Sad = """[:;]-?[(Pp]""".r
-    val Surprised = """[:;]-?[oO]""".r
-    val Excited = """\w+\s*!""".r
-
-    val emotion = {
-      val detected = tokens.flatMap {
-        case Happy => Some("happy")
-        case Sad => Some("unhappy")
-        case Surprised => Some("surprised")
-        case Excited => Some("excited")
-        case _ => None
-      }
-
-      if (detected.contains("happy")) Some("happy")
-      else if (detected.contains("excited")) Some("excited")
-      else if (detected.contains("surprised")) Some("surprised")
-      else if (detected.contains("unhappy")) Some("unhappy")
-      else None
-    }
+    val emotion = detectEmotion(tokens)
 
     def extract[T](path: String, opt: Option[T])(implicit f: T => JValue): JObject => JObject = (obj: JObject) => {
       opt.map(v => obj.set(JPath(path), f(v)).asInstanceOf[JObject]).getOrElse(obj)

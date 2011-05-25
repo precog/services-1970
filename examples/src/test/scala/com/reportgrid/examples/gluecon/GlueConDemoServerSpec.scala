@@ -246,6 +246,7 @@ class GlueConDemoServerSpec extends Specification {
 
   val expectedFields1 = List(
     JField("client",JString("web")),
+    JField("emotion",JString("excited")),
     JField("languages",JArray(List(JString("en")))), 
     JField("clout",JInt(16)), 
     JField("friendsCount",JInt(240)), 
@@ -295,6 +296,12 @@ class GlueConDemoServerSpec extends Specification {
           case _ => fail("Shouldn't see a none.")
         }
       }
+    }
+
+    "detect an emotion" in {
+      import GlueConGnipDigester._
+      detectEmotion(""" Hi I'm really happy today :) """.split("""\s+""").toList) must beSome("happy")
+      detectEmotion(""" Hi I'm really happy today :) but a little sad too. :-( """.split("""\s+""").toList) must beSome("happy")
     }
   }
 
