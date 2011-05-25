@@ -377,6 +377,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   private def internalIntersectSeries[P <: Predicate](
       col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
       periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
+    val variables = variableDescriptors.map(_.variable)
+
     val histograms = Future(variableDescriptors.map { 
       case VariableDescriptor(variable, maxResults, SortOrder.Ascending) =>
         getHistogramBottom(token, path, variable, maxResults).map(_.toMap)
@@ -427,7 +429,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
             // generate the key for the count in the results
             val values: List[JValue] = variableDescriptors.sortBy(_.variable).zipWithIndex.map { 
               case (vd, i) => (
-                variableDescriptors.map(_.variable).indexOf(result.get(JPath(".where.variable" + i)).deserialize[Variable]), 
+                variables.indexOf(result.get(JPath(".where.variable" + i)).deserialize[Variable]), 
                 result.get(JPath(".where.predicate" + i))
               )
             }.sortBy(_._1).map(_._2).toList
