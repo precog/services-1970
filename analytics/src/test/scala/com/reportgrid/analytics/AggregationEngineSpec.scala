@@ -1,5 +1,6 @@
 package com.reportgrid.analytics
 
+import blueeyes._
 import blueeyes.core.data.Bijection.identity
 import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
@@ -120,6 +121,28 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (eventName, count) =>
           engine.getVariableCount(Token.Test, "/gluecon/", Variable("." + eventName)) must whenDelivered {
             beEqualTo(count)
+          }
+      }
+    }
+
+    "retrieve all values of arrays" in {
+      val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+          MapMonoid[(String, JPath), Set[JValue]].append(map, 
+            (obj.children.collect {
+              case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet)
+            }).toMap
+          )
+
+        case (map, _) => map
+      }
+
+      arrayValues.foreach {
+        case ((eventName, path), values) =>
+          println("Looking for values of: " + eventName + path.toString)
+
+          engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)) must whenDelivered {
+            haveSameElementsAs(values)
           }
       }
     }

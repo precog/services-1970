@@ -203,10 +203,12 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
    */
   def getValueLength(token: Token, path: Path, variable: Variable): Future[Int] = {
     getChildren(token, path, variable).map { children =>
+      println("getValueLength: children: " + children)
+
       children.filterNot(_.endsWith("/")).map(JPath(_)).foldLeft(0) {
         case (length, jpath) =>
           jpath.nodes match {
-            case JPathIndex(index) :: _ => index + 1
+            case JPathIndex(index) :: Nil => (index + 1).max(length)
 
             case _ => length
           }
@@ -329,7 +331,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           val filterVariable = filter & forVariable(variable)
           val predicateField = MongoEscaper.encode(renderNormalized(predicate.serialize))
 
-          val valuesUpdate = (".values." + predicateField) inc 1
+          val valuesUpdate = (JPath(".values") \ JPathField(predicateField)) inc 1
 
           patches + (filterVariable -> valuesUpdate)
       }
@@ -404,8 +406,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         getHistogramTop(token, path, variable, maxResults).map(_.toMap)
     }: _*)
 
-    //println(variableDescriptors)
-
     histograms.flatMap { hist => 
       implicit def ordering: scala.math.Ordering[List[JValue]] = new scala.math.Ordering[List[JValue]] {
         override def compare(l1: List[JValue], l2: List[JValue]) = {
@@ -452,8 +452,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
                 result.get(JPath(".where.predicate" + i))
               )
             }.sortBy(_._1).map(_._2).toList
-
-            values.filter(_ == JNothing).map(_ => println("JNothing found"))
 
             // ensure that all the variables are within the set of values selected by
             // the histogram that is used for sorting.
