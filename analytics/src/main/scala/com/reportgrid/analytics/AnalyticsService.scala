@@ -48,6 +48,15 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
         request { state =>
           import state._
 
+          def renderHistogram(histogram: Traversable[(JValue, Long)]): JObject = {
+            histogram.foldLeft(JObject.empty) {
+              case (content, (value, count)) =>
+                val name = JPathField(renderNormalized(value))
+
+                content.set(name, JInt(count)).asInstanceOf[JObject]
+            }
+          }
+
           def tokenOf(request: HttpRequest[_]): Future[Token] = {
             request.parameters.get('tokenId) match {
               case None =>
@@ -202,6 +211,52 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                           aggregationEngine.getVariableSeries(token, path, variable, periodicity).map { series =>
                             HttpResponse[JValue](content = Some(series.toJValue))
+                          }
+                        }
+                      }
+                    }
+                  } ~
+                  path("histogram/") {
+                    $ {
+                      get { request: HttpRequest[JValue] =>
+                        tokenOf(request).flatMap { token =>
+                          val path     = fullPathOf(token, request)
+                          val variable = variableOf(request)
+
+                          aggregationEngine.getHistogram(token, path, variable).map { values =>
+                            val content = renderHistogram(values)
+
+                            HttpResponse[JValue](content = Some(content))
+                          }
+                        }
+                      }
+                    } ~
+                    path("top/'limit") {
+                      get { request: HttpRequest[JValue] =>
+                        tokenOf(request).flatMap { token =>
+                          val path     = fullPathOf(token, request)
+                          val variable = variableOf(request)
+                          val limit    = request.parameters('limit).toInt
+
+                          aggregationEngine.getHistogramTop(token, path, variable, limit).map { values =>
+                            val content = renderHistogram(values)
+
+                            HttpResponse[JValue](content = Some(content))
+                          }
+                        }
+                      }
+                    } ~
+                    path("bottom/'limit") {
+                      get { request: HttpRequest[JValue] =>
+                        tokenOf(request).flatMap { token =>
+                          val path     = fullPathOf(token, request)
+                          val variable = variableOf(request)
+                          val limit    = request.parameters('limit).toInt
+
+                          aggregationEngine.getHistogramBottom(token, path, variable, limit).map { values =>
+                            val content = renderHistogram(values)
+
+                            HttpResponse[JValue](content = Some(content))
                           }
                         }
                       }
