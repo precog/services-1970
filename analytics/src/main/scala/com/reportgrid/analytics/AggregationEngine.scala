@@ -370,10 +370,10 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
     val histograms = Future(variableDescriptors.map { 
       case VariableDescriptor(variable, maxResults, SortOrder.Ascending) =>
-        getHistogramBottom(token, path, variable, maxResults)
+        getHistogramBottom(token, path, variable, maxResults).map(_.toMap)
 
       case VariableDescriptor(variable, maxResults, SortOrder.Descending) =>
-        getHistogramTop(token, path, variable, maxResults)
+        getHistogramTop(token, path, variable, maxResults).map(_.toMap)
     }: _*)
 
     //println(variableDescriptors)

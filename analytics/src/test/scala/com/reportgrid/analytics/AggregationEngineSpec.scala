@@ -157,7 +157,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
 
       engine.getHistogramTop(Token.Test, "/gluecon", Variable(".tweeted.retweet"), 10) must whenDelivered {
-        beEqualTo(retweetCounts)
+        haveTheSameElementsAs(retweetCounts)
       }
     }
 

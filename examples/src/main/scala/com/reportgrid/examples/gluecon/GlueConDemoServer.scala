@@ -238,7 +238,8 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
       value    <- Option(nameNode.getTextValue) 
     } yield value
     
-    val words = body.toList.flatMap(_.toLowerCase.split("""\s+""").map(s => s.replaceAll("""[^\w\d_\-]""", "")))
+    val tokens = body.toList.flatMap(_.toLowerCase.split("""\s+"""))
+    val words = tokens.map(s => s.replaceAll("""[^\w\d_\-]""", ""))
     val startups = words.map(Stemmer.stem).flatMap(podCompaniesStemmed.get) ++ words.filter(allCompaniesStripped)
 
     def locName(node: JsonNode) = for {
@@ -260,7 +261,7 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
     val Excited = """\w+\s*!""".r
 
     val emotion = {
-      val detected = words flatMap {
+      val detected = tokens.flatMap {
         case Happy => Some("happy")
         case Sad => Some("unhappy")
         case Surprised => Some("surprised")
