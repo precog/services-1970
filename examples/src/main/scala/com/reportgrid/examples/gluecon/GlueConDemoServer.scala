@@ -264,7 +264,10 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
     
     val tokens = body.toList.flatMap(_.toLowerCase.split("""\s+"""))
     val words = tokens.map(s => s.replaceAll("""[^\w\d_\-]""", ""))
-    val startups = words.map(Stemmer.stem).flatMap(podCompaniesStemmed.get) ++ words.filter(allCompaniesStripped)
+    lazy val podStartups = words.map(Stemmer.stem).flatMap(podCompaniesStemmed.get) 
+    lazy val allStartups = words.filter(allCompaniesStripped)
+
+    val startups = if (podStartups.isEmpty) allStartups else podStartups
 
     def locName(node: JsonNode) = for {
       loc <- Option(node.get("location"))
