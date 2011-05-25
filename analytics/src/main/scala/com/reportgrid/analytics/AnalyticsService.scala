@@ -48,6 +48,15 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
         request { state =>
           import state._
 
+          def renderHistogram(histogram: Traversable[(JValue, Long)]): JObject = {
+            histogram.foldLeft(JObject.empty) {
+              case (content, (value, count)) =>
+                val name = JPathField(renderNormalized(value))
+
+                content.set(name, JInt(count)).asInstanceOf[JObject]
+            }
+          }
+
           def tokenOf(request: HttpRequest[_]): Future[Token] = {
             request.parameters.get('tokenId) match {
               case None =>
@@ -215,7 +224,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           val variable = variableOf(request)
 
                           aggregationEngine.getHistogram(token, path, variable).map { values =>
-                            HttpResponse[JValue](content = Some(values.serialize))
+                            val content = renderHistogram(values)
+
+                            HttpResponse[JValue](content = Some(content))
                           }
                         }
                       }
@@ -228,7 +239,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           val limit    = request.parameters('limit).toInt
 
                           aggregationEngine.getHistogramTop(token, path, variable, limit).map { values =>
-                            HttpResponse[JValue](content = Some(values.serialize))
+                            val content = renderHistogram(values)
+
+                            HttpResponse[JValue](content = Some(content))
                           }
                         }
                       }
@@ -241,7 +254,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           val limit    = request.parameters('limit).toInt
 
                           aggregationEngine.getHistogramBottom(token, path, variable, limit).map { values =>
-                            HttpResponse[JValue](content = Some(values.serialize))
+                            val content = renderHistogram(values)
+
+                            HttpResponse[JValue](content = Some(content))
                           }
                         }
                       }
