@@ -262,6 +262,18 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       }
                     }
                   } ~
+                  path("length") {
+                    get { request: HttpRequest[JValue] =>
+                      tokenOf(request).flatMap { token =>
+                        val path     = fullPathOf(token, request)
+                        val variable = variableOf(request)
+
+                        aggregationEngine.getValueLength(token, path, variable).map { length =>
+                          HttpResponse[JValue](content = Some(length.serialize))
+                        }
+                      }
+                    }
+                  } ~
                   path("values/") {
                     $ {
                       get { request: HttpRequest[JValue] =>
@@ -270,7 +282,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           val variable = variableOf(request)
 
                           aggregationEngine.getValues(token, path, variable).map { values =>
-                            HttpResponse[JValue](content = Some(values.serialize))
+                            HttpResponse[JValue](content = Some(values.toList.serialize))
                           }
                         }
                       }

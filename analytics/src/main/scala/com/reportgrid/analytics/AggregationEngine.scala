@@ -6,7 +6,7 @@ import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
-import blueeyes.json.{JsonParser, JPath}
+import blueeyes.json._
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
 
@@ -160,24 +160,37 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Retrieves a histogram of the values a variable acquires over its lifetime.
    */
-  private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[List[(JValue, CountType)]] = {
-    extractValues(forTokenAndPath(token, path) & forVariable(variable), varValueC) { 
-      (jvalue, count) => (jvalue.deserialize[HasValue].value, count)
+  private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = {
+    getValueLength(token, path, variable).flatMap { 
+      case 0 =>
+        (extractValues(forTokenAndPath(token, path) & forVariable(variable), varValueC) { 
+          (jvalue, count) => (jvalue.deserialize[HasValue].value, count)
+        }).map(_.toMap)
+
+      case length =>
+        Future((0 until length).map { index =>
+          getHistogramInternal(token, path, Variable(variable.name \ JPathIndex(index)))
+        }: _*).map { results =>
+          results.foldLeft(Map.empty[JValue, CountType]) {
+            case (all, cur) => MapMonoid[JValue, CountType].append(all, cur)
+          }
+        }
     }
+    
   }
   
   def getHistogram(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = 
-    getHistogramInternal(token, path, variable).map(_.toMap)
+    getHistogramInternal(token, path, variable)
 
   def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int): Future[List[(JValue, CountType)]] = 
-    getHistogramInternal(token, path, variable).map(_.sortBy(- _._2).take(n))
+    getHistogramInternal(token, path, variable).map(_.toList.sortBy(- _._2).take(n))
 
   def getHistogramBottom(token: Token, path: Path, variable: Variable, n: Int): Future[List[(JValue, CountType)]] = 
-    getHistogramInternal(token, path, variable).map(_.sortBy(_._2).take(n))
+    getHistogramInternal(token, path, variable).map(_.toList.sortBy(_._2).take(n))
 
   /** Retrieves values of the specified variable.
    */
-  def getValues(token: Token, path: Path, variable: Variable): Future[List[JValue]] = 
+  def getValues(token: Token, path: Path, variable: Variable): Future[Iterable[JValue]] = 
     getHistogramInternal(token, path, variable).map(_.map(_._1))
 
   def getValuesTop(token: Token, path: Path, variable: Variable, n: Int): Future[List[JValue]] = 
@@ -185,6 +198,21 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   def getValuesBottom(token: Token, path: Path, variable: Variable, n: Int): Future[List[JValue]] = 
     getHistogramBottom(token, path, variable, n).map(_.map(_._1))
+
+  /** Retrieves the length of array properties, or 0 if the property is not an array.
+   */
+  def getValueLength(token: Token, path: Path, variable: Variable): Future[Int] = {
+    getChildren(token, path, variable).map { children =>
+      children.filterNot(_.endsWith("/")).map(JPath(_)).foldLeft(0) {
+        case (length, jpath) =>
+          jpath.nodes match {
+            case JPathIndex(index) :: _ => index + 1
+
+            case _ => length
+          }
+      }
+    }
+  }
 
   /** Retrieves a count of how many times the specified variable appeared in
    * an event.
