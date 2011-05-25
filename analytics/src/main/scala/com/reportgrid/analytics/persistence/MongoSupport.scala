@@ -218,4 +218,25 @@ object MongoSupport {
   implicit def ReportExtractor[T, S <: Predicate](implicit aggregator: Aggregator[T], tExtractor: Extractor[T], sExtractor: Extractor[S]): Extractor[Report[T, S]] = new Extractor[Report[T, S]] {
     def extract(v: JValue): Report[T, S] = Report(v.deserialize[Map[Observation[S], T]])
   }
+
+  implicit val StatisticsDecomposer = new Decomposer[Statistics] {
+    def decompose(v: Statistics): JValue = JObject(
+      JField("min",  v.min.serialize) ::
+      JField("max",  v.max.serialize) ::
+      JField("mean", v.mean.serialize) ::
+      JField("variance", v.variance.serialize) ::
+      JField("standardDeviation", v.standardDeviation.serialize) ::
+      Nil
+    )
+  }
+
+  implicit val StatisticsExtractor = new Extractor[Statistics] {
+    def extract(v: JValue): Statistics = Statistics(
+      min = (v \ "min").deserialize[Double],
+      max = (v \ "max").deserialize[Double],
+      mean = (v \ "mean").deserialize[Double],
+      variance = (v \ "variance").deserialize[Double],
+      standardDeviation = (v \ "standardDeviation").deserialize[Double]
+    )
+  }
 }
