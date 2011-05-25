@@ -146,7 +146,7 @@ class GlueConCompanies(companyFile: Option[String]) {
 }
 
 case class Tweet(
-  startups: List[String],
+  startup: String,
   properties: JObject,
   time: Option[DateTime]
 )
@@ -211,9 +211,9 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
         for (entity <- Option(resp.getEntity)) {
           val jsonFactory = (new ObjectMapper).getJsonFactory()
           val parser = jsonFactory.createJsonParser(entity.getContent)
-          for (tweetOption <- parse(parser)) {
-            for (Tweet(startups, properties, time) <- tweetOption) {
-              if (companies.podCompanies.values.exists(startups.contains)) {
+          for (tweets <- parse(parser)) {
+            for (Tweet(startup, properties, time) <- tweets) {
+              if (companies.podCompanies.values.exists(_ == startup)) {
                 sendToReportGrid("pods", properties, time.map(_.toDate))
               }
 
@@ -238,17 +238,17 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
     }
   }
 
-  def parse(parser: JsonParser): Iterator[Option[Tweet]] = {
+  def parse(parser: JsonParser): Iterator[List[Tweet]] = {
     Iterator.continually {
       parser.nextToken match {
-        case JsonToken.START_OBJECT => extractTweet(parser)
+        case JsonToken.START_OBJECT => extractTweets(parser)
         case tok => error("Got an unexpected token at the root; should only be objects here: " + tok + ": " + parser.getText)
       }
     }
   }
 
 
-  def extractTweet(parser: JsonParser): Option[Tweet] = {
+  def extractTweets(parser: JsonParser): List[Tweet] = {
     val entry = parser.readValueAsTree
     val actor = Option(entry.get("actor")) 
     val obj   = Option(entry.get("object")) 
@@ -266,7 +266,6 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
     val words = tokens.map(s => s.replaceAll("""[^\w\d_\-]""", ""))
     lazy val podStartups = words.map(Stemmer.stem).flatMap(podCompaniesStemmed.get) 
     lazy val allStartups = words.filter(allCompaniesStripped)
-
     val startups = if (podStartups.isEmpty) allStartups else podStartups
 
     def locName(node: JsonNode) = for {
@@ -287,11 +286,10 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
       opt.map(v => obj.set(JPath(path), f(v)).asInstanceOf[JObject]).getOrElse(obj)
     }
     
-    for (startups <- startups.toNel) yield {
-      val startupList = startups.list
+    for (startup <- startups) yield {
       val jstate =  init[JObject] <*
                     modify(extract("client", client.map(_.replaceAll("""\d\.""", "")))) <*
-                    modify(extract("startups", Some(startupList))) <*
+                    modify(extract("startup", Some(startup))) <*
                     modify(extract("location", location)) <*
                     modify(extract("emotion", emotion)) <*
                     modify(extract("followersCount", followersCount)) <*
@@ -299,7 +297,7 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
                     modify(extract("clout", clout)) <*
                     modify(extract("languages", languages))
 
-      Tweet(startupList, jstate(JObject(Nil))._1, time)
+      Tweet(startup, jstate(JObject(Nil))._1, time)
     }
   }
 
