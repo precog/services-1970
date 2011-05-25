@@ -1,0 +1,8 @@
+To run analytics server: 
+
+java -jar analytics-v0.jar --configFile analytics.conf
+
+To run ingest:
+
+java -jar examples-v0.jar --configFile gluecon-local.config --companyFile twitter_startups.csv 
+
