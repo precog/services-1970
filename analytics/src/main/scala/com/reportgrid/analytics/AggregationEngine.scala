@@ -157,26 +157,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         }
     })
   }
-
-  /** Retrieves a histogram of the values a variable acquires over its lifetime.
-   */
-  private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = {
-    getValueLength(token, path, variable).flatMap { 
-      case 0 =>
-        (extractValues(forTokenAndPath(token, path) & forVariable(variable), varValueC) { 
-          (jvalue, count) => (jvalue.deserialize[HasValue].value, count)
-        }).map(_.toMap)
-
-      case length =>
-        Future((0 until length).map { index =>
-          getHistogramInternal(token, path, Variable(variable.name \ JPathIndex(index)))
-        }: _*).map { results =>
-          results.foldLeft(Map.empty[JValue, CountType]) {
-            case (all, cur) => MapMonoid[JValue, CountType].append(all, cur)
-          }
-        }
-    }    
-  }
   
   def getHistogram(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = 
     getHistogramInternal(token, path, variable)
@@ -461,6 +441,26 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         }
       }
     }
+  }
+
+  /** Retrieves a histogram of the values a variable acquires over its lifetime.
+   */
+  private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = {
+    getValueLength(token, path, variable).flatMap { 
+      case 0 =>
+        (extractValues(forTokenAndPath(token, path) & forVariable(variable), varValueC) { 
+          (jvalue, count) => (jvalue.deserialize[HasValue].value, count)
+        }).map(_.toMap)
+
+      case length =>
+        Future((0 until length).map { index =>
+          getHistogramInternal(token, path, Variable(variable.name \ JPathIndex(index)))
+        }: _*).map { results =>
+          results.foldLeft(Map.empty[JValue, CountType]) {
+            case (all, cur) => MapMonoid[JValue, CountType].append(all, cur)
+          }
+        }
+    }    
   }
 
   private def internalSearchSeries[P <: Predicate](col: MongoCollection, token: Token, path: Path, periodicity: Periodicity, observation: Observation[P],
