@@ -195,6 +195,17 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
+  def getVariableStatistics(token: Token, path: Path, variable: Variable): Future[Statistics] = {
+    getHistogram(token, path, variable).map { histogram =>
+      (histogram.foldLeft(RunningStats.zero) {
+        case (running, (value, count)) =>
+          val number = value.deserialize[Double]
+
+          running.update(number, count)
+      }).statistics
+    }
+  }
+
   /** Retrieves a count of how many times the specified variable appeared in
    * an event.
    */
