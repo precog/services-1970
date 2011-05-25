@@ -175,8 +175,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
             case (all, cur) => MapMonoid[JValue, CountType].append(all, cur)
           }
         }
-    }
-    
+    }    
   }
   
   def getHistogram(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = 
