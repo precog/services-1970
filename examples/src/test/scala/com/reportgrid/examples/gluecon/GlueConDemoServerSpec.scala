@@ -251,7 +251,7 @@ class GlueConDemoServerSpec extends Specification {
     JField("clout",JInt(16)), 
     JField("friendsCount",JInt(240)), 
     JField("followersCount",JInt(400)), 
-    JField("startups",JArray(List(JString("ReportGrid"))))
+    JField("startup",JString("ReportGrid"))
   )
 
   val expectedFields2 = List(
@@ -259,7 +259,7 @@ class GlueConDemoServerSpec extends Specification {
     JField("clout",JInt(11)), 
     JField("friendsCount",JInt(2000)), 
     JField("followersCount",JInt(2200)), 
-    JField("startups",JArray(List(JString("ReportGrid")))), 
+    JField("startup",JString("ReportGrid")), 
     JField("client",JString("web"))
   )
 
@@ -271,8 +271,7 @@ class GlueConDemoServerSpec extends Specification {
       val parser = jsonFactory.createJsonParser(sampleData)
       parser.nextToken match {
         case JsonToken.START_OBJECT => 
-          val Some(Tweet(startups, properties, time)) = digester.extractTweet(parser) 
-          startups mustNot beEmpty
+          val List(Tweet(_, properties, _)) = digester.extractTweets(parser) 
           properties must beLike {
             case JObject(fields) => fields must haveTheSameElementsAs(expectedFields1)
           }
@@ -289,7 +288,7 @@ class GlueConDemoServerSpec extends Specification {
 
       List(expectedFields1, expectedFields2).forall {
         fields => tweets must exist {
-          case Some(Tweet(_, properties, _)) => properties must beLike {
+          case List(Tweet(_, properties, _)) => properties must beLike {
             case JObject(fields) => fields must haveTheSameElementsAs(fields)
           }
 
