@@ -271,7 +271,7 @@ class GlueConDemoServerSpec extends Specification {
       val parser = jsonFactory.createJsonParser(sampleData)
       parser.nextToken match {
         case JsonToken.START_OBJECT => 
-          val List(Tweet(_, properties, _)) = digester.extractTweets(parser) 
+          val List(Mention(_, properties, _)) = digester.extractMentions(parser) 
           properties must beLike {
             case JObject(fields) => fields must haveTheSameElementsAs(expectedFields1)
           }
@@ -288,7 +288,7 @@ class GlueConDemoServerSpec extends Specification {
 
       List(expectedFields1, expectedFields2).forall {
         fields => tweets must exist {
-          case List(Tweet(_, properties, _)) => properties must beLike {
+          case List(Mention(_, properties, _)) => properties must beLike {
             case JObject(fields) => fields must haveTheSameElementsAs(fields)
           }
 
