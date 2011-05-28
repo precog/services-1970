@@ -1,13 +1,42 @@
 package com.reportgrid.examples.benchmark
 
 import java.util.concurrent._
+import TimeUnit._
+
+import blueeyes.json.JsonAST._
+import blueeyes.json.JsonDSL._
+import blueeyes.util.CommandLineArguments
 
 import com.reportgrid.analytics.Token
 import com.reportgrid.api._
 import com.reportgrid.api.blueeyes.ReportGrid
 
+import net.lag.configgy.Configgy
+import net.lag.configgy.Config
+
+import scala.actors.Actor._
+
 object AnalyticsBenchmark {
   def main(argv: Array[String]): Unit = {
+    val args = CommandLineArguments(argv: _*)
+    if (args.parameters.get("configFile").isDefined) {
+      Configgy.configure(args.parameters.get("configFile").get)
+      run(Configgy.config)
+    } else {
+      println("Usage: --configFile [filename]")
+      println("Config file format:")
+      println("""
+        benchmarkToken = "your-token"
+        benchmarkUrl = "http://benchmark-server/"
+        resultsToken = "your-token"
+        resultsUrl = "http://results-server/"
+      """)
+            
+      System.exit(-1)
+    }
+  }
+
+  def run(config: Config) = {
     val benchmarkToken = config.getString("benchmarkToken", Token.Test.tokenId)
     val benchmarkUrl = config.getString("benchmarkUrl", "http://localhost:8888")
 
@@ -16,6 +45,9 @@ object AnalyticsBenchmark {
 
     val testSystem = new ReportGrid(benchmarkToken, ReportGridConfig(benchmarkUrl))
     val resultsSystem = new ReportGrid(resultsToken, ReportGridConfig(resultsUrl))
+
+    val benchmark = new AnalyticsBenchmark(testSystem, resultsApi, conf) 
+    benchmark.run()
   }
 }
 
@@ -50,12 +82,14 @@ case object Done
 case class Sample(rate: Long, properties: JObject)
 case class QueryFrom(rate: Long, samples: List[JObject])
 
-case class SendTime(time: Long)
+case class TrackTime(time: Long)
 case class QueryTime(time: Long)
 
 class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: SamplingConfig) {
+  def run(): Unit = {
+  }
 
-  def benchmark(rate: Long, samplesPerTest: Long): Unit = {
+  def benchmark(rate: Long, timeUnit: TimeUnit, samplesPerTest: Long): Unit = {
     val benchmarkExecutor = Executors.newScheduledThreadPool(4)
     val resultsExecutor = Executors.newScheduledThreadPool(1)
     val done = new CountDownLatch(1)
@@ -77,11 +111,12 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
     }
 
     val sendActor = actor {
+      var i = 0
       loop {
         react {
           case Sample(sample) => 
             val start = System.nanoTime
-            api.track(
+            testApi.track(
               path       = "/benchmark",
               name       = "event",
               properties = sample,
@@ -90,7 +125,10 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
               count = Some(1)
             )
 
-            resultsActor ! SampleTime(System.nanoTime - start)
+            i += 1
+            if (i % 10 == 0) {
+              resultsActor ! TrackTime(System.nanoTime - start)
+            }
 
           case Done => queryActor ! Done
         }
@@ -112,7 +150,25 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
     val resultsActor = actor {
       loop {
         react {
+          case TrackTime(time) => 
+            resultsApi.track(
+              path       = "/benchmark",
+              name       = "track",
+              properties = JObject(List(JField("time", JLong(time))))
+              rollup     = false,
+              timestamp  = clock.now(),
+              count = Some(1)
+            )
 
+          case QueryTime(time) => 
+            resultsApi.track(
+              path       = "/benchmark",
+              name       = "query",
+              properties = JObject(List(JField("time", JLong(time))))
+              rollup     = false,
+              timestamp  = clock.now(),
+              count = Some(1)
+            )
         }
       }
     }
@@ -120,18 +176,27 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
     def injector: Runnable = new Runnable {
       var remaining = conf.perRate
       override def run = {
-        sampleActor ! Send
-        remaining -= 1
-        if (remaining <= 0) executorService.
+        if (remaining <= 0) {
+          sampleActor ! Done
+          benchmarkFuture.shutdown()
+          resultsFuture.shutdown()
+        } else {
+          sampleActor ! Send
+          remaining -= 1
+        }
       }
     }
 
     def sampler: Runnable = new Runnable {
       override def run = {
+        sampleActor ! Query
       }
     }
 
-    val serviceexecutorService.scheduleAtFixedRate()
+
+    val benchmarkFuture = benchmarkExecutor.scheduleAtFixedRate(injector, 0, SECONDS.convert(1, NANOSECONDS) / rate, NANOSECONDS)
+    val resultsFuture = resultsExecutor.scheduleAtFixedRate(sampler, 0, 1, SECONDS)
+
     done.await()
   }
 }
