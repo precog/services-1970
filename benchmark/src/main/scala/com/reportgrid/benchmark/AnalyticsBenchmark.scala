@@ -10,7 +10,7 @@ import blueeyes.util.CommandLineArguments
 import blueeyes.util.Clock
 import blueeyes.util.ClockSystem
 
-import com.reportgrid.analytics.Token
+import com.reportgrid.analytics.{Token, RunningStats}
 import com.reportgrid.api._
 import com.reportgrid.api.Series._
 import com.reportgrid.api.blueeyes.ReportGrid
@@ -63,7 +63,7 @@ object AnalyticsBenchmark {
         )
     }
 
-    val benchmark = new AnalyticsBenchmark(testSystem, resultsSystem, conf)
+    val benchmark = new AnalyticsBenchmark(testSystem, resultsSystem, conf, System.out)
     benchmark.run()
   }
 }
@@ -137,11 +137,15 @@ object QueryType {
 
 case class QueryTime(queryType: QueryType, time: Long)
 
-class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: SamplingConfig) {
+class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: SamplingConfig, resultsStream: java.io.PrintStream) {
   def run(): Unit = {
+		val rateStep = conf.maxRate / 5
+		for (rate <- rateStep to conf.maxRate by rateStep) {
+			benchmark(rate)
+		}
   }
 
-  def benchmark(rate: Long, timeUnit: TimeUnit, samplesPerTest: Long): Unit = {
+  def benchmark(rate: Long): Unit = {
     val startTime = conf.clock.now()
     val benchmarkPath = "/benchmark/" + startTime.toDate.getTime
     val benchmarkExecutor = Executors.newScheduledThreadPool(4)
@@ -150,17 +154,17 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
 
     lazy val sampleActor = actor {
       var sampleSet = conf.sampleSet 
-      receive {
-        case Send => 
-          val (sample, next) = sampleSet.next
-          sampleSet = next
-          sendActor ! Sample(sample)
+			loop {
+				react {
+					case Send =>
+						val (sample, next) = sampleSet.next
+						sampleSet = next
+						sendActor ! Sample(sample)
 
-        case Query => sampleSet.queriableSamples.foreach {
-          samples => queryActor ! QueryFrom(samples)
-        }
+					case Query => sampleSet.queriableSamples.foreach(samples => queryActor ! QueryFrom(samples))
 
-        case Done => sendActor ! Done
+					case Done => sendActor ! Done
+				}
       }
     }
 
@@ -210,26 +214,30 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
 
             //intersect
             if (sampleKeys.size > 1) {
-                val k1 :: k2 :: Nil = sampleKeys.take(2).toList
-                time(
-                  testApi.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(benchmarkPath),
-                  QueryTime(QueryType.Intersect, _)
-                )
+							val k1 :: k2 :: Nil = sampleKeys.take(2).toList
+							time(
+								testApi.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(benchmarkPath),
+								QueryTime(QueryType.Intersect, _)
+							)
             }
 
-          case Done => done.countDown()
+						//histogram
+						//TODO
+
+
+          case Done => resultsActor ! Done
         }
       }
     }
 
     lazy val resultsActor = actor {
-      //var trackTimes = new ArrayBuffer[Long]
-      //var queryTimes = new ArrayBuffer[Long]
+      var trackStats = RunningStats.zero
+      var queryStats = RunningStats.zero
 
       loop {
         react {
           case TrackTime(time) => 
-            //trackTimes += time
+            trackStats = trackStats.update(time, 1)
             resultsApi.track(
               path       = benchmarkPath,
               name       = "track",
@@ -239,7 +247,7 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
             )
 
           case QueryTime(queryType, time) => 
-            //queryTimes += time
+            queryStats = queryStats.update(time, 1)
             resultsApi.track(
               path       = benchmarkPath + "/" + queryType,
               name       = "query",
@@ -247,6 +255,19 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
               rollup     = false,
               count = Some(1)
             )
+
+					case Done => 
+						val ts = trackStats.statistics
+						resultsStream.println("Tracking times:")
+						resultsStream.println("min\tmax\tmean\tstddev")
+						resultsStream.println(ts.min + "\t" + ts.max + "\t" + ts.mean + "\t" + ts.standardDeviation)
+
+						val qs = queryStats.statistics
+						resultsStream.println("Query times:")
+						resultsStream.println("min\tmax\tmean\tstddev")
+						resultsStream.println(qs.min + "\t" + qs.max + "\t" + qs.mean + "\t" + qs.standardDeviation)
+
+						done.countDown()
         }
       }
     }
@@ -278,6 +299,7 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
       }
     }
 
+		resultsStream.println("Running benchmark at track rate of " + rate + " events/second")
     val benchmarkFuture = benchmarkExecutor.scheduleAtFixedRate(injector, 0, SECONDS.convert(1, NANOSECONDS) / rate, NANOSECONDS)
     val resultsFuture = resultsExecutor.scheduleAtFixedRate(sampler, 0, 1, SECONDS)
 

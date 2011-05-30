@@ -16,10 +16,9 @@ case class RunningStats(min: Double, max: Double, sum: Double, sumSq: Double, n:
   )
 
   def statistics: Statistics = if (n == 0) Statistics.zero else {
-  	val mean = sum / n
-  	val variance = (n * sumSq - sum * sum) / (n * (n - 1))
+  	val variance = (sumSq - ((sum * sum) / n)) / (n - 1)
 
-  	Statistics(min = min, max = max, mean = mean, variance, standardDeviation = math.sqrt(variance))
+  	Statistics(min = min, max = max, mean = sum / n, variance, standardDeviation = math.sqrt(variance))
   } 
 }
 

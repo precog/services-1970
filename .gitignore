@@ -7,4 +7,5 @@ target
 project/boot
 project/plugins/project
 *.swp
+build.xml
 nbproject

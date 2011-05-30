@@ -8,7 +8,7 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
   lazy val examples  = project("examples",  "examples",  new ExamplesProject(_), common)
   lazy val benchmark = project("benchmark", "benchmark", new BenchmarkProject(_), common)
 
-  class CommonProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with IdeaProject {
+  class CommonProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with IdeaProject with SbtNetbeansPlugin {
     val scalaspec   = "org.scala-tools.testing"     % "specs_2.8.0"       % "1.6.6-SNAPSHOT"  % "test"
     val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"             % "test"
 
@@ -17,17 +17,27 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val configgy    = "net.lag"                     % "configgy"          % "2.0.0"
   }
 
-  class BillingProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {
-    override def mainClass = Some("com.reportgrid.billing.BillingServer")
+  class AnalyticsProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject with SbtNetbeansPlugin {
+    //val junit       = "junit"                       % "junit"             % "4.7"             % "test"
+    val blueeyes    = "com.github.blueeyes"         % "blueeyes"          % "0.3.18"
+
+    override def mainClass = Some("com.reportgrid.analytics.AnalyticsServer")
 
     override def packageDocsJar = defaultJarPath("-javadoc.jar")
     override def packageSrcJar  = defaultJarPath("-sources.jar")
   }
 
-  class AnalyticsProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject with SbtNetbeansPlugin {
-    //val junit       = "junit"                       % "junit"             % "4.7"             % "test"
-
-    override def mainClass = Some("com.reportgrid.analytics.AnalyticsServer")
+  class BenchmarkProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject with SbtNetbeansPlugin {
+    val api = "com.reportgrid" %% "scala-client" % "0.2.2"
+    val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"
+    
+    override def mainClass = Some("com.reportgrid.benchmark.AnalyticsBenchmark")
+    override def packageDocsJar = defaultJarPath("-javadoc.jar")
+    override def packageSrcJar  = defaultJarPath("-sources.jar")
+  }
+ 
+  class BillingProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject {
+    override def mainClass = Some("com.reportgrid.billing.BillingServer")
 
     override def packageDocsJar = defaultJarPath("-javadoc.jar")
     override def packageSrcJar  = defaultJarPath("-sources.jar")
@@ -39,15 +49,6 @@ class ServicesProject(info: ProjectInfo) extends ParentProject(info) {
     val rosetta       = "github"                    %% "rosetta-json"     % "0.2"
 
     override def mainClass = Some("com.reportgrid.examples.gluecon.GlueConDemoServer")
-    override def packageDocsJar = defaultJarPath("-javadoc.jar")
-    override def packageSrcJar  = defaultJarPath("-sources.jar")
-  }
-
-  class BenchmarkProject(info: ProjectInfo) extends DefaultProject(info) with Repositories with OneJar with IdeaProject with SbtNetbeansPlugin {
-    val api = "com.reportgrid" %% "scala-client" % "0.2.2"
-    val scalacheck  = "org.scala-tools.testing"     % "scalacheck_2.8.0"  % "1.7"
-    
-    override def mainClass = Some("com.reportgrid.benchmark.AnalyticsBenchmark")
     override def packageDocsJar = defaultJarPath("-javadoc.jar")
     override def packageSrcJar  = defaultJarPath("-sources.jar")
   }
