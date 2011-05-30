@@ -80,16 +80,28 @@ case object Send
 case object Query
 case object Done
 case class Sample(rate: Long, properties: JObject)
-case class QueryFrom(rate: Long, samples: List[JObject])
+case class QueryFrom(samples: List[JObject])
 
 case class TrackTime(time: Long)
-case class QueryTime(time: Long)
+
+sealed class QueryType
+object QueryType {
+  case object Count extends QueryType
+  case object Series extends QueryType
+  case object Search extends QueryType
+  case object Intersect extends QueryType
+  case object Histogram extends QueryType
+}
+
+case class QueryTime(queryType: QueryType, time: Long)
 
 class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: SamplingConfig) {
   def run(): Unit = {
   }
 
   def benchmark(rate: Long, timeUnit: TimeUnit, samplesPerTest: Long): Unit = {
+    val startTime = clock.now()
+    val benchmarkPath = "/benchmark/" + startTime.toDate.getTime
     val benchmarkExecutor = Executors.newScheduledThreadPool(4)
     val resultsExecutor = Executors.newScheduledThreadPool(1)
     val done = new CountDownLatch(1)
@@ -117,7 +129,7 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
           case Sample(sample) => 
             val start = System.nanoTime
             testApi.track(
-              path       = "/benchmark",
+              path       = benchmarkPath,
               name       = "event",
               properties = sample,
               rollup     = false,
@@ -135,24 +147,68 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
       }
     }
 
+    def time[A](expr: => A, track: Long => Any): A = {
+      val start = System.nanoTime()
+      val result = expr
+      resultsActor ! track(System.nanoTime() - start)
+      result
+    }
+
     val queryActor = actor {
       loop {
         react {
           case QueryFrom(samples) =>
-            val start = System.nanoTime
+            val sampleKey = samples.headOption.flatMap {
+              case JObject(fields) => fields.headOption map {
+                case JField(name, _) => name
+              }
+            }
 
+            time(testApi.select(Count).of(".track").from(benchmarkPath), QueryTime(QueryType.Count, _))
+            time(testApi.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Series,_))
+            //time(testApi.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Search,_))
+            time(
+              testApi.AnalyticsServer.post(
+                "intersect",
+                JsonObject(
+                  ("select" -> "count") ::
+                  ("from" -> ) ::
+                  ("properties" -> ) :: Nil
+                )
+              ),
+              QueryTime(QueryType.Intersect) 
+            )
 
+            time(
+              testApi.AnalyticsServer.post(
+                "intersect",
+                JsonObject(
+                  ("select" -> "series/minute") ::
+                  ("from" -> ) ::
+                  ("properties" -> JArray(
+                    
+                  )) ::
+                  ("start" -> startTime.serialize) ::
+                  ("end" -> clock.now().serialize) :: Nil
+                )
+              ),
+              QueryTime(QueryType.Intersect) 
+            )
           case Done => done.countDown()
         }
       }
     }
 
     val resultsActor = actor {
+      var trackTimes = new ArrayBuffer[Long]
+      var queryTimes = new ArrayBuffer[Long]
+
       loop {
         react {
           case TrackTime(time) => 
+            trackTimes += time
             resultsApi.track(
-              path       = "/benchmark",
+              path       = benchmarkPath,
               name       = "track",
               properties = JObject(List(JField("time", JLong(time))))
               rollup     = false,
@@ -160,9 +216,10 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
               count = Some(1)
             )
 
-          case QueryTime(time) => 
+          case QueryTime(queryType, time) => 
+            queryTimes += time
             resultsApi.track(
-              path       = "/benchmark",
+              path       = benchmarkPath,
               name       = "query",
               properties = JObject(List(JField("time", JLong(time))))
               rollup     = false,
@@ -192,7 +249,6 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
         sampleActor ! Query
       }
     }
-
 
     val benchmarkFuture = benchmarkExecutor.scheduleAtFixedRate(injector, 0, SECONDS.convert(1, NANOSECONDS) / rate, NANOSECONDS)
     val resultsFuture = resultsExecutor.scheduleAtFixedRate(sampler, 0, 1, SECONDS)
