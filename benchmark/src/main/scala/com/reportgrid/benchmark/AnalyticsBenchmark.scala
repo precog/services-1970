@@ -1,4 +1,5 @@
-package com.reportgrid.examples.benchmark
+package com.reportgrid
+package benchmark
 
 import java.util.concurrent._
 import TimeUnit._
@@ -6,15 +7,20 @@ import TimeUnit._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.util.CommandLineArguments
+import blueeyes.util.Clock
+import blueeyes.util.ClockSystem
 
 import com.reportgrid.analytics.Token
 import com.reportgrid.api._
+import com.reportgrid.api.Series._
 import com.reportgrid.api.blueeyes.ReportGrid
+import scala.collection.mutable.ArrayBuffer
 
 import net.lag.configgy.Configgy
 import net.lag.configgy.Config
 
 import scala.actors.Actor._
+import org.scalacheck.Gen._
 
 object AnalyticsBenchmark {
   def main(argv: Array[String]): Unit = {
@@ -46,7 +52,18 @@ object AnalyticsBenchmark {
     val testSystem = new ReportGrid(benchmarkToken, ReportGridConfig(benchmarkUrl))
     val resultsSystem = new ReportGrid(resultsToken, ReportGridConfig(resultsUrl))
 
-    val benchmark = new AnalyticsBenchmark(testSystem, resultsApi, conf) 
+    val conf = new SamplingConfig {
+        override val clock = ClockSystem.clockSystem
+        override val maxRate = config.getLong("maxRate", 10000)
+        override val samplesPerTestRate = config.getLong("samplesPerTestRate", 10000)
+        override val sampleSet = new DistributedSampleSet(
+          Vector(containerOfN[List, Int](100, choose(0, 50)).sample.get: _*),
+          Vector(containerOfN[List, String](1000, for (i <- choose(3, 30); chars <- containerOfN[Array, Char](i, alphaChar)) yield new String(chars)).sample.get: _*),
+          10
+        )
+    }
+
+    val benchmark = new AnalyticsBenchmark(testSystem, resultsSystem, conf)
     benchmark.run()
   }
 }
@@ -54,10 +71,9 @@ object AnalyticsBenchmark {
 trait SamplingConfig {
   def clock: Clock
   def maxRate: Long
-  def perRate: Long
+  def samplesPerTestRate: Long
   def sampleSet: SampleSet
 }
-  
 
 trait SampleSet {
   // the number of samples to return in the queriablesamples list
@@ -71,6 +87,32 @@ trait SampleSet {
   def next: (JObject, SampleSet)
 }
 
+case class DistributedSampleSet(sampleInts: Vector[Int], sampleStrings: Vector[String], queriableSampleSize: Int, queriableSamples: Option[List[JObject]] = None) extends SampleSet { self =>
+  def gaussianIndex(size: Int): Int = {
+    // multiplying by size / 5 means that 96% of the time, the sampled value will be within the range and no second try will be necessary
+    val testIndex = (scala.util.Random.nextGaussian * (size / 5)) + (size / 2)
+    if (testIndex < 0 || testIndex > size) gaussianIndex(size)
+    else testIndex.toInt
+  }
+
+  def exponentialIndex(size: Int): Int = {
+    import scala.math._
+    round(exp(-random * 8) * size).toInt
+  }
+
+  def next = {
+    val sample = JObject(
+      JField("exp_str", sampleStrings(exponentialIndex(sampleStrings.size))) ::
+      JField("exp_int", sampleInts(exponentialIndex(sampleInts.size))) ::
+      JField("normal_str", sampleStrings(gaussianIndex(sampleStrings.size))) ::
+      JField("normal_int", sampleInts(gaussianIndex(sampleInts.size))) ::
+      JField("uniform_int", sampleInts(scala.util.Random.nextInt(sampleInts.size))) :: Nil
+    )
+    
+    (sample, if (queriableSamples.exists(_.size >= queriableSampleSize)) this else this.copy(queriableSamples = Some(sample :: self.queriableSamples.getOrElse(Nil))))
+  }
+}
+
 trait BenchmarkQuery {
   def interval: Long
   def query: JObject
@@ -79,7 +121,7 @@ trait BenchmarkQuery {
 case object Send
 case object Query
 case object Done
-case class Sample(rate: Long, properties: JObject)
+case class Sample(properties: JObject)
 case class QueryFrom(samples: List[JObject])
 
 case class TrackTime(time: Long)
@@ -100,13 +142,13 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
   }
 
   def benchmark(rate: Long, timeUnit: TimeUnit, samplesPerTest: Long): Unit = {
-    val startTime = clock.now()
+    val startTime = conf.clock.now()
     val benchmarkPath = "/benchmark/" + startTime.toDate.getTime
     val benchmarkExecutor = Executors.newScheduledThreadPool(4)
     val resultsExecutor = Executors.newScheduledThreadPool(1)
     val done = new CountDownLatch(1)
 
-    val sampleActor = actor {
+    lazy val sampleActor = actor {
       var sampleSet = conf.sampleSet 
       receive {
         case Send => 
@@ -122,7 +164,7 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
       }
     }
 
-    val sendActor = actor {
+    lazy val sendActor = actor {
       var i = 0
       loop {
         react {
@@ -133,7 +175,7 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
               name       = "event",
               properties = sample,
               rollup     = false,
-              timestamp  = clock.now(),
+              timestamp  = Some(conf.clock.now().toDate),
               count = Some(1)
             )
 
@@ -147,6 +189,68 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
       }
     }
 
+    lazy val queryActor = actor {
+      loop {
+        react {
+          case QueryFrom(samples) =>
+            val sampleKeys = (samples.flatMap {
+              case JObject(fields) => fields map {
+                case JField(name, _) => name
+              }
+            }).toSet
+
+            //count
+            time(testApi.select(Count).of(".track").from(benchmarkPath), QueryTime(QueryType.Count, _))
+
+            //select
+            time(testApi.select(Minute(Some((startTime.toDate, conf.clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Series,_))
+
+            //search
+            //time(testApi.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Search,_))
+
+            //intersect
+            if (sampleKeys.size > 1) {
+                val k1 :: k2 :: Nil = sampleKeys.take(2).toList
+                time(
+                  testApi.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(benchmarkPath),
+                  QueryTime(QueryType.Intersect, _)
+                )
+            }
+
+          case Done => done.countDown()
+        }
+      }
+    }
+
+    lazy val resultsActor = actor {
+      //var trackTimes = new ArrayBuffer[Long]
+      //var queryTimes = new ArrayBuffer[Long]
+
+      loop {
+        react {
+          case TrackTime(time) => 
+            //trackTimes += time
+            resultsApi.track(
+              path       = benchmarkPath,
+              name       = "track",
+              properties = JObject(List(JField("time", JInt(time)))),
+              rollup     = false,
+              count = Some(1)
+            )
+
+          case QueryTime(queryType, time) => 
+            //queryTimes += time
+            resultsApi.track(
+              path       = benchmarkPath + "/" + queryType,
+              name       = "query",
+              properties = JObject(List(JField("time", JInt(time)))),
+              rollup     = false,
+              count = Some(1)
+            )
+        }
+      }
+    }
+
     def time[A](expr: => A, track: Long => Any): A = {
       val start = System.nanoTime()
       val result = expr
@@ -154,89 +258,13 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
       result
     }
 
-    val queryActor = actor {
-      loop {
-        react {
-          case QueryFrom(samples) =>
-            val sampleKey = samples.headOption.flatMap {
-              case JObject(fields) => fields.headOption map {
-                case JField(name, _) => name
-              }
-            }
-
-            time(testApi.select(Count).of(".track").from(benchmarkPath), QueryTime(QueryType.Count, _))
-            time(testApi.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Series,_))
-            //time(testApi.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Search,_))
-            time(
-              testApi.AnalyticsServer.post(
-                "intersect",
-                JsonObject(
-                  ("select" -> "count") ::
-                  ("from" -> ) ::
-                  ("properties" -> ) :: Nil
-                )
-              ),
-              QueryTime(QueryType.Intersect) 
-            )
-
-            time(
-              testApi.AnalyticsServer.post(
-                "intersect",
-                JsonObject(
-                  ("select" -> "series/minute") ::
-                  ("from" -> ) ::
-                  ("properties" -> JArray(
-                    
-                  )) ::
-                  ("start" -> startTime.serialize) ::
-                  ("end" -> clock.now().serialize) :: Nil
-                )
-              ),
-              QueryTime(QueryType.Intersect) 
-            )
-          case Done => done.countDown()
-        }
-      }
-    }
-
-    val resultsActor = actor {
-      var trackTimes = new ArrayBuffer[Long]
-      var queryTimes = new ArrayBuffer[Long]
-
-      loop {
-        react {
-          case TrackTime(time) => 
-            trackTimes += time
-            resultsApi.track(
-              path       = benchmarkPath,
-              name       = "track",
-              properties = JObject(List(JField("time", JLong(time))))
-              rollup     = false,
-              timestamp  = clock.now(),
-              count = Some(1)
-            )
-
-          case QueryTime(queryType, time) => 
-            queryTimes += time
-            resultsApi.track(
-              path       = benchmarkPath,
-              name       = "query",
-              properties = JObject(List(JField("time", JLong(time))))
-              rollup     = false,
-              timestamp  = clock.now(),
-              count = Some(1)
-            )
-        }
-      }
-    }
-
     def injector: Runnable = new Runnable {
-      var remaining = conf.perRate
-      override def run = {
+      private var remaining = conf.samplesPerTestRate
+      def run: Unit = {
         if (remaining <= 0) {
           sampleActor ! Done
-          benchmarkFuture.shutdown()
-          resultsFuture.shutdown()
+          benchmarkExecutor.shutdown()
+          resultsExecutor.shutdown()
         } else {
           sampleActor ! Send
           remaining -= 1
@@ -245,7 +273,7 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
     }
 
     def sampler: Runnable = new Runnable {
-      override def run = {
+      def run: Unit = {
         sampleActor ! Query
       }
     }
@@ -256,9 +284,3 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
     done.await()
   }
 }
-
-
-
-
-
-// vim: set ts=4 sw=4 et:
