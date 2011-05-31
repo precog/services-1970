@@ -12,8 +12,8 @@ import blueeyes.util.ClockSystem
 
 import com.reportgrid.analytics.{Token, RunningStats}
 import com.reportgrid.api._
+import com.reportgrid.api.blueeyes._
 import com.reportgrid.api.Series._
-import com.reportgrid.api.blueeyes.ReportGrid
 import scala.collection.mutable.ArrayBuffer
 
 import net.lag.configgy.Configgy
@@ -36,6 +36,8 @@ object AnalyticsBenchmark {
         benchmarkUrl = "http://benchmark-server/"
         resultsToken = "your-token"
         resultsUrl = "http://results-server/"
+        maxRate = 1000 # in samples/second
+        samplesPerTestRate = 1000 # number of samples to send
       """)
             
       System.exit(-1)
@@ -49,13 +51,22 @@ object AnalyticsBenchmark {
     val resultsToken = config.getString("resultsToken", Token.Test.tokenId)
     val resultsUrl = config.getString("resultsUrl", "http://localhost:8889")
 
-    val testSystem = new ReportGrid(benchmarkToken, ReportGridConfig(benchmarkUrl))
-    val resultsSystem = new ReportGrid(resultsToken, ReportGridConfig(resultsUrl))
+    val testSystem = new BlueEyesReportGridClient {
+      val tokenId = benchmarkToken
+      val config = ReportGridConfig(benchmarkUrl)
+      val httpClient = new HttpClientApache
+    }
+
+    val resultsSystem = new BlueEyesReportGridClient {
+      val tokenId = resultsToken
+      val config = ReportGridConfig(resultsUrl)
+      val httpClient = new HttpClientApache
+    }
 
     val conf = new SamplingConfig {
         override val clock = ClockSystem.clockSystem
-        override val maxRate = config.getLong("maxRate", 10000)
-        override val samplesPerTestRate = config.getLong("samplesPerTestRate", 10000)
+        override val maxRate = config.getLong("maxRate", 1000)
+        override val samplesPerTestRate = config.getLong("samplesPerTestRate", 1000)
         override val sampleSet = new DistributedSampleSet(
           Vector(containerOfN[List, Int](100, choose(0, 50)).sample.get: _*),
           Vector(containerOfN[List, String](1000, for (i <- choose(3, 30); chars <- containerOfN[Array, Char](i, alphaChar)) yield new String(chars)).sample.get: _*),
@@ -91,13 +102,13 @@ case class DistributedSampleSet(sampleInts: Vector[Int], sampleStrings: Vector[S
   def gaussianIndex(size: Int): Int = {
     // multiplying by size / 5 means that 96% of the time, the sampled value will be within the range and no second try will be necessary
     val testIndex = (scala.util.Random.nextGaussian * (size / 5)) + (size / 2)
-    if (testIndex < 0 || testIndex > size) gaussianIndex(size)
+    if (testIndex < 0 || testIndex >= size) gaussianIndex(size)
     else testIndex.toInt
   }
 
   def exponentialIndex(size: Int): Int = {
     import scala.math._
-    round(exp(-random * 8) * size).toInt
+    round(exp(-random * 8) * size).toInt.min(size - 1).max(0)
   }
 
   def next = {
@@ -124,9 +135,8 @@ case object Done
 case class Sample(properties: JObject)
 case class QueryFrom(samples: List[JObject])
 
-case class TrackTime(time: Long)
 
-sealed class QueryType
+sealed trait QueryType
 object QueryType {
   case object Count extends QueryType
   case object Series extends QueryType
@@ -135,9 +145,11 @@ object QueryType {
   case object Histogram extends QueryType
 }
 
-case class QueryTime(queryType: QueryType, time: Long)
+sealed trait Timing
+case class TrackTime(time: Long) extends Timing
+case class QueryTime(queryType: QueryType, time: Long) extends Timing
 
-class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: SamplingConfig, resultsStream: java.io.PrintStream) {
+class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyesReportGridClient, conf: SamplingConfig, resultsStream: java.io.PrintStream) {
   def run(): Unit = {
 		val rateStep = conf.maxRate / 5
 		for (rate <- rateStep to conf.maxRate by rateStep) {
@@ -176,11 +188,10 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
             val start = System.nanoTime
             testApi.track(
               path       = benchmarkPath,
-              name       = "event",
+              name       = "track",
               properties = sample,
               rollup     = false,
-              timestamp  = Some(conf.clock.now().toDate),
-              count = Some(1)
+              timestamp  = Some(conf.clock.now().toDate)
             )
 
             i += 1
@@ -214,16 +225,15 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
 
             //intersect
             if (sampleKeys.size > 1) {
-							val k1 :: k2 :: Nil = sampleKeys.take(2).toList
-							time(
-								testApi.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(benchmarkPath),
-								QueryTime(QueryType.Intersect, _)
-							)
+              val k1 :: k2 :: Nil = sampleKeys.take(2).toList
+              time(
+                  testApi.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(benchmarkPath),
+                  QueryTime(QueryType.Intersect, _)
+              )
             }
 
-						//histogram
-						//TODO
-
+            //histogram
+            //TODO
 
           case Done => resultsActor ! Done
         }
@@ -256,7 +266,7 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
               count = Some(1)
             )
 
-					case Done => 
+					case Done =>
 						val ts = trackStats.statistics
 						resultsStream.println("Tracking times:")
 						resultsStream.println("min\tmax\tmean\tstddev")
@@ -272,11 +282,15 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
       }
     }
 
-    def time[A](expr: => A, track: Long => Any): A = {
+    def time[A](expr: => A, track: Long => Timing): Option[A] = {
       val start = System.nanoTime()
-      val result = expr
-      resultsActor ! track(System.nanoTime() - start)
-      result
+      try {
+        val result = expr
+        resultsActor ! track(System.nanoTime() - start)
+        Some(result)
+      } catch {
+        case t: Throwable => t.printStackTrace; None
+      }
     }
 
     def injector: Runnable = new Runnable {
@@ -299,9 +313,9 @@ class AnalyticsBenchmark(testApi: ReportGrid, resultsApi: ReportGrid, conf: Samp
       }
     }
 
-		resultsStream.println("Running benchmark at track rate of " + rate + " events/second")
-    val benchmarkFuture = benchmarkExecutor.scheduleAtFixedRate(injector, 0, SECONDS.convert(1, NANOSECONDS) / rate, NANOSECONDS)
-    val resultsFuture = resultsExecutor.scheduleAtFixedRate(sampler, 0, 1, SECONDS)
+		resultsStream.println("Running benchmark at track rate of " + rate + " events/second with 2 queries/second")
+    val benchmarkFuture = benchmarkExecutor.scheduleAtFixedRate(injector, 0, NANOSECONDS.convert(1, SECONDS) / rate, NANOSECONDS)
+    val resultsFuture = resultsExecutor.scheduleAtFixedRate(sampler, 0, 500, MILLISECONDS)
 
     done.await()
   }
