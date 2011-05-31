@@ -207,7 +207,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   /** Retrieves a count of how many times the specified variable appeared in
    * an event.
    */
-  def getVariableSeries(token: Token, path: Path, variable: Variable, periodicity: Periodicity, _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
+  def getVariableSeries(token: Token, path: Path, variable: Variable, periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
     variable.parent match {
       case None =>
         Future.lift(TimeSeries.empty)
@@ -215,7 +215,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       case Some(parent) =>
         val lastNode = variable.name.nodes.last
 
-        internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), _start, _end)
+        internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), start, end)
     }
   }
 
@@ -228,8 +228,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Retrieves a time series for the specified observed value of a variable.
    */
-  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, periodicity: Periodicity, _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
-    searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, _start, _end)
+  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
+    searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, start, end)
   }
 
   /** Retrieves a count for the specified observed value of a variable.
@@ -241,15 +241,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   /** Searches time series to locate observations matching the specified criteria.
    */
   def searchSeries(token: Token, path: Path, observation: Observation[HasValue], periodicity: Periodicity, 
-    _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
-    internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, _start, _end)
+    start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
+    internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, start, end)
   }
 
   /** Searches counts to locate observations matching the specified criteria.
    */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
-    _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[CountType] = {
-    searchSeries(token, path, observation, Periodicity.Eternity,  _start, _end).map(_.total(Periodicity.Eternity))
+    start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
+    searchSeries(token, path, observation, Periodicity.Eternity,  start, end).map(_.total(Periodicity.Eternity))
   }
 
   type IntersectionResult[T] = SortedMap[List[JValue], T]
@@ -385,7 +385,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   private def internalIntersectSeries[P <: Predicate](
       col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
-      periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
+      periodicity: Periodicity, start : Option[DateTime], end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
     val variables = variableDescriptors.map(_.variable)
 
     val histograms = Future(variableDescriptors.map { 
@@ -419,16 +419,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
       val filterTokenAndPath = forTokenAndPath(token, path)
 
-      val start = _start.getOrElse(EarliestTime)
-      val end   = _end.getOrElse(LatestTime)
       val aggregator = implicitly[Aggregator[TimeSeriesType]]
 
       database {
         select(".count", ".where").from(col).where {
           (filterTokenAndPath &
           JPath(".period.periodicity") === periodicity.serialize &
-          MongoFilterBuilder(JPath(".period.start"))        >= start.serialize &
-          MongoFilterBuilder(JPath(".period.start"))        <  end.serialize &
+          MongoFilterBuilder(JPath(".period.start"))        >= MongoPrimitiveOption(start.map(_.serialize)) &
+          MongoFilterBuilder(JPath(".period.start"))        <  MongoPrimitiveOption(end.map(_.serialize)) &
           JPath(".order") === variableDescriptors.length).
           whereVariablesExist(variableDescriptors.map(_.variable))
         }
@@ -486,18 +484,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   }*/
 
   private def internalSearchSeries[P <: Predicate](col: MongoCollection, token: Token, path: Path, periodicity: Periodicity, observation: Observation[P],
-    _start : Option[DateTime] = None, _end : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
+    start : Option[DateTime] = None, end : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
     val filterTokenAndPath = forTokenAndPath(token, path)
-
-    val start = _start.getOrElse(EarliestTime)
-    val end   = _end.getOrElse(LatestTime)
 
     database {
       select(".count").from(col).where {
         (filterTokenAndPath &
         JPath(".period.periodicity") === periodicity.serialize &
-        MongoFilterBuilder(JPath(".period.start"))      >=  start.serialize &
-        MongoFilterBuilder(JPath(".period.start"))       <  end.serialize &
+        MongoFilterBuilder(JPath(".period.start"))      >=  MongoPrimitiveOption(start.map(_.serialize)) &
+        MongoFilterBuilder(JPath(".period.start"))       <  MongoPrimitiveOption(end.map(_.serialize)) &
         JPath(".order") === observation.size).whereVariablesEqual(observation)
       } 
     }.map { results =>
