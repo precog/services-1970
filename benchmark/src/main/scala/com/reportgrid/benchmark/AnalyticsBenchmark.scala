@@ -270,12 +270,18 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
 						val ts = trackStats.statistics
 						resultsStream.println("Tracking times:")
 						resultsStream.println("min\tmax\tmean\tstddev")
-						resultsStream.println(ts.min + "\t" + ts.max + "\t" + ts.mean + "\t" + ts.standardDeviation)
+						resultsStream.println(MILLISECONDS.convert(ts.min.toLong,  NANOSECONDS) + "\t" + 
+                                  MILLISECONDS.convert(ts.max.toLong,  NANOSECONDS) + "\t" + 
+                                  MILLISECONDS.convert(ts.mean.toLong, NANOSECONDS) + "\t" + 
+                                  MILLISECONDS.convert(ts.standardDeviation.toLong, NANOSECONDS))
 
 						val qs = queryStats.statistics
 						resultsStream.println("Query times:")
 						resultsStream.println("min\tmax\tmean\tstddev")
-						resultsStream.println(qs.min + "\t" + qs.max + "\t" + qs.mean + "\t" + qs.standardDeviation)
+						resultsStream.println(MILLISECONDS.convert(qs.min.toLong,  NANOSECONDS) + "\t" + 
+                                  MILLISECONDS.convert(qs.max.toLong,  NANOSECONDS) + "\t" + 
+                                  MILLISECONDS.convert(qs.mean.toLong, NANOSECONDS) + "\t" + 
+                                  MILLISECONDS.convert(qs.standardDeviation.toLong, NANOSECONDS))
 
 						done.countDown()
         }
