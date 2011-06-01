@@ -221,6 +221,7 @@ object MongoSupport {
 
   implicit val StatisticsDecomposer = new Decomposer[Statistics] {
     def decompose(v: Statistics): JValue = JObject(
+      JField("n",  v.n.serialize) ::
       JField("min",  v.min.serialize) ::
       JField("max",  v.max.serialize) ::
       JField("mean", v.mean.serialize) ::
@@ -232,6 +233,7 @@ object MongoSupport {
 
   implicit val StatisticsExtractor = new Extractor[Statistics] {
     def extract(v: JValue): Statistics = Statistics(
+      n = (v \ "n").deserialize[Long],
       min = (v \ "min").deserialize[Double],
       max = (v \ "max").deserialize[Double],
       mean = (v \ "mean").deserialize[Double],

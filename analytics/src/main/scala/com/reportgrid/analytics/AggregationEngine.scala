@@ -580,7 +580,9 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
     "variable_value_series" -> List(
       "path",
       "accountTokenId",
-      "period",
+      "period.start",
+      "period.end",
+      "period.periodicity",
       "order",
       "where.variable0",
       "where.variable1",

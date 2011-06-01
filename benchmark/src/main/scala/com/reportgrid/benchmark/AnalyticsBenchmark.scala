@@ -269,16 +269,18 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
 					case Done =>
 						val ts = trackStats.statistics
 						resultsStream.println("Tracking times:")
-						resultsStream.println("min\tmax\tmean\tstddev")
-						resultsStream.println(MILLISECONDS.convert(ts.min.toLong,  NANOSECONDS) + "\t" + 
+						resultsStream.println("n\tmin\tmax\tmean\tstddev")
+						resultsStream.println(ts.n + "\t" +
+                                  MILLISECONDS.convert(ts.min.toLong,  NANOSECONDS) + "\t" + 
                                   MILLISECONDS.convert(ts.max.toLong,  NANOSECONDS) + "\t" + 
                                   MILLISECONDS.convert(ts.mean.toLong, NANOSECONDS) + "\t" + 
                                   MILLISECONDS.convert(ts.standardDeviation.toLong, NANOSECONDS))
 
 						val qs = queryStats.statistics
 						resultsStream.println("Query times:")
-						resultsStream.println("min\tmax\tmean\tstddev")
-						resultsStream.println(MILLISECONDS.convert(qs.min.toLong,  NANOSECONDS) + "\t" + 
+						resultsStream.println("n\tmin\tmax\tmean\tstddev")
+						resultsStream.println(qs.n + "\t" +
+						                      MILLISECONDS.convert(qs.min.toLong,  NANOSECONDS) + "\t" + 
                                   MILLISECONDS.convert(qs.max.toLong,  NANOSECONDS) + "\t" + 
                                   MILLISECONDS.convert(qs.mean.toLong, NANOSECONDS) + "\t" + 
                                   MILLISECONDS.convert(qs.standardDeviation.toLong, NANOSECONDS))
