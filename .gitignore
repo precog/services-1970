@@ -5,7 +5,6 @@ src_managed
 target
 *.iml
 project/boot
-project/plugins/project
 *.swp
 build.xml
 nbproject
