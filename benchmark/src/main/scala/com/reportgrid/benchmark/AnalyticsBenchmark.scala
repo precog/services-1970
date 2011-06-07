@@ -181,7 +181,6 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
     }
 
     lazy val sendActor = actor {
-      var i = 0
       loop {
         react {
           case Sample(sample) => 
@@ -194,10 +193,7 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
               timestamp  = Some(conf.clock.now().toDate)
             )
 
-            i += 1
-            if (i % 10 == 0) {
-              resultsActor ! TrackTime(System.nanoTime - start)
-            }
+            resultsActor ! TrackTime(System.nanoTime - start)
 
           case Done => queryActor ! Done
         }
@@ -244,6 +240,25 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
       var trackStats = RunningStats.zero
       var queryStats = RunningStats.zero
 
+      def printStats = {
+        val ts = trackStats.statistics
+        resultsStream.println("\t\tn\tmin\tmax\tmean\tstddev")
+        resultsStream.print("Tracking times:\t")
+        resultsStream.println(ts.n + "\t" +
+                              MILLISECONDS.convert(ts.min.toLong,  NANOSECONDS) + "\t" + 
+                              MILLISECONDS.convert(ts.max.toLong,  NANOSECONDS) + "\t" + 
+                              MILLISECONDS.convert(ts.mean.toLong, NANOSECONDS) + "\t" + 
+                              MILLISECONDS.convert(ts.standardDeviation.toLong, NANOSECONDS))
+
+        val qs = queryStats.statistics
+        resultsStream.print("Query times:\t")
+        resultsStream.println(qs.n + "\t" +
+                              MILLISECONDS.convert(qs.min.toLong,  NANOSECONDS) + "\t" + 
+                              MILLISECONDS.convert(qs.max.toLong,  NANOSECONDS) + "\t" + 
+                              MILLISECONDS.convert(qs.mean.toLong, NANOSECONDS) + "\t" + 
+                              MILLISECONDS.convert(qs.standardDeviation.toLong, NANOSECONDS))
+      }
+
       loop {
         react {
           case TrackTime(time) => 
@@ -266,25 +281,10 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
               count = Some(1)
             )
 
+            if (queryStats.statistics.n % 10 == 0) printStats
+
 					case Done =>
-						val ts = trackStats.statistics
-						resultsStream.println("Tracking times:")
-						resultsStream.println("n\tmin\tmax\tmean\tstddev")
-						resultsStream.println(ts.n + "\t" +
-                                  MILLISECONDS.convert(ts.min.toLong,  NANOSECONDS) + "\t" + 
-                                  MILLISECONDS.convert(ts.max.toLong,  NANOSECONDS) + "\t" + 
-                                  MILLISECONDS.convert(ts.mean.toLong, NANOSECONDS) + "\t" + 
-                                  MILLISECONDS.convert(ts.standardDeviation.toLong, NANOSECONDS))
-
-						val qs = queryStats.statistics
-						resultsStream.println("Query times:")
-						resultsStream.println("n\tmin\tmax\tmean\tstddev")
-						resultsStream.println(qs.n + "\t" +
-						                      MILLISECONDS.convert(qs.min.toLong,  NANOSECONDS) + "\t" + 
-                                  MILLISECONDS.convert(qs.max.toLong,  NANOSECONDS) + "\t" + 
-                                  MILLISECONDS.convert(qs.mean.toLong, NANOSECONDS) + "\t" + 
-                                  MILLISECONDS.convert(qs.standardDeviation.toLong, NANOSECONDS))
-
+            printStats
 						done.countDown()
         }
       }

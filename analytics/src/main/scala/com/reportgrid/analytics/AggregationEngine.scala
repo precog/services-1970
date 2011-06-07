@@ -110,7 +110,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           limit = token.limits.limit
         )
 
-        varValueSeriesS putAll updateTimeSeries(accountPathFilter, valueReport).patches
+        varValueSeriesS putAll updateTimeSeries(token, path, valueReport).patches
         varValueS       putAll updateValues(accountPathFilter, valueReport.order(1)).patches
 
         val childCountReport = Report.ofChildren(
@@ -131,7 +131,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           limit = token.limits.limit
         )
 
-        varSeriesS putAll updateTimeSeries(accountPathFilter, childSeriesReport).patches
+        varSeriesS putAll updateTimeSeries(token, path, childSeriesReport).patches
       }
     }
   }
@@ -326,6 +326,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
+
   private implicit def filterWhereObserved(filter: MongoFilter) = FilterWhereObserved(filter)
   private case class FilterWhereObserved(filter: MongoFilter) {
     /*
@@ -337,30 +338,47 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     def whereVariablesEqual[P <: Predicate : Decomposer](observation: Observation[P]): MongoFilter = {
       observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoFilter](filter) {
         case (filter, ((variable, predicate), index)) =>
-          val varName  = ".variable"  + index
-          val predName = ".predicate" + index
-
           filter & 
-          JPath(".where" + varName)  === variable.serialize &
-          JPath(".where" + predName) === predicate.serialize
+          JPath(".where.variable" + index)  === variable.serialize &
+          JPath(".where.predicate" + index) === predicate.serialize
       }
     }
 
     def whereVariablesExist(variables: Seq[Variable]): MongoFilter = {
       variables.sorted.zipWithIndex.foldLeft[MongoFilter](filter) {
         case (filter, (variable, index)) =>
-          val varName  = ".variable"  + index
-
-          filter & 
-          (JPath(".where" + varName) === variable.serialize)
+          filter & (JPath(".where.variable" + index) === variable.serialize)
       }
     }
   }
 
-
-  private def updateTimeSeries[P <: Predicate](filter: MongoFilter, report: Report[TimeSeriesType, P])
+  private def updateTimeSeries[P <: Predicate](token: Token, path: Path, report: Report[TimeSeriesType, P])
     (implicit tsUpdater: (JPath, TimeSeriesType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
-    
+
+    import java.security.MessageDigest
+
+    def observationUpdate[P <: Predicate : Decomposer](observation: Observation[P]): MongoUpdate = {
+      observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoUpdate](MongoUpdateNothing) {
+        case (update, ((variable, predicate), index)) =>
+          update & 
+          (MongoUpdateBuilder(".where.variable" + index)  set variable.serialize) &
+          (MongoUpdateBuilder(".where.predicate" + index) set predicate.serialize)
+      }
+    }
+
+    def md5SumString(bytes : Array[Byte]) : String = {
+      val md5 = MessageDigest.getInstance("SHA-1")
+      md5.reset()
+      md5.update(bytes)
+
+      md5.digest().map(0xFF & _).map { "%02x".format(_) }.foldLeft(""){_ + _}
+    }
+
+    val baseUpdate = (MongoUpdateBuilder(".accountTokenId") set token.accountTokenId.serialize) &
+                     (MongoUpdateBuilder(".path") set path.serialize)
+
+    val baseFilter = forTokenAndPath(token, path)
+
     report.groupByOrder.flatMap { 
       case (order, report) =>
         report.groupByPeriod.map { 
@@ -368,17 +386,22 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         }
     }.foldLeft(MongoPatches.empty) {
       case (patches, ((order, period), report)) =>
-        val filterOrderPeriod = (filter & {
+        val orderPeriodFilter = (baseFilter & {
           ".order"  === order.serialize &
           ".period" === period.serialize
         })
 
+        val orderPeriodUpdate = baseUpdate & 
+                                (MongoUpdateBuilder(".order") set order.serialize) &
+                                (MongoUpdateBuilder(".period") set period.serialize)
+
         report.observationCounts.foldLeft(patches) { 
           case (patches, (observation, count)) =>
-            val filterWhereClause = filterOrderPeriod.whereVariablesEqual(observation)
-            val timeSeriesUpdate = tsUpdater(".count", count)
+            val filterWhereClause = orderPeriodFilter.whereVariablesEqual(observation)
+            val updateKey = JPath(".updateKey") === md5SumString(renderNormalized(filterWhereClause.filter).toString.getBytes)
 
-            patches + (filterWhereClause -> timeSeriesUpdate)
+            val timeSeriesUpdate = orderPeriodUpdate & observationUpdate(observation) & tsUpdater(".count", count)
+            patches + (updateKey -> timeSeriesUpdate)
         }
     }
   }
@@ -550,7 +573,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 }
 
 object AggregationEngine extends FutureDeliveryStrategySequential {
-  private val CollectionIndices = Map(
+  private val CollectionIndices = List(
     "variable_series" -> List(
       "path",
       "accountTokenId",
@@ -577,12 +600,11 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
       "where.predicate8",
       "where.predicate9"
     ),
+    "variable_value_series" -> List("updateKey"),
     "variable_value_series" -> List(
       "path",
       "accountTokenId",
-      "period.start",
-      "period.end",
-      "period.periodicity",
+      "period",
       "order",
       "where.variable0",
       "where.variable1",
