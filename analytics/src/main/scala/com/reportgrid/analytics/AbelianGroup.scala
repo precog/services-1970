@@ -41,14 +41,14 @@ trait AggregatorImplicits {
     def aggregate(t1: Double, t2: Double): Double = t1 + t2
   }
 
-  implicit def ReportAggregator[T: AbelianGroup, S <: Predicate] = new AbelianGroup[Report[T, S]] {
+  implicit def ReportAggregator[S <: Predicate, T: AbelianGroup] = new AbelianGroup[Report[S, T]] {
     private val aggT = implicitly[AbelianGroup[T]]
 
-    def zero = Report.empty[T, S]
+    def zero = Report.empty[S, T]
 
-    def inverse(v: Report[T, S]): Report[T, S] = Report(v.observationCounts.transform { (k, v) => aggT.inverse(v) })
+    def inverse(v: Report[S, T]): Report[S, T] = Report(v.observationCounts.transform { (k, v) => aggT.inverse(v) })
 
-    def aggregate(v1: Report[T, S], v2: Report[T, S]) = v1 + v2
+    def aggregate(v1: Report[S, T], v2: Report[S, T]) = v1 + v2
   }
 
   implicit def timeSeriesAggregator[T](implicit aggregator: AbelianGroup[T]) = new AbelianGroup[TimeSeries[T]] {

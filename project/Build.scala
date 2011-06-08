@@ -25,6 +25,9 @@ object ServicesBuild extends Build {
     )
 
     val analyticsSettings = Seq(
+      libraryDependencies ++= Seq(
+        "org.scala-tools.testing" %% "specs"       % "1.6.8"  % "test",
+        "org.scala-tools.testing" %% "scalacheck"  % "1.8"    % "test"),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
     )
 
@@ -32,7 +35,7 @@ object ServicesBuild extends Build {
 
 
     val benchmarkSettings = Seq(
-      libraryDependencies += "org.scala-tools.testing" % "scalacheck_2.8.0"  % "1.7",
+      libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.8",
       mainClass := Some("com.reportgrid.benchmark.AnalyticsBenchmark")
     )
 

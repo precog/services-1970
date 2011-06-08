@@ -56,7 +56,7 @@ object MongoSupport {
 
   implicit def DoubleUpdater(jpath: JPath, value: Double): MongoUpdate = jpath inc value
 
-  implicit def TimeSeriesUpdater[T](jpath: JPath, value: TimeSeries[T])(implicit updater: (JPath, T) => MongoUpdate): MongoUpdate = {
+  def timeSeriesUpdater[T](implicit updater: (JPath, T) => MongoUpdate) = (jpath: JPath, value: TimeSeries[T]) => {
     value.series.foldLeft[MongoUpdate](MongoUpdateNothing) {
       case (fullUpdate, (period, count)) =>
         fullUpdate & updater(jpath \ period.periodicity.name \ period.start.getMillis.toString, count)
@@ -211,12 +211,12 @@ object MongoSupport {
     }
   }
 
-  implicit def ReportDecomposer[T, S <: Predicate](implicit tDecomposer: Decomposer[T], sDecomposer: Decomposer[S]): Decomposer[Report[T, S]] = new Decomposer[Report[T, S]] {
-    def decompose(v: Report[T, S]): JValue = v.observationCounts.serialize
+  implicit def ReportDecomposer[S <: Predicate, T](implicit tDecomposer: Decomposer[T], sDecomposer: Decomposer[S]): Decomposer[Report[S, T]] = new Decomposer[Report[S, T]] {
+    def decompose(v: Report[S, T]): JValue = v.observationCounts.serialize
   }
 
-  implicit def ReportExtractor[T, S <: Predicate](implicit aggregator: AbelianGroup[T], tExtractor: Extractor[T], sExtractor: Extractor[S]): Extractor[Report[T, S]] = new Extractor[Report[T, S]] {
-    def extract(v: JValue): Report[T, S] = Report(v.deserialize[Map[Observation[S], T]])
+  implicit def ReportExtractor[S <: Predicate, T](implicit aggregator: AbelianGroup[T], tExtractor: Extractor[T], sExtractor: Extractor[S]): Extractor[Report[S, T]] = new Extractor[Report[S, T]] {
+    def extract(v: JValue): Report[S, T] = Report(v.deserialize[Map[Observation[S], T]])
   }
 
   implicit val StatisticsDecomposer = new Decomposer[Statistics] {

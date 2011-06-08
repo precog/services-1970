@@ -30,11 +30,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   type CountType          = Long
   type TimeSeriesType     = TimeSeries[CountType]
 
-  type ChildReport        = Report[CountType, HasChild]
-  val  ChildReportEmpty   = Report.empty[CountType, HasChild]
+  type ChildReport        = Report[HasChild, CountType]
+  val  ChildReportEmpty   = Report.empty[HasChild, CountType]
 
-  type ValueReport        = Report[TimeSeriesType, HasValue]
-  val  ValueReportEmpty   = Report.empty[TimeSeriesType, HasValue]
+  type ValueReport        = Report[HasValue, TimeSeriesType]
+  val  ValueReportEmpty   = Report.empty[HasValue, TimeSeriesType]
 
   private def newMongoStage(prefix: String): (MongoStage, MongoCollection) = {
     val timeToIdle      = config.getLong(prefix + ".time_to_idle_millis").getOrElse(10000L)
@@ -134,11 +134,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  /** Retrieves children of the specified path & variable.
+  /** Retrieves children of the specified path &amp; variable.
    */
   def getChildren(token: Token, path: Path, variable: Variable): Future[List[String]] = getChildren(token, path, Some(variable))
 
-  /** Retrieves children of the specified path & possibly variable.
+  /** Retrieves children of the specified path &amp; possibly variable.
    */
   def getChildren(token: Token, path: Path, variable: Option[Variable] = None): Future[List[String]] = {
     val filter = forTokenAndPath(token, path)
@@ -306,8 +306,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Creates patches to record variable observations.
    */
-  private def updateValues[T, P <: Predicate](filter: MongoFilter, report: Report[T, P])
-    (implicit tsUpdater: (JPath, TimeSeriesType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
+  private def updateValues[P <: Predicate : Decomposer, T](filter: MongoFilter, report: Report[P, T]): MongoPatches = {
     report.observationCounts.foldLeft(MongoPatches.empty) { (patches, tuple) =>
       val (observation, _) = tuple
 
@@ -350,10 +349,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  private def updateTimeSeries[P <: Predicate](token: Token, path: Path, report: Report[TimeSeriesType, P])
-    (implicit tsUpdater: (JPath, TimeSeriesType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
+  private def updateTimeSeries[P <: Predicate : Decomposer](token: Token, path: Path, report: Report[P, TimeSeriesType]): MongoPatches = {
 
     import java.security.MessageDigest
+
+    val countUpdate = timeSeriesUpdater[CountType]
 
     def observationUpdate[P <: Predicate : Decomposer](observation: Observation[P]): MongoUpdate = {
       observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoUpdate](MongoUpdateNothing) {
@@ -379,9 +379,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
     report.groupByOrder.flatMap { 
       case (order, report) =>
-        report.groupByPeriod.map { 
-          case (period, report) => ((order, period), report)
-        }
+        report.groupByPeriod.map { case (period, report) => ((order, period), report) }
     }.foldLeft(MongoPatches.empty) {
       case (patches, ((order, period), report)) =>
         val orderPeriodFilter = (baseFilter & {
@@ -398,8 +396,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
             val filterWhereClause = orderPeriodFilter.whereVariablesEqual(observation)
             val updateKey = JPath(".updateKey") === md5SumString(renderNormalized(filterWhereClause.filter).toString.getBytes)
 
-            val timeSeriesUpdate = orderPeriodUpdate & observationUpdate(observation) & tsUpdater(".count", count)
-            patches + (updateKey -> timeSeriesUpdate)
+            patches + (updateKey -> (orderPeriodUpdate & observationUpdate(observation) & countUpdate(".count", count)))
         }
     }
   }
@@ -524,7 +521,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  private def updateCount[P <: Predicate](filter: MongoFilter, report: Report[CountType, P])
+  private def updateCount[P <: Predicate](filter: MongoFilter, report: Report[P, CountType])
     (implicit cUpdater: (JPath, CountType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
     report.groupByOrder.foldLeft(MongoPatches.empty) { (patches, tuple) =>
       val (order, report) = tuple
