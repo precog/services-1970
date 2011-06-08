@@ -89,6 +89,12 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
 object TimeSeries {
   def empty[T: AbelianGroup]: TimeSeries[T] = apply[T](Map.empty[Period, T])
 
+  def apply[T: AbelianGroup](time: DateTime, count: T) = Builder.Default(time, count)
+
+  def all[T: AbelianGroup](time: DateTime, count: T) = Builder.All(time, count)
+
+  def eternity[T: AbelianGroup](time: DateTime, count: T) = Builder.Eternity(time, count)
+
   case class Builder(periodicities: List[Periodicity]) {
     /** Aggregates the specified measure across all periodicities to produce a time series */
     def apply[T: AbelianGroup](time: DateTime, count: T): TimeSeries[T] = {

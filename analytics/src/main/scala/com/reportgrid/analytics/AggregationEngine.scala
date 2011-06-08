@@ -65,8 +65,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   private val (varChildS,       varChildC)        = newMongoStage("variable_children")
   private val (pathChildS,      pathChildC)       = newMongoStage("path_children")
 
-  private val TimeSeriesBuilder = TimeSeries.Builder.Default
-
   val ListJValueOrdering = new Ordering[List[JValue]] {
     import blueeyes.json.xschema.DefaultOrderings.JValueOrdering
 
@@ -91,7 +89,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
       val accountPathFilter = forTokenAndPath(token, path)
 
-      val seriesCount = TimeSeriesBuilder(time, count)
+      val seriesCount = TimeSeries(time, count)
 
       val events = jobject.children.collect {
         case JField(eventName, properties) => (eventName, JObject(JField(eventName, properties) :: Nil))
