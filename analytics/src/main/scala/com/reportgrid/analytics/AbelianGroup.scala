@@ -1,8 +1,6 @@
 package com.reportgrid.analytics
 
-/** Defines an abelian group.
- */
-trait Aggregator[T] {
+trait AbelianGroup[T] {
   def zero: T
 
   def inverse(v: T): T
@@ -11,7 +9,7 @@ trait Aggregator[T] {
 }
 
 trait AggregatorImplicits {
-  implicit val intAggregator = new Aggregator[Int] {
+  implicit val intAggregator = new AbelianGroup[Int] {
     def zero = 0
 
     def inverse(v: Int): Int = -v
@@ -19,7 +17,7 @@ trait AggregatorImplicits {
     def aggregate(t1: Int, t2: Int): Int = t1 + t2
   }
 
-  implicit val longAggregator = new Aggregator[Long] {
+  implicit val longAggregator = new AbelianGroup[Long] {
     def zero = 0L
 
     def inverse(v: Long): Long = -v
@@ -27,7 +25,7 @@ trait AggregatorImplicits {
     def aggregate(t1: Long, t2: Long): Long = t1 + t2
   }
 
-  implicit val floatAggregator = new Aggregator[Float] {
+  implicit val floatAggregator = new AbelianGroup[Float] {
     def zero = 0.0F
 
     def inverse(v: Float): Float = -v
@@ -35,7 +33,7 @@ trait AggregatorImplicits {
     def aggregate(t1: Float, t2: Float): Float = t1 + t2
   }
 
-  implicit val doubleAggregator = new Aggregator[Double] {
+  implicit val doubleAggregator = new AbelianGroup[Double] {
     def zero = 0.0
 
     def inverse(v: Double): Double = -v
@@ -43,8 +41,8 @@ trait AggregatorImplicits {
     def aggregate(t1: Double, t2: Double): Double = t1 + t2
   }
 
-  implicit def ReportAggregator[T: Aggregator, S <: Predicate] = new Aggregator[Report[T, S]] {
-    private val aggT = implicitly[Aggregator[T]]
+  implicit def ReportAggregator[T: AbelianGroup, S <: Predicate] = new AbelianGroup[Report[T, S]] {
+    private val aggT = implicitly[AbelianGroup[T]]
 
     def zero = Report.empty[T, S]
 
@@ -53,7 +51,7 @@ trait AggregatorImplicits {
     def aggregate(v1: Report[T, S], v2: Report[T, S]) = v1 + v2
   }
 
-  implicit def timeSeriesAggregator[T](implicit aggregator: Aggregator[T]) = new Aggregator[TimeSeries[T]] {
+  implicit def timeSeriesAggregator[T](implicit aggregator: AbelianGroup[T]) = new AbelianGroup[TimeSeries[T]] {
     def zero = new TimeSeries[T](Map())
 
     def inverse(v: TimeSeries[T]): TimeSeries[T] = -v
@@ -61,7 +59,7 @@ trait AggregatorImplicits {
     def aggregate(t1: TimeSeries[T], t2: TimeSeries[T]): TimeSeries[T] = t1 + t2
   }
 
-  implicit def mapAggregator[K, V](implicit aggregator: Aggregator[V]) = new Aggregator[Map[K, V]] {
+  implicit def mapAggregator[K, V](implicit aggregator: AbelianGroup[V]) = new AbelianGroup[Map[K, V]] {
     def zero = Map[K, V]()
 
     def inverse(v: Map[K, V]): Map[K, V] = v.transform { (key, value) => aggregator.inverse(value) }

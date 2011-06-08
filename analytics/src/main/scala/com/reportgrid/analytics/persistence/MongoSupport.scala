@@ -109,7 +109,7 @@ object MongoSupport {
     })
   }
 
-  implicit def TimeSeriesExtractor[T](implicit aggregator: Aggregator[T], extractor: Extractor[T]) = new Extractor[TimeSeries[T]] {
+  implicit def TimeSeriesExtractor[T](implicit aggregator: AbelianGroup[T], extractor: Extractor[T]) = new Extractor[TimeSeries[T]] {
     def extract(value: JValue): TimeSeries[T] = value match {
       case JObject(fields) =>
         TimeSeries[T](
@@ -215,7 +215,7 @@ object MongoSupport {
     def decompose(v: Report[T, S]): JValue = v.observationCounts.serialize
   }
 
-  implicit def ReportExtractor[T, S <: Predicate](implicit aggregator: Aggregator[T], tExtractor: Extractor[T], sExtractor: Extractor[S]): Extractor[Report[T, S]] = new Extractor[Report[T, S]] {
+  implicit def ReportExtractor[T, S <: Predicate](implicit aggregator: AbelianGroup[T], tExtractor: Extractor[T], sExtractor: Extractor[S]): Extractor[Report[T, S]] = new Extractor[Report[T, S]] {
     def extract(v: JValue): Report[T, S] = Report(v.deserialize[Map[Observation[S], T]])
   }
 

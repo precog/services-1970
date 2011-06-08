@@ -5,10 +5,13 @@ import blueeyes.json.{JPath, JPathIndex, JPathField}
 
 import com.reportgrid.util.MapUtil._
 
-/** A report counts observations of a particular type.
+/** 
+ * A report counts observations of a particular type.
+ * An observation is a value of type Set[(Variable, HasValue | HasChild)]
  */
-case class Report[T: Aggregator, S <: Predicate](observationCounts: Map[Observation[S], T]) {
-  private def aggregator: Aggregator[T] = implicitly[Aggregator[T]]
+case class Report[T: AbelianGroup, S <: Predicate](observationCounts: Map[Observation[S], T]) {
+  
+  private def aggregator: AbelianGroup[T] = implicitly[AbelianGroup[T]]
 
   /** Creates a new report containing all the data in this report, plus all the
    * data in that report.
@@ -21,7 +24,7 @@ case class Report[T: Aggregator, S <: Predicate](observationCounts: Map[Observat
 
   /** Maps the report based on the type of count.
    */
-  def map[TT](f: T => TT)(implicit aggregatorTT: Aggregator[TT]): Report[TT, S] = {
+  def map[TT](f: T => TT)(implicit aggregatorTT: AbelianGroup[TT]): Report[TT, S] = {
     Report(observationCounts.transform { (k, v) => f(v) })
   }
 
@@ -41,23 +44,23 @@ case class Report[T: Aggregator, S <: Predicate](observationCounts: Map[Observat
   /** Groups the report by period, for a time-series report (or one that's
    * isomorphic to a time series report).
    */
-  def groupByPeriod[V](implicit witness: T => TimeSeries[V], aggregatorV: Aggregator[V]): Map[Period, Report[TimeSeries[V], S]] = {
+  def groupByPeriod[V](implicit witness: T => TimeSeries[V], aggregatorV: AbelianGroup[V]): Map[Period, Report[TimeSeries[V], S]] = {
     val flipped: Map[Period, Map[Observation[S], TimeSeries[V]]] = flip {
       map(witness).observationCounts.transform { (_, count) =>
         count.groupByPeriod
       }
     }
 
-    flipped.transform { (period, map) => Report(map) }
+    flipped.transform { (_, map) => Report(map) }
   }
 }
 
 object Report {
-  def empty[T: Aggregator, S <: Predicate]: Report[T, S] = Report[T, S](Map.empty)
+  def empty[T: AbelianGroup, S <: Predicate]: Report[T, S] = Report[T, S](Map.empty)
 
   /** Creates a report of values.
    */
-  def ofValues[T: Aggregator](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[T, HasValue] = {
+  def ofValues[T: AbelianGroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[T, HasValue] = {
     val flattened = event.flattenWithPath.take(limit).map {
       case (jpath, jvalue) => (Variable(jpath), HasValue(jvalue))
     }
@@ -86,8 +89,8 @@ object Report {
    * it's recommended to always use a order = 1, because higher order counts do
    * not contain much additional information.
    */
-  def ofChildren[T: Aggregator](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[T, HasChild] = {
-    val agg = implicitly[Aggregator[T]]
+  def ofChildren[T: AbelianGroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[T, HasChild] = {
+    val agg = implicitly[AbelianGroup[T]]
 
     val empty = Set.empty[(Variable, HasChild)]
 
