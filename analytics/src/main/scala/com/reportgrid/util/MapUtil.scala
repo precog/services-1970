@@ -96,15 +96,13 @@ object MapUtil {
   }
   
   def flip[K1, K2, V](m: Map[K1, Map[K2, V]]): Map[K2, Map[K1, V]] = {
-    m.toList.foldLeft(Map[K2, Map[K1, V]]()) { (outer, tuple) =>
-      val (key1, map) = tuple
+    m.foldLeft(Map.empty[K2, Map[K1, V]]) { 
+      case (outer, (key1, map)) => 
       
-      map.foldLeft(outer) { (outer, tuple) =>
-        val (key2, value) = tuple
-        
-        val inner: Map[K1, V] = outer.get(key2).getOrElse(Map[K1, V]())
-        
-        outer + (key2 -> (inner + (key1 -> value)))
+      map.foldLeft(outer) { 
+        case (outer, (key2, value)) =>
+          val inner: Map[K1, V] = outer.get(key2).getOrElse(Map[K1, V]())
+          outer + (key2 -> (inner + (key1 -> value)))
       }
     }
   }

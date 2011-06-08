@@ -10,51 +10,44 @@ import com.reportgrid.util.MapUtil._
  * An observation is a value of type Set[(Variable, HasValue | HasChild)]
  */
 case class Report[S <: Predicate, T: AbelianGroup](observationCounts: Map[Observation[S], T]) {
-  
-  private def aggregator: AbelianGroup[T] = implicitly[AbelianGroup[T]]
+  private val aggregator: AbelianGroup[T] = implicitly[AbelianGroup[T]]
 
   /** Creates a new report containing all the data in this report, plus all the
    * data in that report.
    */
   def + (that: Report[S, T]): Report[S, T] = {
-    Report[S, T](merge2WithDefault(aggregator.zero)(this.observationCounts, that.observationCounts) { (count1, count2) =>
-      aggregator.aggregate(count1, count2)
+    Report[S, T](merge2WithDefault(aggregator.zero)(this.observationCounts, that.observationCounts) { 
+      (count1, count2) => aggregator.append(count1, count2)
     })
   }
 
   /** Maps the report based on the type of count.
    */
-  def map[TT: AbelianGroup](f: T => TT): Report[S, TT] = {
-    Report(observationCounts.transform { (k, v) => f(v) })
-  }
+  def map[TT: AbelianGroup](f: T => TT): Report[S, TT] = Report(observationCounts.mapValues(f))
 
   /** Groups the report by order of observation.
    */
-  def groupByOrder: Map[Int, Report[S, T]] = {
-    observationCounts.groupBy(_._1.size).transform { (order, group) =>
-      Report(group)
-    }
-  }
+  def groupByOrder: Map[Int, Report[S, T]] = observationCounts.groupBy(_._1.size).mapValues(Report(_))
 
   /** Creates a new report derived from this one containing only observations
    * of the specified order.
    */
-  def order(n: Int): Report[S, T] = Report(observationCounts.collect { case tuple if (tuple._1.size == n) => tuple })
+  def order(n: Int): Report[S, T] = Report(observationCounts.filter(_._1.size == n))
 
   /** Groups the report by period, for a time-series report (or one that's
    * isomorphic to a time series report).
    */
   def groupByPeriod[V](implicit witness: T => TimeSeries[V], group: AbelianGroup[V]): Map[Period, Report[S, TimeSeries[V]]] = {
     val flipped: Map[Period, Map[Observation[S], TimeSeries[V]]] = flip {
-      map(witness).observationCounts.transform { (_, count) =>
-        count.groupByPeriod
-      }
+      observationCounts.mapValues(witness(_).groupByPeriod)
     }
 
-    flipped.transform { (_, map) => Report(map) }
+    flipped.mapValues(Report(_))
   }
 
-  //def groupByPeriodicity[V](implicit witness: T => TimeSeries[V], group: AbelianGroup[V]): Map[Periodicity, 
+  def groupByPeriodicity[V](implicit witness: T => TimeSeries[V], group: AbelianGroup[V]): Map[Periodicity, Report[S, TimeSeries[V]]] = {
+    flip(observationCounts.mapValues(witness(_).groupByPeriodicity)).mapValues(Report(_))
+  }
 }
 
 object Report {

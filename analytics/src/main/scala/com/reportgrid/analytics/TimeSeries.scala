@@ -17,15 +17,15 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
 
   /** Groups the time series by period.
    */
-  def groupByPeriod: Map[Period, TimeSeries[T]] = {
-    series.transform { (period, count) =>
-      TimeSeries[T](Map[Period, T](period -> count))
-    }
+  def groupByPeriod: Map[Period, TimeSeries[T]] = series.transform { 
+    (period, count) => TimeSeries[T](Map[Period, T](period -> count))
   }
 
   /** Groups the time series by periodicity.
    */
-  def groupByPeriodicity: Map[Periodicity, TimeSeries[T]] = series.groupBy(_._1.periodicity).transform { (p, m) => TimeSeries[T](m) }
+  def groupByPeriodicity: Map[Periodicity, TimeSeries[T]] = {
+    series.groupBy(_._1.periodicity).mapValues(TimeSeries(_))
+  }
 
   /** Returns a "friendly" JSON rendering of the time series, sorted first by
    * periodicity, and then by period start.
@@ -33,14 +33,13 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
    *  {"minute":[[1301279340000,10],[1301279520000,10]]}
    * }}}
    */
-  def toJValue(implicit d: Decomposer[T]): JValue = JObject(groupByPeriodicity.toList.sortWith(_._1 < _._1).map { tuple =>
-    val (periodicity, series) = tuple
-
-    JField(periodicity.name, JArray(series.series.toList.sortWith(_._1 < _._1).map { tuple =>
-      val (period, count) = tuple
-
-      JArray(JInt(period.start.getMillis) :: count.serialize :: Nil)
-    }))
+  def toJValue(implicit d: Decomposer[T]): JValue = JObject(groupByPeriodicity.toList.sortBy(_._1).map { 
+    case (periodicity, series) => JField(
+      periodicity.name, 
+      JArray(series.series.toList.sortWith(_._1 < _._1).map { 
+        case (period, count) => JArray(JInt(period.start.getMillis) :: count.serialize :: Nil)
+      })
+    )
   })
 
   /** Fill all gaps in the returned time series -- i.e. any period that does
@@ -73,14 +72,14 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
    */
   def + (that: TimeSeries[T]): TimeSeries[T] = {
     TimeSeries(merge2WithDefault(aggregator.zero)(this.series, that.series) { (count1, count2) =>
-      aggregator.aggregate(count1, count2)
+      aggregator.append(count1, count2)
     })
   }
 
   /** Returns total.
    */
   def total(p: Periodicity): T = groupByPeriodicity.getOrElse(p, TimeSeries.empty[T]).series.foldLeft(aggregator.zero) { 
-    (sum, t) => aggregator.aggregate(sum, t._2) 
+    (sum, t) => aggregator.append(sum, t._2) 
   }
 
   def unary_- = TimeSeries(series.transform((k, v) => aggregator.inverse(v)))
