@@ -474,7 +474,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }    
   }
 
-  /*private def expandPredicate[P <: Predicate](token: Token, path: Path, variable: Variable, predicate: P): Future[List[(Variable, P)]] = {    
+  /*private def expandPredicate[P <: Predicate](token: Token, path: Path)(t: (Variable, P)): Future[List[(Variable, P)]] = {
+    val (variable, predicate) = t
+
     getVariableLength(token, path, variable).map { 
       case 0 => (variable, predicate) :: Nil
 
@@ -483,7 +485,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           (Variable(variable.name \ JPathIndex(index)), predicate)
         }
     }
-  }*/
+  }
+  private def expandObservation[P <: Predicate](token: Token, path: Path, observation: Observation[P]): Future[List[Observation]] = {
+    Set[(Variable, Predicate)]
+    
+    
+  }
+  */
 
   private def internalSearchSeries[P <: Predicate](col: MongoCollection, token: Token, path: Path, periodicity: Periodicity, observation: Observation[P],
     _start : Option[DateTime] = None, _end : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
