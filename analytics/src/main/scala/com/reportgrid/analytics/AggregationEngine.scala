@@ -573,83 +573,67 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 }
 
 object AggregationEngine extends FutureDeliveryStrategySequential {
-  private val CollectionIndices = List(
-    "variable_series" -> List(
-      "path",
-      "accountTokenId",
-      "period",
-      "order",
-      "where.variable0",
-      "where.variable1",
-      "where.variable2",
-      "where.variable3",
-      "where.variable4",
-      "where.variable5",
-      "where.variable6",
-      "where.variable7",
-      "where.variable8",
-      "where.variable9",
-      "where.predicate0",
-      "where.predicate1",
-      "where.predicate2",
-      "where.predicate3",
-      "where.predicate4",
-      "where.predicate5",
-      "where.predicate6",
-      "where.predicate7",
-      "where.predicate8",
-      "where.predicate9"
+  private val CollectionIndices = Map(
+    "variable_series" -> Map(
+      "value_query" -> List(
+        "path",
+        "accountTokenId",
+        "period",
+        "order",
+        "where.variable0",
+        "where.variable1",
+        "where.variable2",
+        "where.variable3",
+        "where.variable4",
+        "where.variable5",
+        "where.variable6",
+        "where.variable7",
+        "where.variable8",
+        "where.variable9",
+        "where.predicate0",
+        "where.predicate1",
+        "where.predicate2",
+        "where.predicate3",
+        "where.predicate4",
+        "where.predicate5",
+        "where.predicate6",
+        "where.predicate7",
+        "where.predicate8",
+        "where.predicate9"
+      )
     ),
-    "variable_value_series" -> List("updateKey"),
-    "variable_value_series" -> List(
-      "path",
-      "accountTokenId",
-      "period",
-      "order",
-      "where.variable0",
-      "where.variable1",
-      "where.variable2",
-      "where.variable3",
-      "where.variable4",
-      "where.variable5",
-      "where.variable6",
-      "where.variable7",
-      "where.variable8",
-      "where.variable9",
-      "where.predicate0",
-      "where.predicate1",
-      "where.predicate2",
-      "where.predicate3",
-      "where.predicate4",
-      "where.predicate5",
-      "where.predicate6",
-      "where.predicate7",
-      "where.predicate8",
-      "where.predicate9"
+    "variable_value_series" -> Map("updateKey" -> List("updateKey")),
+    // TODO: Create a variable_value_series index for querying
+    "variable_values" -> Map(
+      "variable_query" -> List(
+        "path",
+        "accountTokenId",
+        "variable"
+      )
     ),
-    "variable_values" -> List(
-      "path",
-      "accountTokenId",
-      "variable"
+    "variable_children" -> Map(
+      "variable_query" -> List(
+        "path",
+        "accountTokenId",
+        "variable"
+      )
     ),
-    "variable_children" -> List(
-      "path",
-      "accountTokenId",
-      "variable"
-    ),
-    "path_children" -> List(
-      "path",
-      "accountTokenId"
+    "path_children" -> Map(
+      "path_query" -> List(
+        "path",
+        "accountTokenId"
+      )
     )
   )
 
-  private def createIndices(database: MongoDatabase): Future[Unit] = {
-    (CollectionIndices.foldLeft(Future.lift(())) {
-      case (future, (collection, indices)) =>
-        future.zip[JNothing.type](database[JNothing.type] {
-          ensureIndex(collection + "_index").on(indices.map(j => JPath(j)): _*).in(collection)
-        }).toUnit
-    })
+  private def createIndices(database: MongoDatabase) = {
+    val futures = for ((collection, indices) <- CollectionIndices; (indexName, fields) <- indices) yield {
+      database[JNothing.type] {
+        ensureIndex(indexName + "_index").on(fields.map(JPath(_)): _*).in(collection)
+      }.toUnit
+    }
+
+    Future(futures.toSeq: _*)
   }
 
   def apply(config: ConfigMap, logger: Logger, database: MongoDatabase): Future[AggregationEngine] = {
