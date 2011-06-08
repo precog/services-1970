@@ -5,29 +5,32 @@ import blueeyes.json.{JPath, JPathIndex, JPathField}
 
 import com.reportgrid.util.MapUtil._
 
-/** A report counts observations of a particular type.
+/** 
+ * A report counts observations of a particular type.
+ * An observation is a value of type Set[(Variable, HasValue | HasChild)]
  */
-case class Report[T: Aggregator, S <: Predicate](observationCounts: Map[Observation[S], T]) {
-  private def aggregator: Aggregator[T] = implicitly[Aggregator[T]]
+case class Report[S <: Predicate, T: AbelianGroup](observationCounts: Map[Observation[S], T]) {
+  
+  private def aggregator: AbelianGroup[T] = implicitly[AbelianGroup[T]]
 
   /** Creates a new report containing all the data in this report, plus all the
    * data in that report.
    */
-  def + (that: Report[T, S]): Report[T, S] = {
-    Report[T, S](merge2WithDefault(aggregator.zero)(this.observationCounts, that.observationCounts) { (count1, count2) =>
+  def + (that: Report[S, T]): Report[S, T] = {
+    Report[S, T](merge2WithDefault(aggregator.zero)(this.observationCounts, that.observationCounts) { (count1, count2) =>
       aggregator.aggregate(count1, count2)
     })
   }
 
   /** Maps the report based on the type of count.
    */
-  def map[TT](f: T => TT)(implicit aggregatorTT: Aggregator[TT]): Report[TT, S] = {
+  def map[TT: AbelianGroup](f: T => TT): Report[S, TT] = {
     Report(observationCounts.transform { (k, v) => f(v) })
   }
 
   /** Groups the report by order of observation.
    */
-  def groupByOrder: Map[Int, Report[T, S]] = {
+  def groupByOrder: Map[Int, Report[S, T]] = {
     observationCounts.groupBy(_._1.size).transform { (order, group) =>
       Report(group)
     }
@@ -36,28 +39,30 @@ case class Report[T: Aggregator, S <: Predicate](observationCounts: Map[Observat
   /** Creates a new report derived from this one containing only observations
    * of the specified order.
    */
-  def order(n: Int): Report[T, S] = Report(observationCounts.collect { case tuple if (tuple._1.size == n) => tuple })
+  def order(n: Int): Report[S, T] = Report(observationCounts.collect { case tuple if (tuple._1.size == n) => tuple })
 
   /** Groups the report by period, for a time-series report (or one that's
    * isomorphic to a time series report).
    */
-  def groupByPeriod[V](implicit witness: T => TimeSeries[V], aggregatorV: Aggregator[V]): Map[Period, Report[TimeSeries[V], S]] = {
+  def groupByPeriod[V](implicit witness: T => TimeSeries[V], group: AbelianGroup[V]): Map[Period, Report[S, TimeSeries[V]]] = {
     val flipped: Map[Period, Map[Observation[S], TimeSeries[V]]] = flip {
       map(witness).observationCounts.transform { (_, count) =>
         count.groupByPeriod
       }
     }
 
-    flipped.transform { (period, map) => Report(map) }
+    flipped.transform { (_, map) => Report(map) }
   }
+
+  //def groupByPeriodicity[V](implicit witness: T => TimeSeries[V], group: AbelianGroup[V]): Map[Periodicity, 
 }
 
 object Report {
-  def empty[T: Aggregator, S <: Predicate]: Report[T, S] = Report[T, S](Map.empty)
+  def empty[S <: Predicate, T: AbelianGroup]: Report[S, T] = Report[S, T](Map.empty)
 
   /** Creates a report of values.
    */
-  def ofValues[T: Aggregator](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[T, HasValue] = {
+  def ofValues[T: AbelianGroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[HasValue, T] = {
     val flattened = event.flattenWithPath.take(limit).map {
       case (jpath, jvalue) => (Variable(jpath), HasValue(jvalue))
     }
@@ -86,8 +91,8 @@ object Report {
    * it's recommended to always use a order = 1, because higher order counts do
    * not contain much additional information.
    */
-  def ofChildren[T: Aggregator](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[T, HasChild] = {
-    val agg = implicitly[Aggregator[T]]
+  def ofChildren[T: AbelianGroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[HasChild, T] = {
+    val agg = implicitly[AbelianGroup[T]]
 
     val empty = Set.empty[(Variable, HasChild)]
 

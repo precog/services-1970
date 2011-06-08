@@ -79,7 +79,8 @@ object GlueConDemoServer {
 
       while(true) {
         try {
-          new GlueConGnipDigester(api, companies).ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
+          new GlueConGnipDigester(api, companies, config.getString("topPath", "top"), config.getString("podsPath", "pods")).
+          ingestGnipJsonStream(http, gnipHost, gnipUrl.toURI, creds)
         } catch {
           case t: Throwable => println(t.getMessage); t.printStackTrace
         }
@@ -145,7 +146,7 @@ class GlueConCompanies(companyFile: Option[String]) {
   val allCompanies: Set[String] = companyFile.map((f: String) => Source.fromFile(f).getLines.map(_.trim).toSet).getOrElse(Set())
 }
 
-case class Tweet(
+case class Mention(
   startup: String,
   properties: JObject,
   time: Option[DateTime]
@@ -174,7 +175,7 @@ object GlueConGnipDigester {
   }
 }
 
-class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
+class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies, topPath: String, podsPath: String) {
   import GlueConGnipDigester._
   val podCompaniesStemmed = companies.podCompanies map {
     case (k, v) => (Stemmer.stem(k.replaceAll("@", "").toLowerCase), v)
@@ -212,12 +213,12 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
           val jsonFactory = (new ObjectMapper).getJsonFactory()
           val parser = jsonFactory.createJsonParser(entity.getContent)
           for (tweets <- parse(parser)) {
-            for (Tweet(startup, properties, time) <- tweets) {
+            for (Mention(startup, properties, time) <- tweets) {
               if (companies.podCompanies.values.exists(_ == startup)) {
-                sendToReportGrid("pods", properties, time.map(_.toDate))
+                sendToReportGrid(podsPath, properties, time.map(_.toDate))
               }
 
-              sendToReportGrid("all", properties, time.map(_.toDate))
+              sendToReportGrid(topPath, properties, time.map(_.toDate))
             }
           }
         }
@@ -238,17 +239,17 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
     }
   }
 
-  def parse(parser: JsonParser): Iterator[List[Tweet]] = {
+  def parse(parser: JsonParser): Iterator[List[Mention]] = {
     Iterator.continually {
       parser.nextToken match {
-        case JsonToken.START_OBJECT => extractTweets(parser)
+        case JsonToken.START_OBJECT => extractMentions(parser)
         case tok => error("Got an unexpected token at the root; should only be objects here: " + tok + ": " + parser.getText)
       }
     }
   }
 
 
-  def extractTweets(parser: JsonParser): List[Tweet] = {
+  def extractMentions(parser: JsonParser): List[Mention] = {
     val entry = parser.readValueAsTree
     val actor = Option(entry.get("actor")) 
     val obj   = Option(entry.get("object")) 
@@ -297,12 +298,12 @@ class GlueConGnipDigester(api: ReportGrid, companies: GlueConCompanies) {
                     modify(extract("clout", clout)) <*
                     modify(extract("languages", languages))
 
-      Tweet(startup, jstate(JObject(Nil))._1, time)
+      Mention(startup, jstate(JObject(Nil))._1, time)
     }
   }
 
   def sendToReportGrid(path: String, jobject: JObject, time: Option[java.util.Date]) = {
-    println("tracking event: " + jobject)
+    println(renderNormalized(jobject))
     try {
       api.track(
         path       = "/gluecon/" + path,

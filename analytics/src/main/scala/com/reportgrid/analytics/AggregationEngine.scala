@@ -30,11 +30,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   type CountType          = Long
   type TimeSeriesType     = TimeSeries[CountType]
 
-  type ChildReport        = Report[CountType, HasChild]
-  val  ChildReportEmpty   = Report.empty[CountType, HasChild]
+  type ChildReport        = Report[HasChild, CountType]
+  val  ChildReportEmpty   = Report.empty[HasChild, CountType]
 
-  type ValueReport        = Report[TimeSeriesType, HasValue]
-  val  ValueReportEmpty   = Report.empty[TimeSeriesType, HasValue]
+  type ValueReport        = Report[HasValue, TimeSeriesType]
+  val  ValueReportEmpty   = Report.empty[HasValue, TimeSeriesType]
 
   private def newMongoStage(prefix: String): (MongoStage, MongoCollection) = {
     val timeToIdle      = config.getLong(prefix + ".time_to_idle_millis").getOrElse(10000L)
@@ -65,8 +65,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   private val (varChildS,       varChildC)        = newMongoStage("variable_children")
   private val (pathChildS,      pathChildC)       = newMongoStage("path_children")
 
-  private val DefaultAggregator = TimeSeriesAggregator.Default
-
   val ListJValueOrdering = new Ordering[List[JValue]] {
     import blueeyes.json.xschema.DefaultOrderings.JValueOrdering
 
@@ -91,7 +89,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
       val accountPathFilter = forTokenAndPath(token, path)
 
-      val seriesCount = DefaultAggregator.aggregate(time, count)
+      val seriesCount = TimeSeries(time, count)
 
       val events = jobject.children.collect {
         case JField(eventName, properties) => (eventName, JObject(JField(eventName, properties) :: Nil))
@@ -110,7 +108,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           limit = token.limits.limit
         )
 
-        varValueSeriesS putAll updateTimeSeries(accountPathFilter, valueReport).patches
+        varValueSeriesS putAll updateTimeSeries(token, path, valueReport).patches
         varValueS       putAll updateValues(accountPathFilter, valueReport.order(1)).patches
 
         val childCountReport = Report.ofChildren(
@@ -131,16 +129,16 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           limit = token.limits.limit
         )
 
-        varSeriesS putAll updateTimeSeries(accountPathFilter, childSeriesReport).patches
+        varSeriesS putAll updateTimeSeries(token, path, childSeriesReport).patches
       }
     }
   }
 
-  /** Retrieves children of the specified path & variable.
+  /** Retrieves children of the specified path &amp; variable.
    */
   def getChildren(token: Token, path: Path, variable: Variable): Future[List[String]] = getChildren(token, path, Some(variable))
 
-  /** Retrieves children of the specified path & possibly variable.
+  /** Retrieves children of the specified path &amp; possibly variable.
    */
   def getChildren(token: Token, path: Path, variable: Option[Variable] = None): Future[List[String]] = {
     val filter = forTokenAndPath(token, path)
@@ -207,7 +205,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   /** Retrieves a count of how many times the specified variable appeared in
    * an event.
    */
-  def getVariableSeries(token: Token, path: Path, variable: Variable, periodicity: Periodicity, _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
+  def getVariableSeries(token: Token, path: Path, variable: Variable, periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
     variable.parent match {
       case None =>
         Future.lift(TimeSeries.empty)
@@ -215,7 +213,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       case Some(parent) =>
         val lastNode = variable.name.nodes.last
 
-        internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), _start, _end)
+        internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), start, end)
     }
   }
 
@@ -228,8 +226,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Retrieves a time series for the specified observed value of a variable.
    */
-  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, periodicity: Periodicity, _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
-    searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, _start, _end)
+  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
+    searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, start, end)
   }
 
   /** Retrieves a count for the specified observed value of a variable.
@@ -241,15 +239,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   /** Searches time series to locate observations matching the specified criteria.
    */
   def searchSeries(token: Token, path: Path, observation: Observation[HasValue], periodicity: Periodicity, 
-    _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[TimeSeriesType] = {
-    internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, _start, _end)
+    start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
+    internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, start, end)
   }
 
   /** Searches counts to locate observations matching the specified criteria.
    */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
-    _start : Option[DateTime] = None, _end : Option[DateTime] = None): Future[CountType] = {
-    searchSeries(token, path, observation, Periodicity.Eternity,  _start, _end).map(_.total(Periodicity.Eternity))
+    start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
+    searchSeries(token, path, observation, Periodicity.Eternity,  start, end).map(_.total(Periodicity.Eternity))
   }
 
   type IntersectionResult[T] = SortedMap[List[JValue], T]
@@ -308,8 +306,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Creates patches to record variable observations.
    */
-  private def updateValues[T, P <: Predicate](filter: MongoFilter, report: Report[T, P])
-    (implicit tsUpdater: (JPath, TimeSeriesType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
+  private def updateValues[P <: Predicate : Decomposer, T](filter: MongoFilter, report: Report[P, T]): MongoPatches = {
     report.observationCounts.foldLeft(MongoPatches.empty) { (patches, tuple) =>
       val (observation, _) = tuple
 
@@ -326,6 +323,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
+
   private implicit def filterWhereObserved(filter: MongoFilter) = FilterWhereObserved(filter)
   private case class FilterWhereObserved(filter: MongoFilter) {
     /*
@@ -337,55 +335,75 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     def whereVariablesEqual[P <: Predicate : Decomposer](observation: Observation[P]): MongoFilter = {
       observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoFilter](filter) {
         case (filter, ((variable, predicate), index)) =>
-          val varName  = ".variable"  + index
-          val predName = ".predicate" + index
-
           filter & 
-          JPath(".where" + varName)  === variable.serialize &
-          JPath(".where" + predName) === predicate.serialize
+          JPath(".where.variable" + index)  === variable.serialize &
+          JPath(".where.predicate" + index) === predicate.serialize
       }
     }
 
     def whereVariablesExist(variables: Seq[Variable]): MongoFilter = {
       variables.sorted.zipWithIndex.foldLeft[MongoFilter](filter) {
         case (filter, (variable, index)) =>
-          val varName  = ".variable"  + index
-
-          filter & 
-          (JPath(".where" + varName) === variable.serialize)
+          filter & (JPath(".where.variable" + index) === variable.serialize)
       }
     }
   }
 
+  private def updateTimeSeries[P <: Predicate : Decomposer](token: Token, path: Path, report: Report[P, TimeSeriesType]): MongoPatches = {
 
-  private def updateTimeSeries[P <: Predicate](filter: MongoFilter, report: Report[TimeSeriesType, P])
-    (implicit tsUpdater: (JPath, TimeSeriesType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
-    
+    import java.security.MessageDigest
+
+    val countUpdate = timeSeriesUpdater[CountType]
+
+    def observationUpdate[P <: Predicate : Decomposer](observation: Observation[P]): MongoUpdate = {
+      observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoUpdate](MongoUpdateNothing) {
+        case (update, ((variable, predicate), index)) =>
+          update & 
+          (MongoUpdateBuilder(".where.variable" + index)  set variable.serialize) &
+          (MongoUpdateBuilder(".where.predicate" + index) set predicate.serialize)
+      }
+    }
+
+    def md5SumString(bytes : Array[Byte]) : String = {
+      val md5 = MessageDigest.getInstance("SHA-1")
+      md5.reset()
+      md5.update(bytes)
+
+      md5.digest().map(0xFF & _).map { "%02x".format(_) }.foldLeft(""){_ + _}
+    }
+
+    val baseUpdate = (MongoUpdateBuilder(".accountTokenId") set token.accountTokenId.serialize) &
+                     (MongoUpdateBuilder(".path") set path.serialize)
+
+    val baseFilter = forTokenAndPath(token, path)
+
     report.groupByOrder.flatMap { 
       case (order, report) =>
-        report.groupByPeriod.map { 
-          case (period, report) => ((order, period), report)
-        }
+        report.groupByPeriod.map { case (period, report) => ((order, period), report) }
     }.foldLeft(MongoPatches.empty) {
       case (patches, ((order, period), report)) =>
-        val filterOrderPeriod = (filter & {
+        val orderPeriodFilter = (baseFilter & {
           ".order"  === order.serialize &
           ".period" === period.serialize
         })
 
+        val orderPeriodUpdate = baseUpdate & 
+                                (MongoUpdateBuilder(".order") set order.serialize) &
+                                (MongoUpdateBuilder(".period") set period.serialize)
+
         report.observationCounts.foldLeft(patches) { 
           case (patches, (observation, count)) =>
-            val filterWhereClause = filterOrderPeriod.whereVariablesEqual(observation)
-            val timeSeriesUpdate = tsUpdater(".count", count)
+            val filterWhereClause = orderPeriodFilter.whereVariablesEqual(observation)
+            val updateKey = JPath(".updateKey") === md5SumString(renderNormalized(filterWhereClause.filter).toString.getBytes)
 
-            patches + (filterWhereClause -> timeSeriesUpdate)
+            patches + (updateKey -> (orderPeriodUpdate & observationUpdate(observation) & countUpdate(".count", count)))
         }
     }
   }
 
   private def internalIntersectSeries[P <: Predicate](
       col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
-      periodicity: Periodicity, _start : Option[DateTime], _end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
+      periodicity: Periodicity, start : Option[DateTime], end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
     val variables = variableDescriptors.map(_.variable)
 
     val histograms = Future(variableDescriptors.map { 
@@ -419,16 +437,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
       val filterTokenAndPath = forTokenAndPath(token, path)
 
-      val start = _start.getOrElse(EarliestTime)
-      val end   = _end.getOrElse(LatestTime)
-      val aggregator = implicitly[Aggregator[TimeSeriesType]]
+      val aggregator = implicitly[AbelianGroup[TimeSeriesType]]
 
       database {
         select(".count", ".where").from(col).where {
           (filterTokenAndPath &
           JPath(".period.periodicity") === periodicity.serialize &
-          MongoFilterBuilder(JPath(".period.start"))        >= start.serialize &
-          MongoFilterBuilder(JPath(".period.start"))        <  end.serialize &
+          MongoFilterBuilder(JPath(".period.start"))        >= MongoPrimitiveOption(start.map(_.serialize)) &
+          MongoFilterBuilder(JPath(".period.start"))        <  MongoPrimitiveOption(end.map(_.serialize)) &
           JPath(".order") === variableDescriptors.length).
           whereVariablesExist(variableDescriptors.map(_.variable))
         }
@@ -494,18 +510,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   */
 
   private def internalSearchSeries[P <: Predicate](col: MongoCollection, token: Token, path: Path, periodicity: Periodicity, observation: Observation[P],
-    _start : Option[DateTime] = None, _end : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
+    start : Option[DateTime] = None, end : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
     val filterTokenAndPath = forTokenAndPath(token, path)
-
-    val start = _start.getOrElse(EarliestTime)
-    val end   = _end.getOrElse(LatestTime)
 
     database {
       select(".count").from(col).where {
         (filterTokenAndPath &
         JPath(".period.periodicity") === periodicity.serialize &
-        MongoFilterBuilder(JPath(".period.start"))      >=  start.serialize &
-        MongoFilterBuilder(JPath(".period.start"))       <  end.serialize &
+        MongoFilterBuilder(JPath(".period.start"))      >=  MongoPrimitiveOption(start.map(_.serialize)) &
+        MongoFilterBuilder(JPath(".period.start"))       <  MongoPrimitiveOption(end.map(_.serialize)) &
         JPath(".order") === observation.size).whereVariablesEqual(observation)
       } 
     }.map { results =>
@@ -516,7 +529,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  private def updateCount[P <: Predicate](filter: MongoFilter, report: Report[CountType, P])
+  private def updateCount[P <: Predicate](filter: MongoFilter, report: Report[P, CountType])
     (implicit cUpdater: (JPath, CountType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
     report.groupByOrder.foldLeft(MongoPatches.empty) { (patches, tuple) =>
       val (order, report) = tuple
@@ -564,81 +577,66 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
 object AggregationEngine extends FutureDeliveryStrategySequential {
   private val CollectionIndices = Map(
-    "variable_series" -> List(
-      "path",
-      "accountTokenId",
-      "period",
-      "order",
-      "where.variable0",
-      "where.variable1",
-      "where.variable2",
-      "where.variable3",
-      "where.variable4",
-      "where.variable5",
-      "where.variable6",
-      "where.variable7",
-      "where.variable8",
-      "where.variable9",
-      "where.predicate0",
-      "where.predicate1",
-      "where.predicate2",
-      "where.predicate3",
-      "where.predicate4",
-      "where.predicate5",
-      "where.predicate6",
-      "where.predicate7",
-      "where.predicate8",
-      "where.predicate9"
+    "variable_series" -> Map(
+      "value_query" -> List(
+        "path",
+        "accountTokenId",
+        "period",
+        "order",
+        "where.variable0",
+        "where.variable1",
+        "where.variable2",
+        "where.variable3",
+        "where.variable4",
+        "where.variable5",
+        "where.variable6",
+        "where.variable7",
+        "where.variable8",
+        "where.variable9",
+        "where.predicate0",
+        "where.predicate1",
+        "where.predicate2",
+        "where.predicate3",
+        "where.predicate4",
+        "where.predicate5",
+        "where.predicate6",
+        "where.predicate7",
+        "where.predicate8",
+        "where.predicate9"
+      )
     ),
-    "variable_value_series" -> List(
-      "path",
-      "accountTokenId",
-      "period",
-      "order",
-      "where.variable0",
-      "where.variable1",
-      "where.variable2",
-      "where.variable3",
-      "where.variable4",
-      "where.variable5",
-      "where.variable6",
-      "where.variable7",
-      "where.variable8",
-      "where.variable9",
-      "where.predicate0",
-      "where.predicate1",
-      "where.predicate2",
-      "where.predicate3",
-      "where.predicate4",
-      "where.predicate5",
-      "where.predicate6",
-      "where.predicate7",
-      "where.predicate8",
-      "where.predicate9"
+    "variable_value_series" -> Map("updateKey" -> List("updateKey")),
+    // TODO: Create a variable_value_series index for querying
+    "variable_values" -> Map(
+      "variable_query" -> List(
+        "path",
+        "accountTokenId",
+        "variable"
+      )
     ),
-    "variable_values" -> List(
-      "path",
-      "accountTokenId",
-      "variable"
+    "variable_children" -> Map(
+      "variable_query" -> List(
+        "path",
+        "accountTokenId",
+        "variable"
+      )
     ),
-    "variable_children" -> List(
-      "path",
-      "accountTokenId",
-      "variable"
-    ),
-    "path_children" -> List(
-      "path",
-      "accountTokenId"
+    "path_children" -> Map(
+      "path_query" -> List(
+        "path",
+        "accountTokenId"
+      )
     )
   )
 
-  private def createIndices(database: MongoDatabase): Future[Unit] = {
-    (CollectionIndices.foldLeft(Future.lift(())) {
-      case (future, (collection, indices)) =>
-        future.zip[JNothing.type](database[JNothing.type] {
-          ensureIndex(collection + "_index").on(indices.map(j => JPath(j)): _*).in(collection)
-        }).toUnit
-    })
+  private def createIndices(database: MongoDatabase) = {
+    val futures = for ((collection, indices) <- CollectionIndices; (indexName, fields) <- indices) yield {
+      database[JNothing.type] {
+        ensureIndex(indexName + "_index").on(fields.map(JPath(_)): _*).in(collection)
+      }.toUnit
+    }
+
+    Future(futures.toSeq: _*)
   }
 
   def apply(config: ConfigMap, logger: Logger, database: MongoDatabase): Future[AggregationEngine] = {

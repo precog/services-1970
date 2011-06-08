@@ -12,7 +12,7 @@ import com.reportgrid.util.MapUtil._
 
 /** A time series stores an unlimited amount of time series data.
  */
-case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: Aggregator[T]) {
+case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGroup[T]) {
   def flatten: List[T] = series.values.toList
 
   /** Groups the time series by period.
@@ -87,5 +87,29 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: Aggregator
 }
 
 object TimeSeries {
-  def empty[T](implicit aggregator: Aggregator[T]): TimeSeries[T] = apply[T](Map.empty[Period, T])
+  def empty[T: AbelianGroup]: TimeSeries[T] = apply[T](Map.empty[Period, T])
+
+  def apply[T: AbelianGroup](time: DateTime, count: T) = Builder.Default(time, count)
+
+  def all[T: AbelianGroup](time: DateTime, count: T) = Builder.All(time, count)
+
+  def eternity[T: AbelianGroup](time: DateTime, count: T) = Builder.Eternity(time, count)
+
+  case class Builder(periodicities: List[Periodicity]) {
+    /** Aggregates the specified measure across all periodicities to produce a time series */
+    def apply[T: AbelianGroup](time: DateTime, count: T): TimeSeries[T] = {
+      TimeSeries(periodicities.map(Period(_, time) -> count).toMap)
+    }
+  }
+
+  object Builder {
+    /** Returns an aggregator for all periodicities from minute to eternity */
+    lazy val Default = Builder(Periodicity.Default)
+
+    /** Returns an aggregator for all periodicities from second to eternity */
+    lazy val All = Builder(Periodicity.All)
+
+    /** Returns an aggregator for eternity */
+    lazy val Eternity = Builder(Periodicity.Eternity :: Nil)
+  }
 }

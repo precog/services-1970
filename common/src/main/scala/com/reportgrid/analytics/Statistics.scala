@@ -1,9 +1,9 @@
 package com.reportgrid.analytics
 
-case class Statistics(min: Double, max: Double, mean: Double, variance: Double, standardDeviation: Double)
+case class Statistics(n: Long, min: Double, max: Double, mean: Double, variance: Double, standardDeviation: Double)
 
 object Statistics {
-	def zero = Statistics(0, 0, 0, 0, 0)
+	def zero = Statistics(0, 0, 0, 0, 0, 0)
 }
 
 case class RunningStats(min: Double, max: Double, sum: Double, sumSq: Double, n: Long) {
@@ -16,10 +16,9 @@ case class RunningStats(min: Double, max: Double, sum: Double, sumSq: Double, n:
   )
 
   def statistics: Statistics = if (n == 0) Statistics.zero else {
-  	val mean = sum / n
-  	val variance = (n * sumSq - sum * sum) / (n * (n - 1))
+  	val variance = (sumSq - ((sum * sum) / n)) / (n - 1)
 
-  	Statistics(min = min, max = max, mean = mean, variance, standardDeviation = math.sqrt(variance))
+  	Statistics(n = n, min = min, max = max, mean = sum / n, variance, standardDeviation = math.sqrt(variance))
   } 
 }
 
