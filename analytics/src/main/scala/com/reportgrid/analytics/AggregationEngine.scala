@@ -392,8 +392,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
                                   (".valuePeriodicity" === periodicity.serialize) 
 
           val orderPeriodUpdate = baseUpdate & 
-                                  (up(".order") set order.serialize) &
-                                  (up(".period") set periodicity.serialize) 
+                                  up(".order" set order.serialize &
+                                  up(".period") set periodicity.serialize  & 
+                                  up(".valuePeriodicity") === periodicity.serialize
 
           val filterWhereClause = orderPeriodFilter.whereVariablesEqual(observation)
 
@@ -403,7 +404,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
                                    observationUpdate(observation) & 
                                    countUpdate(".counts", timeSeries)))
       }
-    } 
+    }
   }
 
   private def internalIntersectSeries[P <: Predicate](
@@ -552,7 +553,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       }
     }
   }
-
 
   private def extractValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
     database {
