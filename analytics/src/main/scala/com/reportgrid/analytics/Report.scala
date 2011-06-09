@@ -1,9 +1,13 @@
 package com.reportgrid.analytics
 
+import blueeyes._
 import blueeyes.json.JsonAST._
 import blueeyes.json.{JPath, JPathIndex, JPathField}
 
 import com.reportgrid.util.MapUtil._
+
+import scalaz.{Ordering => _, _}
+import Scalaz._
 
 /** 
  * A report counts observations of a particular type.
@@ -15,11 +19,7 @@ case class Report[S <: Predicate, T: AbelianGroup](observationCounts: Map[Observ
   /** Creates a new report containing all the data in this report, plus all the
    * data in that report.
    */
-  def + (that: Report[S, T]): Report[S, T] = {
-    Report[S, T](merge2WithDefault(aggregator.zero)(this.observationCounts, that.observationCounts) { 
-      (count1, count2) => aggregator.append(count1, count2)
-    })
-  }
+  def + (that: Report[S, T]): Report[S, T] = Report[S, T](this.observationCounts <+> that.observationCounts)
 
   /** Maps the report based on the type of count.
    */
@@ -38,17 +38,29 @@ case class Report[S <: Predicate, T: AbelianGroup](observationCounts: Map[Observ
    * isomorphic to a time series report).
    */
   def groupByPeriod[V](implicit witness: T => TimeSeries[V], group: AbelianGroup[V]): Map[Period, Report[S, TimeSeries[V]]] = {
-    val flipped: Map[Period, Map[Observation[S], TimeSeries[V]]] = flip {
-      observationCounts.mapValues(witness(_).groupByPeriod)
-    }
-
-    flipped.mapValues(Report(_))
+    flip(observationCounts.mapValues(witness(_).groupByPeriod)).mapValues(Report(_))
   }
 
   def groupByPeriodicity[V](implicit witness: T => TimeSeries[V], group: AbelianGroup[V]): Map[Periodicity, Report[S, TimeSeries[V]]] = {
     flip(observationCounts.mapValues(witness(_).groupByPeriodicity)).mapValues(Report(_))
   }
+
+  /**
+   * Convert this report to a map of reports from period to time series report. In the resulting
+   * map, the keys will be periods that batch reports of finer granularity.
+   */
+  def partition[V](pf: Periodicity => Periodicity)(implicit witness: T => TimeSeries[V], group: AbelianGroup[V]): Map[BatchKey[S], TimeSeries[V]] = {
+    observationCounts.mapValues(witness).foldLeft(Map.empty[BatchKey[S], TimeSeries[V]]) {
+      case (m, (observation, timeSeries)) => timeSeries.series.foldLeft(m) {
+        case (m, entry @ (p, v)) => 
+          val batchKey = BatchKey(pf(p.periodicity).period(p.start), p.periodicity, observation)
+          m + (batchKey -> (m.getOrElse(batchKey, TimeSeries.empty[V]) + entry))
+      }
+    }
+  }
 }
+
+case class BatchKey[S <: Predicate](period: Period, valuePeriodicity: Periodicity, observation: Observation[S])
 
 object Report {
   def empty[S <: Predicate, T: AbelianGroup]: Report[S, T] = Report[S, T](Map.empty)
@@ -56,6 +68,12 @@ object Report {
   /** Creates a report of values.
    */
   def ofValues[T: AbelianGroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[HasValue, T] = {
+    // TODO: Change to the following when we move to scala 2.9.0
+    // val data = event.flattenWithPath.take(limit)
+    // Report(
+    //   (for (i <- 1 until order; subset <- data.combinations(i)) yield (subset.toSet, count)).toMap
+    // )
+
     val flattened = event.flattenWithPath.take(limit).map {
       case (jpath, jvalue) => (Variable(jpath), HasValue(jvalue))
     }
@@ -75,9 +93,7 @@ object Report {
 
     println("actual length: " + ss.length + ", expected length: " + (1 to order).foldLeft(0L)((length, order) => length + nchoosek(flattened.length, order)))*/
 
-    Report(Map(sublists(flattened, order).map { subset =>
-      (subset.toSet, count)
-    }: _*))
+    Report(Map(sublists(flattened, order).map(subset => (subset.toSet, count)): _*))
   }
 
   /** Creates a report of children. Although the "order" parameter is supported,

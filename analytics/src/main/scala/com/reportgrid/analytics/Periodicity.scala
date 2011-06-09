@@ -18,6 +18,8 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
    */
   def increment(time: DateTime, amount: Int = 1): DateTime
 
+  def period(time: DateTime): Period = Period(this, floor(time))
+
   /** The previous periodicity in the chain.
    */
   def previous: Periodicity = (Periodicity.All.indexOf(this) - 1) match {

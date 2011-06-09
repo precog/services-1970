@@ -9,6 +9,8 @@ import blueeyes.persistence.mongo._
 import org.joda.time.{DateTime, DateTimeZone}
 
 import com.reportgrid.util.MapUtil._
+import scalaz._
+import Scalaz._
 
 /** A time series stores an unlimited amount of time series data.
  */
@@ -70,11 +72,9 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
 
   /** Combines the data in this time series with the data in that time series.
    */
-  def + (that: TimeSeries[T]): TimeSeries[T] = {
-    TimeSeries(merge2WithDefault(aggregator.zero)(this.series, that.series) { (count1, count2) =>
-      aggregator.append(count1, count2)
-    })
-  }
+  def + (that: TimeSeries[T]): TimeSeries[T] = TimeSeries(this.series <+> that.series)
+
+  def + (entry: (Period, T)): TimeSeries[T] = TimeSeries(this.series <+> Map(entry))
 
   /** Returns total.
    */

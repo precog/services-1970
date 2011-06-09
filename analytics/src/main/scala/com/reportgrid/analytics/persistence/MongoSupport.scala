@@ -63,6 +63,13 @@ object MongoSupport {
     }
   }
 
+  def uniformTimeSeriesUpdater[T](implicit updater: (JPath, T) => MongoUpdate) = (jpath: JPath, value: TimeSeries[T]) => {
+    value.series.foldLeft[MongoUpdate](MongoUpdateNothing) {
+      case (fullUpdate, (period, count)) =>
+        fullUpdate & updater(jpath \ period.start.getMillis.toString, count)
+    }
+  }
+
   implicit val DateTimeExtractor = new Extractor[DateTime] {
     def extract(jvalue: JValue): DateTime = new DateTime(jvalue.deserialize[Long], DateTimeZone.UTC)
   }

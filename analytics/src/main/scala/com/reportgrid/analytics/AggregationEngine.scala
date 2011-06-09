@@ -20,12 +20,16 @@ import java.util.concurrent.TimeUnit
 import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 import scala.collection.SortedMap
-import scalaz.Scalaz._
+import scalaz.{Ordering => _, _}
+import Scalaz._
 import Future._
 
 class AggregationEngine private (config: ConfigMap, logger: Logger, database: MongoDatabase) extends FutureDeliveryStrategySequential {
+  import AggregationEngine._
+
   val EarliestTime = new DateTime(0,             DateTimeZone.UTC)
   val LatestTime   = new DateTime(Long.MaxValue, DateTimeZone.UTC)
+
 
   type CountType          = Long
   type TimeSeriesType     = TimeSeries[CountType]
@@ -353,14 +357,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
     import java.security.MessageDigest
 
-    val countUpdate = timeSeriesUpdater[CountType]
+    val countUpdate = uniformTimeSeriesUpdater[CountType]
+    val up = MongoUpdateBuilder(_)
 
     def observationUpdate[P <: Predicate : Decomposer](observation: Observation[P]): MongoUpdate = {
       observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoUpdate](MongoUpdateNothing) {
         case (update, ((variable, predicate), index)) =>
           update & 
-          (MongoUpdateBuilder(".where.variable" + index)  set variable.serialize) &
-          (MongoUpdateBuilder(".where.predicate" + index) set predicate.serialize)
+          (up(".where.variable" + index)  set variable.serialize) &
+          (up(".where.predicate" + index) set predicate.serialize)
       }
     }
 
@@ -372,33 +377,33 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       md5.digest().map(0xFF & _).map { "%02x".format(_) }.foldLeft(""){_ + _}
     }
 
-    val baseUpdate = (MongoUpdateBuilder(".accountTokenId") set token.accountTokenId.serialize) &
-                     (MongoUpdateBuilder(".path") set path.serialize)
+    val baseUpdate = (up(".accountTokenId") set token.accountTokenId.serialize) &
+                     (up(".path") set path.serialize)
 
     val baseFilter = forTokenAndPath(token, path)
 
-    report.groupByOrder.flatMap { 
-      case (order, report) =>
-        report.groupByPeriod.map { case (period, report) => ((order, period), report) }
-    }.foldLeft(MongoPatches.empty) {
-      case (patches, ((order, period), report)) =>
-        val orderPeriodFilter = (baseFilter & {
-          ".order"  === order.serialize &
-          ".period" === period.serialize
-        })
+    report.groupByOrder.view.foldLeft(MongoPatches.empty) { 
+      case (patches, (order, report)) => report.partition(periodicityBatches).foldLeft(patches) { 
+        case (patches, (BatchKey(period, periodicity, observation), timeSeries)) => 
+          
+          val orderPeriodFilter = baseFilter & 
+                                  (".order"  === order.serialize) &
+                                  (".period" === period.serialize) &
+                                  (".valuePeriodicity" === periodicity.serialize) 
 
-        val orderPeriodUpdate = baseUpdate & 
-                                (MongoUpdateBuilder(".order") set order.serialize) &
-                                (MongoUpdateBuilder(".period") set period.serialize)
+          val orderPeriodUpdate = baseUpdate & 
+                                  (up(".order") set order.serialize) &
+                                  (up(".period") set periodicity.serialize) 
 
-        report.observationCounts.foldLeft(patches) { 
-          case (patches, (observation, count)) =>
-            val filterWhereClause = orderPeriodFilter.whereVariablesEqual(observation)
-            val updateKey = JPath(".updateKey") === md5SumString(renderNormalized(filterWhereClause.filter).toString.getBytes)
+          val filterWhereClause = orderPeriodFilter.whereVariablesEqual(observation)
 
-            patches + (updateKey -> (orderPeriodUpdate & observationUpdate(observation) & countUpdate(".count", count)))
-        }
-    }
+          val updateKey = JPath(".updateKey") === md5SumString(renderNormalized(filterWhereClause.filter).toString.getBytes)
+
+          patches + (updateKey -> (orderPeriodUpdate & 
+                                   observationUpdate(observation) & 
+                                   countUpdate(".counts", timeSeries)))
+      }
+    } 
   }
 
   private def internalIntersectSeries[P <: Predicate](
@@ -484,7 +489,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           getHistogramInternal(token, path, Variable(variable.name \ JPathIndex(index)))
         }: _*).map { results =>
           results.foldLeft(Map.empty[JValue, CountType]) {
-            case (all, cur) => MapMonoid[JValue, CountType].append(all, cur)
+            case (all, cur) => all <+> cur // MapMonoid[JValue, CountType].append(all, cur)
           }
         }
     }    
@@ -568,6 +573,19 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 }
 
 object AggregationEngine extends FutureDeliveryStrategySequential {
+  import Periodicity._
+  val periodicityBatches: Periodicity => Periodicity = Map(
+    Second -> Day,
+    Minute -> Month,
+    Hour -> Year,
+    Day -> Year,
+    Week -> Eternity,
+    Month -> Eternity,
+    Year -> Eternity,
+    Eternity -> Eternity
+  )
+
+
   private val CollectionIndices = Map(
     "variable_series" -> Map(
       "value_query" -> List(
