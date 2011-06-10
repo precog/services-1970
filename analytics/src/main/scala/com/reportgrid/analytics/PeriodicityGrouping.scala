@@ -1,13 +1,15 @@
 package com.reportgrid.analytics
 
 import Periodicity._
+import org.joda.time.DateTime
 
 /**
  * A PeriodGrouping groups periods into a certain periodicity.
  */
 trait PeriodicityGrouping {
-  def group: PartialFunction[Periodicity, Periodicity]
+  val group: PartialFunction[Periodicity, Periodicity]
 
+/*
   def expand(start: DateTime, end: DateTime): List[Period] = {
     def span(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = periodicity.period(start) to (periodicity.period(end))
 
@@ -45,11 +47,12 @@ trait PeriodicityGrouping {
 
     expand0(start, end, Periodicity.Year)
   }
+  */
 }
 
 object PeriodicityGrouping {
   object Default extends PeriodicityGrouping {
-    override val group = {
+    override val group : PartialFunction[Periodicity, Periodicity] = {
       case Minute   => Month
       case Hour     => Year
       case Day      => Year

@@ -391,7 +391,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   }
 
   private def intervalFilters(granularity: Periodicity, start: Option[DateTime], end: Option[DateTime], filterBuilder: Period => MongoFilter): List[MongoFilter] = {
-    val batchPeriodicity = PeriodicityBatches(granularity)
+    val batchPeriodicity = PeriodicityGrouping.Default.group(granularity)
     val batchStartPeriod = start.map(batchPeriodicity.period)
     val batchEndPeriod =   end.map(batchPeriodicity.period)
 
@@ -547,7 +547,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
                      (up(".path") set path.serialize)
 
     report.groupByOrder.view.foldLeft(MongoPatches.empty) { 
-      case (patches, (order, report)) => report.partition(PeriodicityBatches).foldLeft(patches) { 
+      case (patches, (order, report)) => report.partition(PeriodicityGrouping.Default.group).foldLeft(patches) { 
         case (patches, (BatchKey(period, granularity, observation), timeSeries)) => 
           
           val orderPeriodUpdate = baseUpdate :+ 
@@ -593,18 +593,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 }
 
 object AggregationEngine extends FutureDeliveryStrategySequential {
-  import Periodicity._
-  val PeriodicityBatches: Periodicity => Periodicity = {
-    case Second => Day
-    case Minute => Month
-    case Hour => Year
-    case Day => Year
-    case Week => Eternity
-    case Month => Eternity
-    case Year => Eternity
-    case Eternity => Eternity
-  }
-
   private val CollectionIndices = Map(
     "variable_series" -> Map(
       "val_series_query" -> ("path" :: "accountTokenId" :: "order" :: "period.periodicity" :: "period.start" :: "period.end" ::
