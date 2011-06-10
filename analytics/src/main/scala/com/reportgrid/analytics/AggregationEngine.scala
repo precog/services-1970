@@ -594,15 +594,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
 object AggregationEngine extends FutureDeliveryStrategySequential {
   import Periodicity._
-  val PeriodicityBatches: Periodicity => Periodicity = Map(
-    Second -> Day,
-    Minute -> Month,
-    Hour -> Year,
-    Day -> Year,
-    Week -> Eternity,
-    Month -> Eternity,
-    Year -> Eternity,
-    Eternity -> Eternity
+  val PeriodicityBatches: Periodicity => Periodicity = {
+    case Second => Day
+    case Minute => Month
+    case Hour => Year
+    case Day => Year
+    case Week => Eternity
+    case Month => Eternity
+    case Year => Eternity
+    case Eternity => Eternity
   )
 
   private val CollectionIndices = Map(

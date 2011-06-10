@@ -219,7 +219,6 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
           obj.flattenWithPath.foldLeft(map) {
             case (map, (path, value)) =>
               val key = (eventName, path, value)
-
               val oldCount = map.get(key).getOrElse(0)
 
               map + (key -> (oldCount + 1))
@@ -227,8 +226,6 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
         case x => error("Anomaly detected in the fabric of spacetime: " + x)
       }
-
-      println(expectedTotals)
 
       expectedTotals.foreach {
         case ((eventName, path, value), count) =>
@@ -255,8 +252,6 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      //println("Expected: " + expectedCounts)
-
       expectedCounts.map {
         case (values, count) =>
           val observation = variables.zip(values.map(v => HasValue(v))).toSet
@@ -278,11 +273,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      //println("expected: " + expectedCounts.map(((_:List[JValue]).map(renderNormalized)).first))
-
-      engine.intersectCount(Token.Test, "/gluecon", descriptors) must whenDelivered (beEqualTo(expectedCounts)) /*{
-        verify(x => (x ->- {m => println(m.map(((_:List[JValue]).map(renderNormalized)).first))}) must_== expectedCounts)
-      }*/
+      engine.intersectCount(Token.Test, "/gluecon", descriptors) must whenDelivered (beEqualTo(expectedCounts)) 
     }
 
   }
