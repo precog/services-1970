@@ -5,6 +5,7 @@ import blueeyes.core.data.Bijection.identity
 import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.concurrent.test.FutureMatchers
+import blueeyes.util._
 import blueeyes.util.metrics.Duration
 import blueeyes.util.metrics.Duration.toDuration
 import MimeTypes._
@@ -94,8 +95,8 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   val config = new Config()
   config.load(mongoConfigFileData)
 
-  val mongo = new RealMongo(config.configMap("mongo")) 
-  //val mongo = new MockMongo()
+  //val mongo = new RealMongo(config.configMap("mongo")) 
+  val mongo = new MockMongo()
   val database = mongo.database("gluecon")
   
   val engine = get(AggregationEngine(config, Logger.get, database))
@@ -206,48 +207,83 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
     }
 
-     "search for intersection results" in {
-       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+    "retrieve series results for a subset of time" in {      
+      val sortedEvents = sampleEvents.sortBy(_.timestamp)
+      val sliceLength = sortedEvents.size / 2
+      val slice = sortedEvents.drop(sliceLength / 2).take(sliceLength)
+      val minDate = slice.head.timestamp
+      val maxDate = slice.last.timestamp
+
+      val expectedTotals = slice.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+          obj.flattenWithPath.foldLeft(map) {
+            case (map, (path, value)) =>
+              val key = (eventName, path, value)
+
+              val oldCount = map.get(key).getOrElse(0)
+
+              map + (key -> (oldCount + 1))
+          }
+
+        case x => error("Anomaly detected in the fabric of spacetime: " + x)
+      }
+
+      println(expectedTotals)
+
+      expectedTotals.foreach {
+        case ((eventName, path, value), count) =>
+          val variable = Variable(JPath(eventName) \ path) 
+          engine.getValueSeries(
+            Token.Test, "/gluecon", variable, value, 
+            Periodicity.Minute, Some(minDate), Some(maxDate)
+          ) map (_.total(Periodicity.Minute)) must whenDelivered {
+            beEqualTo(count.toLong)
+          }
+      }
+    }
+
+    "search for intersection results" in {
+      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
 
-       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+      val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
+        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
 
-           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
-         case (map, _) => map
-       }
+        case (map, _) => map
+      }
 
-       //println("Expected: " + expectedCounts)
+      //println("Expected: " + expectedCounts)
 
-       expectedCounts.map {
-         case (values, count) =>
-           val observation = variables.zip(values.map(v => HasValue(v))).toSet
+      expectedCounts.map {
+        case (values, count) =>
+          val observation = variables.zip(values.map(v => HasValue(v))).toSet
 
-           engine.searchCount(Token.Test, "/gluecon", observation) must whenDelivered (beEqualTo(count))
-       }
-     }
+          engine.searchCount(Token.Test, "/gluecon", observation) must whenDelivered (beEqualTo(count))
+      }
+    }
 
-     "retrieve intersection results" in {      
-       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
-       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+    "retrieve intersection results" in {      
+      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
-       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+      val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
+        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
 
-           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
-         case (map, _) => map
-       }
+        case (map, _) => map
+      }
 
-       //println("expected: " + expectedCounts.map(((_:List[JValue]).map(renderNormalized)).first))
+      //println("expected: " + expectedCounts.map(((_:List[JValue]).map(renderNormalized)).first))
 
-       engine.intersectCount(Token.Test, "/gluecon", descriptors) must whenDelivered (beEqualTo(expectedCounts)) /*{
-         verify(x => (x ->- {m => println(m.map(((_:List[JValue]).map(renderNormalized)).first))}) must_== expectedCounts)
-       }*/
-     }
+      engine.intersectCount(Token.Test, "/gluecon", descriptors) must whenDelivered (beEqualTo(expectedCounts)) /*{
+        verify(x => (x ->- {m => println(m.map(((_:List[JValue]).map(renderNormalized)).first))}) must_== expectedCounts)
+      }*/
+    }
 
   }
 

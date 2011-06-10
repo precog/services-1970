@@ -281,8 +281,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   type IntersectionResult[T] = SortedMap[List[JValue], T]
 
-  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], 
+  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor],
                      start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[CountType]] = {
+    // TODO: Fix this
     intersectSeries(token, path, properties, Periodicity.Eternity, start, end).map { series => 
       import series.ordering
       series.map {
@@ -345,7 +346,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
       Future {
         intervalFilters(granularity, start, end, filterBuilder) map {
-          filter => database(select(".counts", ".where").from(col).where(filter ->- {f => println(renderNormalized(f.filter))}))
+          filter => database(select(".counts", ".where").from(col).where(filter))
         }: _*
       } map {
         _.flatten.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
@@ -536,28 +537,28 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     def observationUpdate[P <: Predicate : Decomposer](observation: Observation[P]): MongoUpdate = {
       observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoUpdate](MongoUpdateNothing) {
         case (update, ((variable, predicate), index)) =>
-          update & 
-          (up(".where.variable" + index)  set variable.serialize) &
+          update :+ 
+          (up(".where.variable" + index)  set variable.serialize) :+ 
           (up(".where.predicate" + index) set predicate.serialize)
       }
     }
 
-    val baseUpdate = (up(".accountTokenId") set token.accountTokenId.serialize) &
+    val baseUpdate = (up(".accountTokenId") set token.accountTokenId.serialize) :+ 
                      (up(".path") set path.serialize)
 
     report.groupByOrder.view.foldLeft(MongoPatches.empty) { 
       case (patches, (order, report)) => report.partition(PeriodicityBatches).foldLeft(patches) { 
         case (patches, (BatchKey(period, granularity, observation), timeSeries)) => 
           
-          val orderPeriodUpdate = baseUpdate & 
-                                  (up(".order") set order.serialize) &
-                                  (up(".period") set period.serialize)  & 
+          val orderPeriodUpdate = baseUpdate :+ 
+                                  (up(".order") set order.serialize) :+ 
+                                  (up(".period") set period.serialize)  :+ 
                                   (up(".granularity") set granularity.serialize)
 
           val updateKey = timeSeriesKeyFilter(token, path, order, period, granularity, observation)
 
-          patches + (updateKey -> (orderPeriodUpdate & 
-                                   observationUpdate(observation) & 
+          patches + (updateKey -> (orderPeriodUpdate :+ 
+                                   observationUpdate(observation) :+ 
                                    countUpdate(".counts", timeSeries)))
       }
     }
@@ -606,12 +607,12 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
 
   private val CollectionIndices = Map(
     "variable_series" -> Map(
-      "val_series_query" -> ("path" :: "accountTokenId" :: "order" :: "period" ::
+      "val_series_query" -> ("path" :: "accountTokenId" :: "order" :: "period.periodicity" :: "period.start" :: "period.end" ::
                             ((0 to 9).flatMap(i => List("where.variable" + i, "where.predicate" + i)).toList))
     ),
     "variable_value_series" -> Map(
       "updateKey" -> List("updateKey"),
-      "var_val_series_query" -> ("accountTokenId" :: "granularity" :: "order" :: "path" :: "period" ::  
+      "var_val_series_query" -> ("accountTokenId" :: "granularity" :: "order" :: "path" :: "period.periodicity" :: "period.start" :: "period.end" ::  
                                 ((0 to 9).flatMap(i => List("where.variable" + i, "where.predicate" + i)).toList))
     ),
     "variable_values" -> Map(
