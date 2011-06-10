@@ -603,7 +603,7 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
     case Month => Eternity
     case Year => Eternity
     case Eternity => Eternity
-  )
+  }
 
   private val CollectionIndices = Map(
     "variable_series" -> Map(
