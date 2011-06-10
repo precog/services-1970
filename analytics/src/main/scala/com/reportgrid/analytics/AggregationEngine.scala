@@ -397,8 +397,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
     (batchStartPeriod, batchEndPeriod) match {
       case (Some(start), Some(end)) => 
-        if (start == end) filterBuilder(start) :: Nil
-        else if (start.end == end.start) filterBuilder(start) :: filterBuilder(end) :: Nil
+        if (start == end) (filterBuilder(start) :: Nil)
+        else if (start.end == end.start) (filterBuilder(start) :: filterBuilder(end) :: Nil)
         else error("Query period too large; too many results to return.")
 
       case (ostart, oend) => List(
@@ -426,7 +426,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   private def internalSearchSeries[P <: Predicate: Decomposer](col: MongoCollection, token: Token, path: Path, granularity: Periodicity, observation: Observation[P],
                                                                start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
     val filterBuilder = timeSeriesKeyFilter(token, path, observation.size, _: Period, granularity, observation)
-
     Future {
       intervalFilters(granularity, start, end, filterBuilder).map {
         filter => database(selectOne(".counts").from(col).where(filter)) 

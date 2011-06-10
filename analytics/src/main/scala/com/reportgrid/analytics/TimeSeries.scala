@@ -78,9 +78,7 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
 
   /** Returns total.
    */
-  def total(p: Periodicity): T = groupByPeriodicity.getOrElse(p, TimeSeries.empty[T]).series.foldLeft(aggregator.zero) { 
-    (sum, t) => aggregator.append(sum, t._2) 
-  }
+  def total(p: Periodicity): T = groupByPeriodicity.getOrElse(p, TimeSeries.empty[T]).series.values.asMA.sum
 
   def unary_- = TimeSeries(series.transform((k, v) => aggregator.inverse(v)))
 }

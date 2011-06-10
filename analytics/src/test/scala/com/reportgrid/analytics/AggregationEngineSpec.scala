@@ -10,7 +10,8 @@ import blueeyes.util.metrics.Duration
 import blueeyes.util.metrics.Duration.toDuration
 import MimeTypes._
 
-import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
+import blueeyes.json.JsonAST._
+import blueeyes.json.JsonDSL._
 import blueeyes.json.JPath
 import blueeyes.json.JPathImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
@@ -26,6 +27,7 @@ import org.scalacheck._
 import Gen._
 import scalaz._
 import Scalaz._
+import Periodicity._
 
 trait LocalMongo {
   val mongoConfigFileData = """
@@ -36,8 +38,8 @@ trait LocalMongo {
 
     variable_series {
       collection = "variable_series"
-      time_to_idle_millis = 500
-      time_to_live_millis = 1000
+      time_to_idle_millis = 250
+      time_to_live_millis = 500
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -46,8 +48,8 @@ trait LocalMongo {
     variable_value_series {
       collection = "variable_value_series"
 
-      time_to_idle_millis = 500
-      time_to_live_millis = 1000
+      time_to_idle_millis = 250
+      time_to_live_millis = 500
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -56,8 +58,8 @@ trait LocalMongo {
     variable_values {
       collection = "variable_values"
 
-      time_to_idle_millis = 500
-      time_to_live_millis = 1000
+      time_to_idle_millis = 250
+      time_to_live_millis = 500
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -66,8 +68,8 @@ trait LocalMongo {
     variable_children {
       collection = "variable_children"
 
-      time_to_idle_millis = 500
-      time_to_live_millis = 1000
+      time_to_idle_millis = 250
+      time_to_live_millis = 500
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -76,8 +78,8 @@ trait LocalMongo {
     path_children {
       collection = "path_children"
 
-      time_to_idle_millis = 500
-      time_to_live_millis = 1000
+      time_to_idle_millis = 250
+      time_to_live_millis = 500
 
       initial_capacity = 1000
       maximum_capacity = 10000
@@ -101,7 +103,25 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(1000).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(1000).milliseconds)
+
+  def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
+    case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+      obj.flattenWithPath.foldLeft(map) {
+        case (map, (path, value)) =>
+          val key = (eventName, path, value)
+          val oldCount = map.get(key).getOrElse(0)
+
+          map + (key -> (oldCount + 1))
+      }
+  }
+
+  def slice(l: List[Event]) = {
+    val sortedEvents = l.sortBy(_.timestamp)
+    val sliceLength = sortedEvents.size / 2
+    val (slice, rest) = sortedEvents.drop(sliceLength / 2).splitAt(sliceLength)
+    (slice, slice.head.timestamp, rest.head.timestamp)
+  }
 
   "Aggregation engine" should {
     shareVariables()
@@ -111,7 +131,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       engine.aggregate(Token.Test, "/gluecon", event.timestamp, event.data, 1)
     }
 
-    "aggregate simple events" in {
+    "count events" in {
       def countEvents(eventName: String) = sampleEvents.count {
         case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
         case _ => false
@@ -127,31 +147,12 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
     }
 
-    "retrieve all values of arrays" in {
-      val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-          map <+> ((obj.children.collect { case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet) }).toMap)
-
-        case (map, _) => map
-      }
-
-      arrayValues.foreach {
-        case ((eventName, path), values) =>
-          println("Looking for values of: " + eventName + path.toString)
-
-          engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)) must whenDelivered {
-            haveSameElementsAs(values)
-          }
-      }
-    }
-
     "retrieve values" in {
       val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
         case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
           obj.flattenWithPath.foldLeft(map) {
             case (map, (path, value)) => 
               val key = (eventName, path)
-
               val oldValues = map.getOrElse(key, Set.empty)
 
               map + (key -> (oldValues + value))
@@ -161,6 +162,22 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
 
       values.foreach {
+        case ((eventName, path), values) =>
+          engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)) must whenDelivered {
+            haveSameElementsAs(values)
+          }
+      }
+    }
+
+    "retrieve all values of arrays" in {
+      val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+          map <+> ((obj.children.collect { case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet) }).toMap)
+
+        case (map, _) => map
+      }
+
+      arrayValues.foreach {
         case ((eventName, path), values) =>
           engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)) must whenDelivered {
             haveSameElementsAs(values)
@@ -183,19 +200,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve totals" in {
-      val expectedTotals = sampleEvents.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-          obj.flattenWithPath.foldLeft(map) {
-            case (map, (path, value)) =>
-              val key = (eventName, path, value)
-
-              val oldCount = map.get(key).getOrElse(0)
-
-              map + (key -> (oldCount + 1))
-          }
-
-        case x => error("Anomaly detected in the fabric of spacetime: " + x)
-      }
+      val expectedTotals = valueCounts(sampleEvents)
 
       expectedTotals.foreach {
         case ((eventName, path, value), count) =>
@@ -207,41 +212,46 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
     }
 
-    "retrieve series results for a subset of time" in {      
-      val sortedEvents = sampleEvents.sortBy(_.timestamp)
-      val sliceLength = sortedEvents.size / 2
-      val slice = sortedEvents.drop(sliceLength / 2).take(sliceLength)
-      val minDate = slice.head.timestamp
-      val maxDate = slice.last.timestamp
+    "retrieve a time series for occurrences of a variable" in {
+      val (events, minDate, maxDate) = slice(sampleEvents)
 
-      val expectedTotals = slice.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
+      val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
         case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
           obj.flattenWithPath.foldLeft(map) {
-            case (map, (path, value)) =>
-              val key = (eventName, path, value)
-              val oldCount = map.get(key).getOrElse(0)
-
-              map + (key -> (oldCount + 1))
+            case (map, (path, _)) =>
+              val key = (eventName, path)
+              map + (key -> (map.get(key).getOrElse(0) + 1))
           }
-
-        case x => error("Anomaly detected in the fabric of spacetime: " + x)
       }
 
       expectedTotals.foreach {
-        case ((eventName, path, value), count) =>
+        case ((eventName, path), count) =>
           val variable = Variable(JPath(eventName) \ path) 
-          engine.getValueSeries(
-            Token.Test, "/gluecon", variable, value, 
-            Periodicity.Minute, Some(minDate), Some(maxDate)
-          ) map (_.total(Periodicity.Minute)) must whenDelivered {
+          engine.getVariableSeries(
+            Token.Test, "/gluecon", variable, Minute, Some(minDate), Some(maxDate)
+          ) map (_.total(Minute)) must whenDelivered {
             beEqualTo(count.toLong)
           }
       }
     }
 
-    "search for intersection results" in {
-      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+    "retrieve a time series for occurrences of a value of a variable" in {      
+      val (events, minDate, maxDate) = slice(sampleEvents)
+      val expectedTotals = valueCounts(events)
+      
+      expectedTotals.foreach {
+        case ((eventName, path, value), count) =>
+          val variable = Variable(JPath(eventName) \ path) 
+          engine.getValueSeries(
+            Token.Test, "/gluecon", variable, value, Minute, Some(minDate), Some(maxDate)
+          ) map (_.total(Minute)) must whenDelivered {
+            beEqualTo(count.toLong)
+          }
+      }
+    }
 
+    "retrieve intersection results" in {
+      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
