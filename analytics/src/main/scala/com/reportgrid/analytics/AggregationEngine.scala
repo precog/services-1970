@@ -298,7 +298,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   private def internalIntersectSeries[P <: Predicate](
       col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
-      periodicity: Periodicity, start : Option[DateTime], end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
+      granularity: Periodicity, start : Option[DateTime], end : Option[DateTime]): Future[IntersectionResult[TimeSeriesType]] = { 
     val variables = variableDescriptors.map(_.variable)
 
     val histograms = Future(variableDescriptors.map { 
@@ -336,14 +336,16 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       val filterBuilder = (period: Period) => {
           (forTokenAndPath(token, path) & 
           (".order" === variableDescriptors.length) &
-          (".period" === period.serialize) &
-          (".granularity" === periodicity.serialize)).
+          (".period.periodicity" === period.periodicity.serialize) &
+          (".period.start" === period.start.serialize) &
+          (".period.end" === period.end.serialize) &
+          (".granularity" === granularity.serialize)).
           whereVariablesExist(variableDescriptors.map(_.variable))
       }
 
       Future {
-        intervalFilters(periodicity, start, end, filterBuilder) map {
-          filter => database(select(".counts", ".where").from(col).where(filter))
+        intervalFilters(granularity, start, end, filterBuilder) map {
+          filter => database(select(".counts", ".where").from(col).where(filter ->- {f => println(renderNormalized(f.filter))}))
         }: _*
       } map {
         _.flatten.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
@@ -359,7 +361,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
             // ensure that all the variables are within the set of values selected by
             // the histogram that is used for sorting.
             if (values.zipWithIndex.forall { case (v, i) => hist(i).isDefinedAt(v) }) {
-              val count = deserializeTimeSeries((result \ "counts"), periodicity, start, end)
+              val count = deserializeTimeSeries(result, granularity, start, end)
               m + (values -> (m.getOrElse(values, TimeSeries.empty[CountType]) + count))
             } else m
         }
