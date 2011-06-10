@@ -1,16 +1,17 @@
+package com.reportgrid.analytics
 
+import Periodicity._
 
 /**
  * A PeriodGrouping groups periods into a certain periodicity.
  */
-case class PeriodicityGrouping(value: Map[Periodicity, Periodicity]) {
-  val periodicities: Seq[Periodicity] = value.keys.toSeq.sort 
+trait PeriodicityGrouping {
+  def group: PartialFunction[Periodicity, Periodicity]
 
   def expand(start: DateTime, end: DateTime): List[Period] = {
     def span(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = periodicity.period(start) to (periodicity.period(end))
 
-    def finer(periodicity: Periodicity): Option[Periodicity] = periodicity.previous.filter(periodicities.contains _)
-    def courser(periodicity: Periodicity): Option[Periodicity] = periodicity.next.filter(periodicities.contains _)
+    def finer(periodicity: Periodicity): Option[Periodicity] = periodicity.previous.filter(group.isDefinedAt)
 
     def expand0(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = {
       def expand0Finer(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = {
@@ -22,6 +23,8 @@ case class PeriodicityGrouping(value: Map[Periodicity, Periodicity]) {
       }
 
       span(start, end, periodicity) match {
+        case Nil => error("Not possible")
+
         case _ :: Nil => expandFiner(start, end, periodicity)
 
         case list => 
@@ -45,15 +48,15 @@ case class PeriodicityGrouping(value: Map[Periodicity, Periodicity]) {
 }
 
 object PeriodicityGrouping {
-  val Default = PeriodicityGrouping {
-    Map(
-      Minute   -> Month,
-      Hour     -> Year,
-      Day      -> Year,
-      Week     -> Eternity,
-      Month    -> Eternity,
-      Year     -> Eternity,
-      Eternity -> Eternity
-    )
+  object Default extends PeriodicityGrouping {
+    override val group = {
+      case Minute   => Month
+      case Hour     => Year
+      case Day      => Year
+      case Week     => Eternity
+      case Month    => Eternity
+      case Year     => Eternity
+      case Eternity => Eternity
+    }
   }
 }
