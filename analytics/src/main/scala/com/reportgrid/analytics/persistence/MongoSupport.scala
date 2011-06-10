@@ -59,13 +59,6 @@ object MongoSupport {
   def timeSeriesUpdater[T](implicit updater: (JPath, T) => MongoUpdate) = (jpath: JPath, value: TimeSeries[T]) => {
     value.series.foldLeft[MongoUpdate](MongoUpdateNothing) {
       case (fullUpdate, (period, count)) =>
-        fullUpdate & updater(jpath \ period.periodicity.name \ period.start.getMillis.toString, count)
-    }
-  }
-
-  def uniformTimeSeriesUpdater[T](implicit updater: (JPath, T) => MongoUpdate) = (jpath: JPath, value: TimeSeries[T]) => {
-    value.series.foldLeft[MongoUpdate](MongoUpdateNothing) {
-      case (fullUpdate, (period, count)) =>
         fullUpdate & updater(jpath \ period.start.getMillis.toString, count)
     }
   }

@@ -254,80 +254,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     searchSeries(token, path, observation, Periodicity.Eternity,  start, end).map(_.total(Periodicity.Eternity))
   }
 
-  type IntersectionResult[T] = SortedMap[List[JValue], T]
-
-  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], 
-                     start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[CountType]] = {
-    intersectSeries(token, path, properties, Periodicity.Eternity, start, end).map { series => 
-      import series.ordering
-      series.map {
-        case (k, v) => (k, v.total(Periodicity.Eternity))
-      }
-    }
-  }
-
-  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], 
-                      periodicity: Periodicity, start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[TimeSeriesType]] = {
-    internalIntersectSeries(varValueSeriesC, token, path, properties, periodicity, start, end)
-  }
-
-  def stop(): Future[Unit] =  for {
-    _ <- varValueSeriesS.flushAll
-    _ <- varSeriesS.flushAll
-    _ <- varChildS.flushAll
-    _ <- varValueS.flushAll
-    _ <- pathChildS.flushAll
-  } yield ()
-
-  /** Creates a bunch of patches to keep track of parent/child path relationships.
-   * E.g. if you send "/foo/bar/baz", it will keep track of the following:
-   *
-   * "/foo" has child "bar"
-   * "/foo/bar" has child "baz"
-   */
-  private def addPathChildrenOfPath(token: Token, path: Path): MongoPatches = {
-    val patches = path.parentChildRelations.foldLeft(MongoPatches.empty) { (patches, tuple) =>
-      val (parent, child) = tuple
-
-      val (filter, update) = addChildOfPath(forTokenAndPath(token, parent), child.elements.last + "/")
-
-      patches + (filter -> update)
-    }
-
-    patches
-  }
-
-  /** Pushes the specified name onto a ".values" member of a document. This
-   * function is used to keep track of the layout of the virtual file system.
-   */
-  private def addChildOfPath(filter: MongoFilter, child: String): (MongoFilter, MongoUpdate) = {
-    val childField = MongoEscaper.encode(renderNormalized(child.serialize))
-
-    val valuesUpdate = (".values." + childField) inc 1
-
-    (filter -> valuesUpdate)
-  }
-
-  /** Creates patches to record variable observations.
-   */
-  private def updateValues[P <: Predicate : Decomposer, T](filter: MongoFilter, report: Report[P, T]): MongoPatches = {
-    report.observationCounts.foldLeft(MongoPatches.empty) { (patches, tuple) =>
-      val (observation, _) = tuple
-
-      observation.foldLeft(patches) {
-        case (patches, (variable, predicate)) =>
-
-          val filterVariable = filter & forVariable(variable)
-          val predicateField = MongoEscaper.encode(renderNormalized(predicate.serialize))
-
-          val valuesUpdate = (JPath(".values") \ JPathField(predicateField)) inc 1
-
-          patches + (filterVariable -> valuesUpdate)
-      }
-    }
-  }
-
-
   private implicit def filterWhereObserved(filter: MongoFilter) = FilterWhereObserved(filter)
   private case class FilterWhereObserved(filter: MongoFilter) {
     /*
@@ -353,58 +279,21 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  private def updateTimeSeries[P <: Predicate : Decomposer](token: Token, path: Path, report: Report[P, TimeSeriesType]): MongoPatches = {
+  type IntersectionResult[T] = SortedMap[List[JValue], T]
 
-    import java.security.MessageDigest
-
-    val countUpdate = uniformTimeSeriesUpdater[CountType]
-    val up = MongoUpdateBuilder(_)
-
-    def observationUpdate[P <: Predicate : Decomposer](observation: Observation[P]): MongoUpdate = {
-      observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoUpdate](MongoUpdateNothing) {
-        case (update, ((variable, predicate), index)) =>
-          update & 
-          (up(".where.variable" + index)  set variable.serialize) &
-          (up(".where.predicate" + index) set predicate.serialize)
+  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], 
+                     start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[CountType]] = {
+    intersectSeries(token, path, properties, Periodicity.Eternity, start, end).map { series => 
+      import series.ordering
+      series.map {
+        case (k, v) => (k, v.total(Periodicity.Eternity))
       }
     }
+  }
 
-    def md5SumString(bytes : Array[Byte]) : String = {
-      val md5 = MessageDigest.getInstance("SHA-1")
-      md5.reset()
-      md5.update(bytes)
-
-      md5.digest().map(0xFF & _).map { "%02x".format(_) }.foldLeft(""){_ + _}
-    }
-
-    val baseUpdate = (up(".accountTokenId") set token.accountTokenId.serialize) &
-                     (up(".path") set path.serialize)
-
-    val baseFilter = forTokenAndPath(token, path)
-
-    report.groupByOrder.view.foldLeft(MongoPatches.empty) { 
-      case (patches, (order, report)) => report.partition(periodicityBatches).foldLeft(patches) { 
-        case (patches, (BatchKey(period, periodicity, observation), timeSeries)) => 
-          
-          val orderPeriodFilter = baseFilter & 
-                                  (".order"  === order.serialize) &
-                                  (".period" === period.serialize) &
-                                  (".valuePeriodicity" === periodicity.serialize) 
-
-          val orderPeriodUpdate = baseUpdate & 
-                                  up(".order" set order.serialize &
-                                  up(".period") set periodicity.serialize  & 
-                                  up(".valuePeriodicity") === periodicity.serialize
-
-          val filterWhereClause = orderPeriodFilter.whereVariablesEqual(observation)
-
-          val updateKey = JPath(".updateKey") === md5SumString(renderNormalized(filterWhereClause.filter).toString.getBytes)
-
-          patches + (updateKey -> (orderPeriodUpdate & 
-                                   observationUpdate(observation) & 
-                                   countUpdate(".counts", timeSeries)))
-      }
-    }
+  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], 
+                      periodicity: Periodicity, start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[TimeSeriesType]] = {
+    internalIntersectSeries(varValueSeriesC, token, path, properties, periodicity, start, end)
   }
 
   private def internalIntersectSeries[P <: Predicate](
@@ -441,21 +330,23 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         }
       }
 
-      val filterTokenAndPath = forTokenAndPath(token, path)
 
       val aggregator = implicitly[AbelianGroup[TimeSeriesType]]
-
-      database {
-        select(".count", ".where").from(col).where {
-          (filterTokenAndPath &
-          JPath(".period.periodicity") === periodicity.serialize &
-          MongoFilterBuilder(JPath(".period.start"))        >= MongoPrimitiveOption(start.map(_.serialize)) &
-          MongoFilterBuilder(JPath(".period.start"))        <  MongoPrimitiveOption(end.map(_.serialize)) &
-          JPath(".order") === variableDescriptors.length).
+      
+      val filterBuilder = (period: Period) => {
+          (forTokenAndPath(token, path) & 
+          (".order" === variableDescriptors.length) &
+          (".period" === period.serialize) &
+          (".granularity" === periodicity.serialize)).
           whereVariablesExist(variableDescriptors.map(_.variable))
-        }
-      } map { results =>
-        results.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
+      }
+
+      Future {
+        intervalFilters(periodicity, start, end, filterBuilder) map {
+          filter => database(select(".counts", ".where").from(col).where(filter))
+        }: _*
+      } map {
+        _.flatten.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) { 
           case (m, result) =>
             // generate the key for the count in the results
             val values: List[JValue] = variableDescriptors.sortBy(_.variable).zipWithIndex.map { 
@@ -468,7 +359,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
             // ensure that all the variables are within the set of values selected by
             // the histogram that is used for sorting.
             if (values.zipWithIndex.forall { case (v, i) => hist(i).isDefinedAt(v) }) {
-              val count = (result \ "count").deserialize[TimeSeriesType]
+              val count = deserializeTimeSeries((result \ "counts"), periodicity, start, end)
               m + (values -> (m.getOrElse(values, TimeSeries.empty[CountType]) + count))
             } else m
         }
@@ -496,61 +387,51 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }    
   }
 
-  /*private def expandPredicate[P <: Predicate](token: Token, path: Path)(t: (Variable, P)): Future[List[(Variable, P)]] = {
-    val (variable, predicate) = t
+  private def intervalFilters(granularity: Periodicity, start: Option[DateTime], end: Option[DateTime], filterBuilder: Period => MongoFilter): List[MongoFilter] = {
+    val batchPeriodicity = PeriodicityBatches(granularity)
+    val batchStartPeriod = start.map(batchPeriodicity.period)
+    val batchEndPeriod =   end.map(batchPeriodicity.period)
 
-    getVariableLength(token, path, variable).map { 
-      case 0 => (variable, predicate) :: Nil
+    (batchStartPeriod, batchEndPeriod) match {
+      case (Some(start), Some(end)) => 
+        if (start == end) filterBuilder(start) :: Nil
+        else if (start.end == end.start) filterBuilder(start) :: filterBuilder(end) :: Nil
+        else error("Query period too large; too many results to return.")
 
-      case length =>
-        (0 until length).toList.map { index =>
-          (Variable(variable.name \ JPathIndex(index)), predicate)
+      case (ostart, oend) => List(
+        ostart.orElse(oend).orElse(if (granularity == Periodicity.Eternity) Some(Period.Eternity) else None).map(filterBuilder) getOrElse {
+          error("For queries with granularity other than eternity, start and end must be specified.")
         }
-    }
-  }
-  private def expandObservation[P <: Predicate](token: Token, path: Path, observation: Observation[P]): Future[List[Observation]] = {
-    Set[(Variable, Predicate)]
-    
-    
-  }
-  */
-
-  private def internalSearchSeries[P <: Predicate](col: MongoCollection, token: Token, path: Path, periodicity: Periodicity, observation: Observation[P],
-    start : Option[DateTime] = None, end : Option[DateTime] = None)(implicit decomposer: Decomposer[P]): Future[TimeSeriesType] = {
-    val filterTokenAndPath = forTokenAndPath(token, path)
-
-    database {
-      select(".count").from(col).where {
-        (filterTokenAndPath &
-        JPath(".period.periodicity") === periodicity.serialize &
-        MongoFilterBuilder(JPath(".period.start"))      >=  MongoPrimitiveOption(start.map(_.serialize)) &
-        MongoFilterBuilder(JPath(".period.start"))       <  MongoPrimitiveOption(end.map(_.serialize)) &
-        JPath(".order") === observation.size).whereVariablesEqual(observation)
-      } 
-    }.map { results =>
-      results.map { result =>
-        ((result \ "count").deserialize[TimeSeriesType])
-
-      }.foldLeft[TimeSeriesType](TimeSeries.empty) { _ + _ }.fillGaps
+      )
     }
   }
 
-  private def updateCount[P <: Predicate](filter: MongoFilter, report: Report[P, CountType])
-    (implicit cUpdater: (JPath, CountType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
-    report.groupByOrder.foldLeft(MongoPatches.empty) { (patches, tuple) =>
-      val (order, report) = tuple
-
-      val filterOrder = (filter & {
-        ".order"  === order.serialize
-      })
-
-      report.observationCounts.foldLeft(patches) {
-        case (patches, (observation, count)) =>
-          val filterWhereClause = filterOrder.whereVariablesEqual(observation)
-          val countUpdate = cUpdater(".count", count)
-
-          patches + (filterWhereClause -> countUpdate)
+  private def deserializeTimeSeries(jv: JValue, granularity: Periodicity, start: Option[DateTime], end: Option[DateTime]): TimeSeriesType = {
+    (jv \ "counts") match {
+      case JObject(fields) => fields.foldLeft(TimeSeries.empty[CountType]) {
+        case (series, JField(time, count)) => 
+          val ltime = time.toLong 
+          if (start.forall(_ <= ltime) && end.forall(_ > ltime)) 
+            series + Tuple2(granularity.period(new DateTime(ltime)), count.deserialize[CountType])
+          else series
       }
+
+      case x => error("Unexpected serialization format for time series count data: " + renderNormalized(x))
+    }
+  }
+
+  private def internalSearchSeries[P <: Predicate: Decomposer](col: MongoCollection, token: Token, path: Path, granularity: Periodicity, observation: Observation[P],
+                                                               start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
+    val filterBuilder = timeSeriesKeyFilter(token, path, observation.size, _: Period, granularity, observation)
+
+    Future {
+      intervalFilters(granularity, start, end, filterBuilder).map {
+        filter => database(selectOne(".counts").from(col).where(filter)) 
+      }: _*
+    } map {
+      _.flatten.foldLeft(TimeSeries.empty[CountType]) { 
+        (cur, jv) =>  cur + deserializeTimeSeries(jv, granularity, start, end) 
+      } 
     }
   }
 
@@ -578,11 +459,139 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   private def forVariable(variable: Variable): MongoFilter = {
      ".variable" === variable.serialize
   }
+
+  /*********************
+   * UPDATE GENERATION *
+   *********************/
+
+  /** Creates a bunch of patches to keep track of parent/child path relationships.
+   * E.g. if you send "/foo/bar/baz", it will keep track of the following:
+   *
+   * "/foo" has child "bar"
+   * "/foo/bar" has child "baz"
+   */
+  private def addPathChildrenOfPath(token: Token, path: Path): MongoPatches = {
+    val patches = path.parentChildRelations.foldLeft(MongoPatches.empty) { 
+      case (patches, (parent, child)) =>
+        patches + addChildOfPath(forTokenAndPath(token, parent), child.elements.last + "/")
+    }
+
+    patches
+  }
+
+  /** Pushes the specified name onto a ".values" member of a document. This
+   * function is used to keep track of the layout of the virtual file system.
+   */
+  private def addChildOfPath(filter: MongoFilter, child: String): (MongoFilter, MongoUpdate) = {
+    val childField = MongoEscaper.encode(renderNormalized(child.serialize))
+
+    val valuesUpdate = (".values." + childField) inc 1
+
+    (filter -> valuesUpdate)
+  }
+
+  /** Creates patches to record variable observations.
+   */
+  private def updateValues[P <: Predicate : Decomposer, T](filter: MongoFilter, report: Report[P, T]): MongoPatches = {
+    report.observationCounts.foldLeft(MongoPatches.empty) { 
+      case (patches, (observation, _)) => observation.foldLeft(patches) {
+        case (patches, (variable, predicate)) =>
+
+          val filterVariable = filter & forVariable(variable)
+          val predicateField = MongoEscaper.encode(renderNormalized(predicate.serialize))
+
+          val valuesUpdate = (JPath(".values") \ JPathField(predicateField)) inc 1
+
+          patches + (filterVariable -> valuesUpdate)
+      }
+    }
+  }
+
+  private def timeSeriesKeyFilter[P <: Predicate: Decomposer](token: Token, path: Path, order: Int, period: Period, granularity: Periodicity, observation: Observation[P]) = {
+    def sha1(bytes : Array[Byte]) : String = {
+      val hash = java.security.MessageDigest.getInstance("SHA-1")
+      hash.reset()
+      hash.update(bytes)
+      hash.digest().map(0xFF & _).map { "%02x".format(_) }.foldLeft(""){_ + _}
+    }
+
+    val orderPeriodFilter = forTokenAndPath(token, path) & 
+                            (".order"  === order.serialize) &
+                            (".period" === period.serialize) &
+                            (".granularity" === granularity.serialize) 
+
+    val filterWhereClause = orderPeriodFilter.whereVariablesEqual(observation)
+
+    JPath(".updateKey") === sha1(renderNormalized(filterWhereClause.filter).toString.getBytes)
+  }
+
+
+  private def updateTimeSeries[P <: Predicate : Decomposer](token: Token, path: Path, report: Report[P, TimeSeriesType]): MongoPatches = {
+
+    val countUpdate = timeSeriesUpdater[CountType]
+    val up = MongoUpdateBuilder(_)
+
+    def observationUpdate[P <: Predicate : Decomposer](observation: Observation[P]): MongoUpdate = {
+      observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoUpdate](MongoUpdateNothing) {
+        case (update, ((variable, predicate), index)) =>
+          update & 
+          (up(".where.variable" + index)  set variable.serialize) &
+          (up(".where.predicate" + index) set predicate.serialize)
+      }
+    }
+
+    val baseUpdate = (up(".accountTokenId") set token.accountTokenId.serialize) &
+                     (up(".path") set path.serialize)
+
+    report.groupByOrder.view.foldLeft(MongoPatches.empty) { 
+      case (patches, (order, report)) => report.partition(PeriodicityBatches).foldLeft(patches) { 
+        case (patches, (BatchKey(period, granularity, observation), timeSeries)) => 
+          
+          val orderPeriodUpdate = baseUpdate & 
+                                  (up(".order") set order.serialize) &
+                                  (up(".period") set period.serialize)  & 
+                                  (up(".granularity") set granularity.serialize)
+
+          val updateKey = timeSeriesKeyFilter(token, path, order, period, granularity, observation)
+
+          patches + (updateKey -> (orderPeriodUpdate & 
+                                   observationUpdate(observation) & 
+                                   countUpdate(".counts", timeSeries)))
+      }
+    }
+  }
+
+  private def updateCount[P <: Predicate](filter: MongoFilter, report: Report[P, CountType])
+    (implicit cUpdater: (JPath, CountType) => MongoUpdate, pDecomposer: Decomposer[P]): MongoPatches = {
+    report.groupByOrder.foldLeft(MongoPatches.empty) { (patches, tuple) =>
+      val (order, report) = tuple
+
+      val filterOrder = (filter & {
+        ".order"  === order.serialize
+      })
+
+      report.observationCounts.foldLeft(patches) {
+        case (patches, (observation, count)) =>
+          val filterWhereClause = filterOrder.whereVariablesEqual(observation)
+          val countUpdate = cUpdater(".count", count)
+
+          patches + (filterWhereClause -> countUpdate)
+      }
+    }
+  }
+
+  def stop(): Future[Unit] =  for {
+    _ <- varValueSeriesS.flushAll
+    _ <- varSeriesS.flushAll
+    _ <- varChildS.flushAll
+    _ <- varValueS.flushAll
+    _ <- pathChildS.flushAll
+  } yield ()
 }
 
 object AggregationEngine extends FutureDeliveryStrategySequential {
   import Periodicity._
-  val periodicityBatches: Periodicity => Periodicity = Map(
+  val PeriodicityBatches: Periodicity => Periodicity = Map(
     Second -> Day,
     Minute -> Month,
     Hour -> Year,
@@ -593,57 +602,24 @@ object AggregationEngine extends FutureDeliveryStrategySequential {
     Eternity -> Eternity
   )
 
-
   private val CollectionIndices = Map(
     "variable_series" -> Map(
-      "value_query" -> List(
-        "path",
-        "accountTokenId",
-        "period",
-        "order",
-        "where.variable0",
-        "where.variable1",
-        "where.variable2",
-        "where.variable3",
-        "where.variable4",
-        "where.variable5",
-        "where.variable6",
-        "where.variable7",
-        "where.variable8",
-        "where.variable9",
-        "where.predicate0",
-        "where.predicate1",
-        "where.predicate2",
-        "where.predicate3",
-        "where.predicate4",
-        "where.predicate5",
-        "where.predicate6",
-        "where.predicate7",
-        "where.predicate8",
-        "where.predicate9"
-      )
+      "val_series_query" -> ("path" :: "accountTokenId" :: "order" :: "period" ::
+                            ((0 to 9).flatMap(i => List("where.variable" + i, "where.predicate" + i)).toList))
     ),
-    "variable_value_series" -> Map("updateKey" -> List("updateKey")),
-    // TODO: Create a variable_value_series index for querying
+    "variable_value_series" -> Map(
+      "updateKey" -> List("updateKey"),
+      "var_val_series_query" -> ("accountTokenId" :: "granularity" :: "order" :: "path" :: "period" ::  
+                                ((0 to 9).flatMap(i => List("where.variable" + i, "where.predicate" + i)).toList))
+    ),
     "variable_values" -> Map(
-      "variable_query" -> List(
-        "path",
-        "accountTokenId",
-        "variable"
-      )
+      "variable_query" -> List("path", "accountTokenId", "variable")
     ),
     "variable_children" -> Map(
-      "variable_query" -> List(
-        "path",
-        "accountTokenId",
-        "variable"
-      )
+      "variable_query" -> List("path", "accountTokenId", "variable")
     ),
     "path_children" -> Map(
-      "path_query" -> List(
-        "path",
-        "accountTokenId"
-      )
+      "path_query" -> List("path", "accountTokenId")
     )
   )
 

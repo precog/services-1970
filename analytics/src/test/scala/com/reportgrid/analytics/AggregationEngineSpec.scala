@@ -94,7 +94,8 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   val config = new Config()
   config.load(mongoConfigFileData)
 
-  val mongo = new RealMongo(config.configMap("mongo")) // MockMongo()
+  val mongo = new RealMongo(config.configMap("mongo")) 
+  //val mongo = new MockMongo()
   val database = mongo.database("gluecon")
   
   val engine = get(AggregationEngine(config, Logger.get, database))
@@ -128,11 +129,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     "retrieve all values of arrays" in {
       val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
         case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-          MapMonoid[(String, JPath), Set[JValue]].append(map, 
-            (obj.children.collect {
-              case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet)
-            }).toMap
-          )
+          map <+> ((obj.children.collect { case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet) }).toMap)
 
         case (map, _) => map
       }

@@ -45,6 +45,8 @@ case class Period private (periodicity: Periodicity, start: DateTime, end: DateT
 }
 
 object Period {
+  val Eternity = Periodicity.Eternity.period(Periodicity.Zero)
+
   /** Constructs a period from a periodicity and any time occurring within the
    * period.
    */
