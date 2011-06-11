@@ -2,7 +2,7 @@ package com.reportgrid.analytics
 
 import scala.collection.immutable.NumericRange
 
-import org.joda.time.{DateTime, DateTimeZone}
+import org.joda.time.{DateTime, DateTimeZone, Duration}
 
 /** A globally unique identifier for a particular period in time (second,
  * minute, hour, day, week, month, year, or eternity).
@@ -11,6 +11,10 @@ case class Period private (periodicity: Periodicity, start: DateTime, end: DateT
   /** Compares this id and another based first on periodicity, and second on index.
    */
   def compare(that: Period) = (this.periodicity.compare(that.periodicity) :: this.start.getMillis.compare(that.start.getMillis) :: Nil).dropWhile(_ == 0).headOption.getOrElse(0)
+
+  /** The size of the period.
+   */
+  def size: Duration = new Duration(start, end)
 
   def withPeriodicity(p: Periodicity): Period = Period(p, start)
 

@@ -22,16 +22,20 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
 
   /** The previous periodicity in the chain.
    */
-  def previous: Periodicity = (Periodicity.All.indexOf(this) - 1) match {
-    case index: Int if (index < 0) => Periodicity.Second
-    case index: Int => Periodicity.All(index)
+  def previous: Periodicity = previousOption.getOrElse(this)
+
+  def previousOption: Option[Periodicity] = (Periodicity.All.indexOf(this) - 1) match {
+    case index: Int if (index < 0) => None
+    case index: Int => Some(Periodicity.All(index))
   }
 
   /** The next periodicity in the chain.
    */
-  def next: Periodicity = (Periodicity.All.indexOf(this) + 1) match {
-    case index: Int if (index == Periodicity.All.length) => Periodicity.Eternity
-    case index: Int => Periodicity.All(index)
+  def next: Periodicity = nextOption.getOrElse(this)
+
+  def nextOption: Option[Periodicity] = (Periodicity.All.indexOf(this) + 1) match {
+    case index: Int if (index == Periodicity.All.length) => None
+    case index: Int => Some(Periodicity.All(index))
   }
 
   /** Returns a list of all periodicities from this one up to and including

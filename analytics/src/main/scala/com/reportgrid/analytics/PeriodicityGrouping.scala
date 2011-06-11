@@ -9,14 +9,13 @@ import org.joda.time.DateTime
 trait PeriodicityGrouping {
   val group: PartialFunction[Periodicity, Periodicity]
 
-/*
   def expand(start: DateTime, end: DateTime): List[Period] = {
-    def span(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = periodicity.period(start) to (periodicity.period(end))
+    def span(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = (periodicity.period(start) to (periodicity.period(end))).toList
 
-    def finer(periodicity: Periodicity): Option[Periodicity] = periodicity.previous.filter(group.isDefinedAt)
+    def finer(periodicity: Periodicity): Option[Periodicity] = periodicity.previousOption.filter(group.isDefinedAt)
 
     def expand0(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = {
-      def expand0Finer(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = {
+      def expandFiner(start: DateTime, end: DateTime, periodicity: Periodicity): List[Period] = {
         finer(periodicity) match {
           case Some(periodicity) => expand0(start, end, periodicity)
 
@@ -41,13 +40,12 @@ trait PeriodicityGrouping {
           val substart2 = end
           val subend2   = periodEnd.end
 
-          expand0Finer(substart1, subend1) ++ periodMiddle ++ expand0Finer(substart2, subend2)
+          expandFiner(substart1, subend1, periodicity) ++ periodMiddle ++ expandFiner(substart2, subend2, periodicity)
       }
     }
 
     expand0(start, end, Periodicity.Year)
   }
-  */
 }
 
 object PeriodicityGrouping {
