@@ -19,21 +19,23 @@ object ServicesBuild extends Build {
 
   override def projectDefinitions(base: File) = {
     val common = tryLocalGit(base, 
-      Project("common", file("common")),
+      Project("common", file("common")) settings(
+        resolvers ++= Seq("Scala-Tools Maven2 Snapshots Repository" at "http://scala-tools.org/repo-snapshots")
+      ),
       file("../blueeyes"),
       uri("https://github.com/jdegoes/blueeyes")
     )
 
-    val analyticsSettings = Seq(
+    val analyticsSettings = Seq( 
+      resolvers ++= Seq("Scala-Tools Maven2 Snapshots Repository" at "http://scala-tools.org/repo-snapshots"),
       libraryDependencies ++= Seq(
-        //"org.scalaz"              %% "scalaz-core" % "6.0.1-SNAPSHOT"  % "test",
+        "org.scalaz"              %% "scalaz-core" % "6.0.1-SNAPSHOT",
         "org.scala-tools.testing" %% "specs"       % "1.6.8"  % "test",
         "org.scala-tools.testing" %% "scalacheck"  % "1.8"    % "test"),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
     )
 
     val analytics = Project("analytics", file("analytics"), settings = defaultSettings ++ analyticsSettings ++ oneJarSettings) dependsOn(common)
-
 
     val benchmarkSettings = Seq(
       libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.8",
@@ -46,8 +48,7 @@ object ServicesBuild extends Build {
       "com.reportgrid" % "client-libraries" % "0.0.2"
     )
 
-    val services = Project("services", file(".")) aggregate (common, analytics, benchmark)
-
+    val services = Project("services", file(".")) aggregate (common, analytics, benchmark) 
     common :: analytics :: benchmark :: services :: Nil
   }
 }
