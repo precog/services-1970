@@ -4,6 +4,7 @@ lib_managed
 src_managed
 target
 *.iml
+project/boot
 project-0.7.x/boot
 *.swp
 build.xml
