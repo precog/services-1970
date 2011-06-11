@@ -26,7 +26,7 @@ object ServicesBuild extends Build {
 
     val analyticsSettings = Seq(
       libraryDependencies ++= Seq(
-        "org.scalaz"              %% "scalaz-core" % "6.0.1-SNAPSHOT"  % "test",
+        //"org.scalaz"              %% "scalaz-core" % "6.0.1-SNAPSHOT"  % "test",
         "org.scala-tools.testing" %% "specs"       % "1.6.8"  % "test",
         "org.scala-tools.testing" %% "scalacheck"  % "1.8"    % "test"),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
