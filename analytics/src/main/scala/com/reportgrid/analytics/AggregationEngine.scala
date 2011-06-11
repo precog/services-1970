@@ -30,7 +30,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   val EarliestTime = new DateTime(0,             DateTimeZone.UTC)
   val LatestTime   = new DateTime(Long.MaxValue, DateTimeZone.UTC)
 
-
   type CountType          = Long
   type TimeSeriesType     = TimeSeries[CountType]
 
@@ -216,8 +215,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
       case Some(parent) =>
         val lastNode = variable.name.nodes.last
-
-        internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), start, end)
+        internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), start, end) 
     }
   }
 
@@ -225,33 +223,42 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
    * an event.
    */
   def getVariableCount(token: Token, path: Path, variable: Variable): Future[CountType] = {
+    // TODO: Fix this
     getVariableSeries(token, path, variable, Periodicity.Eternity).map(_.total(Periodicity.Eternity))
   }
 
-  /** Retrieves a time series for the specified observed value of a variable.
+  /** Retrieves a count for the specified observed value of a variable
+   *  over the given time period.
    */
-  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
+  def getValueCount(token: Token, path: Path, variable: Variable, value: JValue,
+                    start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
+    searchCount(token, path, Set(variable -> HasValue(value)), start, end)
+  }
+
+  /** Retrieves a time series for the specified observed value of a variable
+   *  over the given time period.
+   */
+  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, 
+                     periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
     searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, start, end)
   }
 
-  /** Retrieves a count for the specified observed value of a variable.
-   */
-  def getValueCount(token: Token, path: Path, variable: Variable, value: JValue): Future[Long] = {
-    getValueSeries(token, path, variable, value, Periodicity.Eternity).map(_.total(Periodicity.Eternity))
-  }
 
-  /** Searches time series to locate observations matching the specified criteria.
-   */
-  def searchSeries(token: Token, path: Path, observation: Observation[HasValue], periodicity: Periodicity, 
-    start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
-    internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, start, end)
-  }
-
-  /** Searches counts to locate observations matching the specified criteria.
+  /** Retrieves a count of observations matching the specified set of variables and values
+   *  over the given time period
    */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
-    start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
-    searchSeries(token, path, observation, Periodicity.Eternity,  start, end).map(_.total(Periodicity.Eternity))
+                  start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
+    // TODO: Fix this
+    searchSeries(token, path, observation, Periodicity.Eternity, start, end).map(_.total(Periodicity.Eternity))
+  }
+
+  /** Retrieves a time series of counts of observations matching the specified set of variables and values
+   *  over the given time period
+   */
+  def searchSeries(token: Token, path: Path, observation: Observation[HasValue], 
+                   periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
+    internalSearchSeries(varValueSeriesC, token, path, periodicity, observation, start, end)
   }
 
   private implicit def filterWhereObserved(filter: MongoFilter) = FilterWhereObserved(filter)
@@ -402,22 +409,28 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         else error("Query period too large; too many results to return.")
 
       case (ostart, oend) => List(
-        ostart.orElse(oend).orElse(if (granularity == Periodicity.Eternity) Some(Period.Eternity) else None).map(filterBuilder) getOrElse {
-          error("For queries with granularity other than eternity, start and end must be specified.")
-        }
+        ostart.orElse(oend).
+        orElse(if (granularity == Periodicity.Eternity) Some(Period.Eternity) else None).
+        map(filterBuilder).
+        getOrElse(error("For queries with granularity other than eternity, start and end must be specified."))
       )
     }
   }
 
   private def deserializeTimeSeries(jv: JValue, granularity: Periodicity, start: Option[DateTime], end: Option[DateTime]): TimeSeriesType = {
     (jv \ "counts") match {
-      case JObject(fields) => fields.foldLeft(TimeSeries.empty[CountType]) {
-        case (series, JField(time, count)) => 
-          val ltime = time.toLong 
-          if (start.forall(_ <= ltime) && end.forall(_ > ltime)) 
-            series + Tuple2(granularity.period(new DateTime(ltime)), count.deserialize[CountType])
-          else series
-      }
+      case JObject(fields) => 
+        val (series, min, max) = fields.foldLeft((TimeSeries.empty[CountType], Long.MaxValue, 0l)) {
+          case ((series, min, max), JField(time, count)) => 
+            val ltime = time.toLong 
+            if (start.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) 
+              (series + Tuple2(granularity.period(new DateTime(ltime)), count.deserialize[CountType]),
+               min.min(ltime), max.max(ltime))
+            else (series, min, max)
+        }
+
+        println("Deserialized time series from " + fields.size + " fields; min/max = " + min + "/" + max)
+        series
 
       case x => error("Unexpected serialization format for time series count data: " + renderNormalized(x))
     }
@@ -529,7 +542,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
 
   private def updateTimeSeries[P <: Predicate : Decomposer](token: Token, path: Path, report: Report[P, TimeSeriesType]): MongoPatches = {
-
     val countUpdate = timeSeriesUpdater[CountType]
     val up = MongoUpdateBuilder(_)
 

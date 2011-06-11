@@ -74,7 +74,7 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
    */
   def + (that: TimeSeries[T]): TimeSeries[T] = TimeSeries(this.series <+> that.series)
 
-  def + (entry: (Period, T)): TimeSeries[T] = TimeSeries(this.series <+> Map(entry))
+  def + (entry: (Period, T)): TimeSeries[T]  = TimeSeries(this.series <+> Map(entry))
 
   /** Returns total.
    */

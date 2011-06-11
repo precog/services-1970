@@ -110,13 +110,11 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       obj.flattenWithPath.foldLeft(map) {
         case (map, (path, value)) =>
           val key = (eventName, path, value)
-          val oldCount = map.get(key).getOrElse(0)
-
-          map + (key -> (oldCount + 1))
+          map + (key -> (map.getOrElse(key, 0) + 1))
       }
   }
 
-  def slice(l: List[Event]) = {
+  def timeSlice(l: List[Event]) = {
     val sortedEvents = l.sortBy(_.timestamp)
     val sliceLength = sortedEvents.size / 2
     val (slice, rest) = sortedEvents.drop(sliceLength / 2).splitAt(sliceLength)
@@ -132,6 +130,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "count events" in {
+      println("count events")
       def countEvents(eventName: String) = sampleEvents.count {
         case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
         case _ => false
@@ -148,6 +147,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve values" in {
+      println("retrieve values")
       val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
         case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
           obj.flattenWithPath.foldLeft(map) {
@@ -170,6 +170,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve all values of arrays" in {
+      println("retrieve all values of arrays")
       val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
         case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
           map <+> ((obj.children.collect { case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet) }).toMap)
@@ -186,6 +187,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve the top results of a histogram" in {
+      println("retrieve the top results of a histogram")
       val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
           val key = obj(".retweet")
@@ -200,10 +202,12 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve totals" in {
+      println("retrieve totals")
       val expectedTotals = valueCounts(sampleEvents)
 
       expectedTotals.foreach {
-        case ((eventName, path, value), count) =>
+        case (subset @ (eventName, path, value), count) =>
+          println("testing " + subset)
           val variable = Variable(JPath(eventName) \ path) 
 
           engine.getValueCount(Token.Test, "/gluecon", variable, value) must whenDelivered {
@@ -213,8 +217,9 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve a time series for occurrences of a variable" in {
-      val (events, minDate, maxDate) = slice(sampleEvents)
+      val (events, minDate, maxDate) = timeSlice(sampleEvents)
 
+      println("Variable occurrences in " + minDate.getMillis + "-" + maxDate.getMillis)
       val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
         case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
           obj.flattenWithPath.foldLeft(map) {
@@ -225,10 +230,10 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
 
       expectedTotals.foreach {
-        case ((eventName, path), count) =>
-          val variable = Variable(JPath(eventName) \ path) 
+        case (subset @ (eventName, path), count) =>
+          println("testing " + subset)
           engine.getVariableSeries(
-            Token.Test, "/gluecon", variable, Minute, Some(minDate), Some(maxDate)
+            Token.Test, "/gluecon", Variable(JPath(eventName) \ path), Minute, Some(minDate), Some(maxDate)
           ) map (_.total(Minute)) must whenDelivered {
             beEqualTo(count.toLong)
           }
@@ -236,27 +241,28 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve a time series for occurrences of a value of a variable" in {      
-      val (events, minDate, maxDate) = slice(sampleEvents)
+      val (events, minDate, maxDate) = timeSlice(sampleEvents)
       val expectedTotals = valueCounts(events)
-      
+
+      println("Value occurrences in " + minDate.getMillis + "-" + maxDate.getMillis)
       expectedTotals.foreach {
-        case ((eventName, path, value), count) =>
-          val variable = Variable(JPath(eventName) \ path) 
+        case (subset @ (eventName, path, value), count) =>
+          println("testing " + subset)
           engine.getValueSeries(
-            Token.Test, "/gluecon", variable, value, Minute, Some(minDate), Some(maxDate)
+            Token.Test, "/gluecon", Variable(JPath(eventName) \ path), value, Minute, Some(minDate), Some(maxDate)
           ) map (_.total(Minute)) must whenDelivered {
             beEqualTo(count.toLong)
           }
       }
     }
 
-    "retrieve intersection results" in {
+    "count observations of a given value" in {
+      println("count observations of a given value")
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
-
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
         case (map, _) => map
@@ -270,7 +276,8 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
     }
 
-    "retrieve intersection results" in {      
+    "retrieve intersection counts" in {      
+      println("retrieve intersection counts")
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
