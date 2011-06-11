@@ -18,7 +18,7 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
    */
   def increment(time: DateTime, amount: Int = 1): DateTime
 
-  def period(time: DateTime): Period = Period(this, floor(time))
+  def period(time: DateTime): Period = Period(this, time)
 
   /** The previous periodicity in the chain.
    */
@@ -95,7 +95,7 @@ object Periodicity {
   }
 
   case object Month extends Periodicity {
-    def floor(time: DateTime) = Week.floor(time).withDayOfMonth(1)
+    def floor(time: DateTime) = Day.floor(time).withDayOfMonth(1)
 
     def increment(time: DateTime, amount: Int = 1) = time.plusMonths(amount)
   }

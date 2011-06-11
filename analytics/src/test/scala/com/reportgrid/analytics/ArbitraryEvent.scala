@@ -5,20 +5,15 @@ import blueeyes.json.xschema.DefaultSerialization._
 
 import org.joda.time.DateTime
 import org.scalacheck.{Gen, Arbitrary}
+import Gen._
 
-trait ArbitraryEvent {
+trait ArbitraryEvent extends ArbitraryTime {
   val Locations = for (i <- 0 to 10; v <- Gen.identifier.sample) yield v
   val Startups = for (i <- 0 to 50; v <- Gen.identifier.sample) yield v
   val TwitterClients = for (i <- 0 to 10; v <- Gen.identifier.sample) yield v  
   val EventTypes = List("tweeted", "funded")
 
-  val Now = new DateTime()
-
-  import Gen._
-
   val genGender = oneOf("male", "female")
-
-  val genTime = for (i <- choose(0, (1000 * 60 * 60 * 24))) yield Now.plusMillis(i)
 
   val genOtherStartups = for {
     i <- frequency((20, 0), (3, 1), (1, 2))
