@@ -14,6 +14,8 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
    */
   def floor(time: DateTime): DateTime
 
+  def ceil(time: DateTime): DateTime = increment(floor(time))
+
   /** Advances the date time by this periodicity.
    */
   def increment(time: DateTime, amount: Int = 1): DateTime

@@ -59,7 +59,7 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
       val minPeriod = periods.min
       val maxPeriod = periods.max
 
-      val filledSeries = (minPeriod to maxPeriod).foldLeft(series) { (series, period) =>
+      val filledSeries = (minPeriod to maxPeriod.start).foldLeft(series) { (series, period) =>
         val count = series.get(period)
 
         if (!count.isEmpty) series

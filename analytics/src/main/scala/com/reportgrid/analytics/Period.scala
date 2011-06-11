@@ -16,35 +16,27 @@ case class Period private (periodicity: Periodicity, start: DateTime, end: DateT
    */
   def size: Duration = new Duration(start, end)
 
+  def contains(time: DateTime): Boolean = time.getMillis >= start.getMillis && time.getMillis < end.getMillis
+
   def withPeriodicity(p: Periodicity): Period = Period(p, start)
 
-  def to(that: Period): Stream[Period] = {
+  /** The next period of this periodicity.
+    */
+  def next: Period = Period(periodicity, periodicity.increment(start))
+
+  def to(that: DateTime): Stream[Period] = {
     import Stream.{cons, empty}
 
-    ((that: Period) => {
-      val c = this.start.getMillis - that.start.getMillis
-
-      if (c > 0) empty
-      else if (c == 0) cons(this, empty)
-      else {
-        val next = Period(periodicity, periodicity.increment(start), periodicity.increment(end))
-
-        cons(next, next.to(that))
-      }
-    })(that.withPeriodicity(periodicity))
+    
+    if (this.start.getMillis > that.getMillis) empty
+    else cons(this, next.to(that))
   }
 
-  def until(that: Period): Stream[Period] = {
-    import Stream.{cons, empty}
+  def until(that: DateTime): Stream[Period] = {
+    val s = to(that)
 
-    val c = this.start.getMillis - that.start.getMillis
-
-    if (c >= 0) empty
-    else {
-      val next = Period(periodicity, periodicity.increment(start), periodicity.increment(end))
-
-      cons(next, next.to(that))
-    }
+    if (s.headOption.isEmpty) Stream.empty
+    else s.init
   }
 }
 
