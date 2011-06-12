@@ -103,7 +103,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(1000).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(1000).milliseconds)
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
     case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
@@ -117,16 +117,16 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   def timeSlice(l: List[Event]) = {
     val sortedEvents = l.sortBy(_.timestamp)
     val sliceLength = sortedEvents.size / 2
-    val (slice, rest) = sortedEvents.drop(sliceLength / 2).splitAt(sliceLength)
-    (slice, slice.head.timestamp, rest.head.timestamp)
+    val startTime = sortedEvents.drop(sliceLength / 2).head.timestamp
+    val endTime = sortedEvents.drop(sliceLength + (sliceLength / 2)).head.timestamp 
+    (sortedEvents.filter(t => t.timestamp >= startTime && t.timestamp < endTime), startTime, endTime)
   }
 
   "Aggregation engine" should {
     shareVariables()
-    val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
 
-    for (event <- sampleEvents) {
-      engine.aggregate(Token.Test, "/gluecon", event.timestamp, event.data, 1)
+    val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get ->- {
+      _.foreach(event => engine.aggregate(Token.Test, "/gluecon", event.timestamp, event.data, 1))
     }
 
     "count events" in {

@@ -408,29 +408,26 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         else if (start.end == end.start) (filterBuilder(start) :: filterBuilder(end) :: Nil)
         else error("Query period too large; too many results to return.")
 
-      case (ostart, oend) => List(
-        ostart.orElse(oend).
-        orElse(if (granularity == Periodicity.Eternity) Some(Period.Eternity) else None).
-        map(filterBuilder).
-        getOrElse(error("For queries with granularity other than eternity, start and end must be specified."))
-      )
+      case (ostart, oend) => 
+        List(
+          ostart.orElse(oend).
+          orElse(if (granularity == Periodicity.Eternity) Some(Period.Eternity) else None).
+          map(filterBuilder).
+          getOrElse(error("For queries with granularity other than eternity, start and end must be specified."))
+        )
     }
   }
 
   private def deserializeTimeSeries(jv: JValue, granularity: Periodicity, start: Option[DateTime], end: Option[DateTime]): TimeSeriesType = {
     (jv \ "counts") match {
       case JObject(fields) => 
-        val (series, min, max) = fields.foldLeft((TimeSeries.empty[CountType], Long.MaxValue, 0l)) {
-          case ((series, min, max), JField(time, count)) => 
+        fields.foldLeft(TimeSeries.empty[CountType]) {
+          case (series, JField(time, count)) => 
             val ltime = time.toLong 
             if (start.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) 
-              (series + Tuple2(granularity.period(new DateTime(ltime)), count.deserialize[CountType]),
-               min.min(ltime), max.max(ltime))
-            else (series, min, max)
+               series + Tuple2(granularity.period(new DateTime(ltime)), count.deserialize[CountType])
+            else series
         }
-
-        println("Deserialized time series from " + fields.size + " fields; min/max = " + min + "/" + max)
-        series
 
       case x => error("Unexpected serialization format for time series count data: " + renderNormalized(x))
     }
