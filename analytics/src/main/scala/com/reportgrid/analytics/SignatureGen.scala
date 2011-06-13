@@ -20,17 +20,20 @@ trait SignatureGens {
 
   def genSignature[T](t: T)(implicit f: SignatureGen[T]): Array[Byte] = f(t)
 
-  implicit def genSignatureTuple2[A: SignatureGen, B: SignatureGen] = new Tuple2SignatureGen[A, B]
-  class Tuple2SignatureGen[A: SignatureGen, B: SignatureGen] extends SignatureGen[(A, B)] {
-    override def apply(v: (A, B)): Array[Byte] = genSignature(v._1) ++ genSignature(v._2)
+  implicit object StringSignatureGen extends SignatureGen[String] {
+    val TypeSig = "String".getBytes
+    override def apply(v: String) = TypeSig ++ v.getBytes
   }
 
-  implicit object StringSignatureGen extends SignatureGen[String] {
-    override def apply(v: String) = v.getBytes
+  implicit def genSignatureTuple2[A: SignatureGen, B: SignatureGen] = new Tuple2SignatureGen[A, B]
+  class Tuple2SignatureGen[A: SignatureGen, B: SignatureGen] extends SignatureGen[(A, B)] {
+    val TypeSig = genSignature("Tuple2") 
+    override def apply(v: (A, B)): Array[Byte] = TypeSig ++ genSignature(v._1) ++ genSignature(v._2)
   }
 
   implicit object PeriodicitySignatureGen extends SignatureGen[Periodicity] {
-    override def apply(v: Periodicity) = Array(v match {
+    val TypeSig = genSignature("Periodicity") 
+    override def apply(v: Periodicity) = TypeSig ++ Array(v match {
       case Second   => 0: Byte
       case Minute   => 1: Byte
       case Hour     => 2: Byte
@@ -47,44 +50,54 @@ trait SignatureGens {
   }
 
   implicit object LongSignatureGen extends SignatureGen[Long] {
-    override def apply(v: Long) = toBytes(8, (_: DataOutputStream).writeLong(v))
+    val TypeSig = genSignature("Long") 
+    override def apply(v: Long) = TypeSig ++ toBytes(8, (_: DataOutputStream).writeLong(v))
   }
 
   implicit object IntSignatureGen extends SignatureGen[Int] {
-    override def apply(v: Int) = toBytes(4, (_: DataOutputStream).writeInt(v))
+    val TypeSig = genSignature("Int") 
+    override def apply(v: Int) = TypeSig ++ toBytes(4, (_: DataOutputStream).writeInt(v))
   }
 
   implicit object DoubleSignatureGen extends SignatureGen[Double] {
-    override def apply(v: Double) = toBytes(8, (_: DataOutputStream).writeDouble(v))
+    val TypeSig = genSignature("Double") 
+    override def apply(v: Double) = TypeSig ++ toBytes(8, (_: DataOutputStream).writeDouble(v))
   }
 
   implicit object BigIntSignatureGen extends SignatureGen[BigInt] {
-    override def apply(v: BigInt) = v.toString.getBytes
+    val TypeSig = genSignature("BigInt") 
+    override def apply(v: BigInt) = TypeSig ++ v.toString.getBytes
   }
 
   implicit object BooleanSignatureGen extends SignatureGen[Boolean] {
-    override def apply(v: Boolean) = toBytes(4, (_: DataOutputStream).writeBoolean(v))
+    val TypeSig = genSignature("Boolean") 
+    override def apply(v: Boolean) = TypeSig ++ toBytes(4, (_: DataOutputStream).writeBoolean(v))
   }
 
   implicit object PathSignatureGen extends SignatureGen[Path] {
-    override def apply(v: Path) = genSignature(v.path)
+    val TypeSig = genSignature("Path") 
+    override def apply(v: Path) = TypeSig ++ genSignature(v.path)
   }
 
   implicit object DateTimeSignatureGen extends SignatureGen[DateTime] {
-    override def apply(v: DateTime) = genSignature(v.getMillis)
+    val TypeSig = genSignature("DateTime") 
+    override def apply(v: DateTime) = TypeSig ++ genSignature(v.getMillis)
   }
 
   implicit object PeriodSignatureGen extends SignatureGen[Period] {
-    override def apply(p: Period) = genSignature(p.periodicity) ++ genSignature(p.start)
+    val TypeSig = genSignature("Period") 
+    override def apply(p: Period) = TypeSig ++ genSignature(p.periodicity) ++ genSignature(p.start)
   }
 
   implicit object TokenSignatureGen extends SignatureGen[Token] {
-    override def apply(v: Token) = genSignature(v.accountTokenId)
+    val TypeSig = genSignature("Token") 
+    override def apply(v: Token) = TypeSig ++ genSignature(v.accountTokenId)
   }
 
   implicit def genSignatureSet[T](implicit evidence: SignatureGen[T]) = new SetSignatureGen[T]
   class SetSignatureGen[T](implicit ts: SignatureGen[T]) extends SignatureGen[Set[T]] {
-    override def apply(v: Set[T]) = if (v.isEmpty) {
+    val TypeSig = genSignature("Set") 
+    override def apply(v: Set[T]) = TypeSig ++ (if (v.isEmpty) {
       Array[Byte]()
     } else {
       val bytes = v.map(ts).toSeq
@@ -101,50 +114,66 @@ trait SignatureGens {
       }
       
       target
-    }
+    })
   }
 
   implicit def genSignatureSeq[T: SignatureGen, M[T] <: Seq[T]] = new SeqSignatureGen[T, M]
   class SeqSignatureGen[T: SignatureGen, M[T] <: Seq[T]] extends SignatureGen[M[T]] {
-    override def apply(v: M[T]) = v.view.map(implicitly[SignatureGen[T]]).flatten.toArray
+    val TypeSig = genSignature("Seq")
+    override def apply(v: M[T]) = TypeSig ++ (v.view.map(implicitly[SignatureGen[T]]).flatten)
   }
 
   implicit object JPathSignatureGen extends SignatureGen[JPath] {
-    override def apply(v: JPath) = genSignature(v.toString)
+    val TypeSig = genSignature("JPath")
+    override def apply(v: JPath) = TypeSig ++ genSignature(v.toString)
   }
 
   implicit object JPathNodeSignatureGen extends SignatureGen[JPathNode] {
-    override def apply(v: JPathNode) = genSignature(v.toString)
+    val TypeSig = genSignature("JPathNode")
+    override def apply(v: JPathNode) = TypeSig ++ genSignature(v.toString)
   }
 
   implicit object JValueSignatureGen extends SignatureGen[JValue] {
+    val JObjectTypeSig  = genSignature("JObject")
+    val JArrayTypeSig   = genSignature("JArray")
+    val JStringTypeSig  = genSignature("JString")
+    val JBoolTypeSig    = genSignature("JBool")
+    val JIntTypeSig     = genSignature("JInt")
+    val JDoubleTypeSig  = genSignature("JDouble")
+    val JNullTypeSig    = genSignature("JNull")
+    val JNothingTypeSig = genSignature("JNothing")
+
     override def apply(v: JValue) = v match {
-      case JObject(fields) => genSignatureSet(JFieldSignatureGen)(fields.toSet)
-      case JArray(elements) => genSignature(elements)
-      case JString(v) => genSignature(v)
-      case JBool(v) => genSignature(v)
-      case JInt(v) => genSignature(v)
-      case JDouble(v) => genSignature(v)
-      case JNull => Array(0: Byte)
-      case JNothing => Array(Byte.MaxValue)
+      case JObject(fields)  => JObjectTypeSig  ++ genSignatureSet(JFieldSignatureGen)(fields.toSet)
+      case JArray(elements) => JArrayTypeSig   ++ genSignature(elements)
+      case JString(v)       => JStringTypeSig  ++ genSignature(v)
+      case JBool(v)         => JBoolTypeSig    ++ genSignature(v)
+      case JInt(v)          => JIntTypeSig     ++ genSignature(v)
+      case JDouble(v)       => JDoubleTypeSig  ++ genSignature(v)
+      case JNull            => JNullTypeSig    ++ Array(0: Byte)
+      case JNothing         => JNothingTypeSig ++ Array(Byte.MaxValue)
       case _ => error("JField shouldn't be a JValue")
     }
   }
 
   implicit object JFieldSignatureGen extends SignatureGen[JField] {
-    override def apply(v: JField) = genSignature((v.name, v.value))
+    val TypeSig = genSignature("JField") 
+    override def apply(v: JField) = TypeSig ++ genSignature((v.name, v.value))
   }
 
   implicit object VariableSignatureGen extends SignatureGen[Variable] {
-    override def apply(v: Variable) = genSignature(v.name)
+    val TypeSig = genSignature("Variable") 
+    override def apply(v: Variable) = TypeSig ++ genSignature(v.name)
   }
 
   implicit object HasChildSignatureGen extends SignatureGen[HasChild] {
-    override def apply(v: HasChild) = genSignature(v.child)
+    val TypeSig = genSignature("HasChild") 
+    override def apply(v: HasChild) = TypeSig ++ genSignature(v.child)
   }
 
   implicit object HasValueSignatureGen extends SignatureGen[HasValue] {
-    override def apply(v: HasValue) = genSignature(v.value)
+    val TypeSig = genSignature("HasValue") 
+    override def apply(v: HasValue) = TypeSig ++ genSignature(v.value)
   }
 }
 

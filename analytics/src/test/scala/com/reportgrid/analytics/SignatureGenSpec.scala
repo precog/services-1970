@@ -20,6 +20,14 @@ class SignatureSpec extends Specification with ScalaCheck with ArbitraryJValue{
         
         prop must pass
       }
+
+      "mismatch on mismatched objects" in {
+        val prop = forAll((v1: JValue, v2: JValue) => (v1 != v2) ==> {
+          hashSignature(v1) != hashSignature(v2)
+        })
+
+        prop must pass
+      }
     }
   }
 }
