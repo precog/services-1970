@@ -1,5 +1,7 @@
 package com.reportgrid.analytics
 
+import Periodicity._
+
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonParser._
 import blueeyes.json.xschema._
@@ -13,6 +15,7 @@ import scalaz._
 import Scalaz._
 
 /** A time series stores an unlimited amount of time series data.
+ * TODO: Maybe this map should be specialized to a periodicity of a single type?
  */
 case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGroup[T]) {
   def flatten: List[T] = series.values.toList
@@ -86,27 +89,68 @@ case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGro
 object TimeSeries {
   def empty[T: AbelianGroup]: TimeSeries[T] = apply[T](Map.empty[Period, T])
 
-  def apply[T: AbelianGroup](time: DateTime, count: T) = Builder.Default(time, count)
+  def apply[T: AbelianGroup](time: DateTime, count: T) = TimeSeriesEncoding.default[T].encode(time, count)
 
-  def all[T: AbelianGroup](time: DateTime, count: T) = Builder.All(time, count)
+  def all[T: AbelianGroup](time: DateTime, count: T) = TimeSeriesEncoding.all[T].encode(time, count)
 
-  def eternity[T: AbelianGroup](time: DateTime, count: T) = Builder.Eternity(time, count)
+  def eternity[T: AbelianGroup](time: DateTime, count: T) = TimeSeriesEncoding.eternity[T].encode(time, count)
+}
 
-  case class Builder(periodicities: List[Periodicity]) {
-    /** Aggregates the specified measure across all periodicities to produce a time series */
-    def apply[T: AbelianGroup](time: DateTime, count: T): TimeSeries[T] = {
-      TimeSeries(periodicities.map(Period(_, time) -> count).toMap)
-    }
+object TimeSeriesEncoding {
+  val DefaultGrouping = Map[Periodicity, Periodicity](
+    Minute   -> Month,
+    Hour     -> Year,
+    Day      -> Year,
+    Week     -> Eternity,
+    Month    -> Eternity,
+    Year     -> Eternity,
+    Eternity -> Eternity
+  )
+
+  /** Returns an encoding for all periodicities from minute to eternity */
+  def default[T: AbelianGroup] = new TimeSeriesEncoding[T](DefaultGrouping)
+
+  /** Returns an aggregator for all periodicities from second to eternity */
+  def all[T: AbelianGroup] = new TimeSeriesEncoding[T](DefaultGrouping + (Second -> Day))
+
+  def eternity[T: AbelianGroup] = new TimeSeriesEncoding[T](Map(Eternity -> Eternity))
+}
+
+class TimeSeriesEncoding[T: AbelianGroup](val grouping: Map[Periodicity, Periodicity]) {
+  def encode(time: DateTime, count: T): TimeSeries[T] = {
+    TimeSeries(grouping.keys.map(Period(_, time) -> count).toMap)
   }
 
-  object Builder {
-    /** Returns an aggregator for all periodicities from minute to eternity */
-    lazy val Default = Builder(Periodicity.Default)
+  def expand(start: DateTime, end: DateTime): Stream[Period] = {
+    def expand0(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
+      import Stream._
 
-    /** Returns an aggregator for all periodicities from second to eternity */
-    lazy val All = Builder(Periodicity.All)
+      def expandFiner(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
+        periodicity.previousOption.filter(grouping.contains).
+        map(expand0(start, end, _)).
+        getOrElse {
+          val length = end.getMillis - start.getMillis
+          val period = periodicity.period(start)
 
-    /** Returns an aggregator for eternity */
-    lazy val Eternity = Builder(Periodicity.Eternity :: Nil)
+          if (length.toDouble / period.size.getMillis >= 0.5) period +: Empty else Empty
+        }
+      }
+
+      if (start.getMillis >= end.getMillis) Empty 
+      else {
+        val periods = periodicity.period(start) to end
+        val head = periods.head
+        val tail = periods.tail
+
+        if (periods.tail.isEmpty) expandFiner(start, end, periodicity)
+        else {
+          expandFiner(start, head.end, periodicity) ++ 
+          tail.init ++ 
+          expandFiner(tail.last.start, end, periodicity)
+        }
+      }
+    }
+
+    expand0(start, end, Periodicity.Year)
   }
 }

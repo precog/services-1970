@@ -39,6 +39,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   type ValueReport        = Report[HasValue, TimeSeriesType]
   val  ValueReportEmpty   = Report.empty[HasValue, TimeSeriesType]
 
+  val timeSeriesEncoding  = TimeSeriesEncoding.default[CountType]
+
   private def newMongoStage(prefix: String): (MongoStage, MongoCollection) = {
     val timeToIdle      = config.getLong(prefix + ".time_to_idle_millis").getOrElse(10000L)
     val timeToLive      = config.getLong(prefix + ".time_to_live_millis").getOrElse(10000L)
@@ -205,17 +207,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  /** Retrieves a count of how many times the specified variable appeared in
-   * an event.
-   */
+  /** Retrieves a count of how many times the specified variable appeared in a path */
   def getVariableCount(token: Token, path: Path, variable: Variable): Future[CountType] = {
     // TODO: Fix this
     getVariableSeries(token, path, variable, Periodicity.Eternity).map(_.total(Periodicity.Eternity))
   }
 
-  /** Retrieves a count of how many times the specified variable appeared in
-   * an event.
-   */
+  /** Retrieves a time series of counts of occurrences of the specified variable in a path */
   def getVariableSeries(token: Token, path: Path, variable: Variable, periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
     variable.parent match {
       case None =>
@@ -227,17 +225,16 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  /** Retrieves a count of observations matching the specified set of variables and values
-   *  over the given time period
-   */
+  /** Retrieves a count of the specified observed state over the given time period */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
                   start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
+    
     // TODO: Fix this
     searchSeries(token, path, observation, Periodicity.Eternity, start, end).map(_.total(Periodicity.Eternity))
   }
 
-  /** Retrieves a time series of counts of observations matching the specified set of variables and values
-   *  over the given time period
+  /** Retrieves a time series of counts of the specified observed state
+   *  over the given time period.
    */
   def searchSeries(token: Token, path: Path, observation: Observation[HasValue], 
                    periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
@@ -381,7 +378,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   }
 
   private def intervalFilters(granularity: Periodicity, start: Option[DateTime], end: Option[DateTime], filterBuilder: Period => MongoFilter): List[MongoFilter] = {
-    val batchPeriodicity = PeriodicityGrouping.Default.group(granularity)
+    val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
     val batchStartPeriod = start.map(batchPeriodicity.period)
     val batchEndPeriod =   end.map(batchPeriodicity.period)
 
@@ -538,7 +535,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
                      (up(".path") set path.serialize)
 
     report.groupByOrder.view.foldLeft(MongoPatches.empty) { 
-      case (patches, (order, report)) => report.partition(PeriodicityGrouping.Default.group).foldLeft(patches) { 
+      case (patches, (order, report)) => report.partition(timeSeriesEncoding.grouping).foldLeft(patches) { 
         case (patches, (BatchKey(period, granularity, observation), timeSeries)) => 
           
           val orderPeriodUpdate = baseUpdate :+ 

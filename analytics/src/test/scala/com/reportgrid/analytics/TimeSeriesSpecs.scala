@@ -11,9 +11,9 @@ import Arbitrary._
 
 import scalaz.Scalaz._
 
-class PeriodicityGroupingSpec extends Specification with ArbitraryTime with ScalaCheck {
-  "PeriodicityGrouping.expand" should {
-    import PeriodicityGrouping.Default.expand
+class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with ScalaCheck {
+  "TimeSeriesEncoding.expand" should {
+    val encoding = TimeSeriesEncoding.default[Long]
 
     "create periods whose total size is close to the duration between start and end" in {
       forAll { (time1: DateTime, time2: DateTime) =>
@@ -21,7 +21,7 @@ class PeriodicityGroupingSpec extends Specification with ArbitraryTime with Scal
 
         val expectedDuration = new Duration(start, end)
 
-        val actualDuration = expand(start, end).foldLeft(new Duration(0, 0)) {
+        val actualDuration = encoding.expand(start, end).foldLeft(new Duration(0, 0)) {
           case (totalSize, period) => totalSize.plus(period.size)
         }
 
