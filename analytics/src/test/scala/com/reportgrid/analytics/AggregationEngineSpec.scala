@@ -145,7 +145,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
           }
       }
     }
-
+ 
     "retrieve values" in {
       println("retrieve values")
       val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
@@ -210,7 +210,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
           println("testing " + subset)
           val variable = Variable(JPath(eventName) \ path) 
 
-          engine.getValueCount(Token.Test, "/gluecon", variable, value) must whenDelivered {
+          engine.searchCount(Token.Test, "/gluecon", Obs.ofValue(variable, value)) must whenDelivered {
             beEqualTo(count.toLong)
           }
       }
@@ -248,8 +248,9 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
           println("testing " + subset)
-          engine.getValueSeries(
-            Token.Test, "/gluecon", Variable(JPath(eventName) \ path), value, Minute, Some(minDate), Some(maxDate)
+          val observation = Obs.ofValue(Variable(JPath(eventName) \ path), value)
+          engine.searchSeries(
+            Token.Test, "/gluecon", observation, Minute, Some(minDate), Some(maxDate)
           ) map (_.total(Minute)) must whenDelivered {
             beEqualTo(count.toLong)
           }

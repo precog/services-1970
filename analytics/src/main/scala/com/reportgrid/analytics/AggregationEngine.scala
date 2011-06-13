@@ -208,6 +208,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   /** Retrieves a count of how many times the specified variable appeared in
    * an event.
    */
+  def getVariableCount(token: Token, path: Path, variable: Variable): Future[CountType] = {
+    // TODO: Fix this
+    getVariableSeries(token, path, variable, Periodicity.Eternity).map(_.total(Periodicity.Eternity))
+  }
+
+  /** Retrieves a count of how many times the specified variable appeared in
+   * an event.
+   */
   def getVariableSeries(token: Token, path: Path, variable: Variable, periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
     variable.parent match {
       case None =>
@@ -218,31 +226,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         internalSearchSeries(varSeriesC, token, path, periodicity, Set((parent, HasChild(lastNode))), start, end) 
     }
   }
-
-  /** Retrieves a count of how many times the specified variable appeared in
-   * an event.
-   */
-  def getVariableCount(token: Token, path: Path, variable: Variable): Future[CountType] = {
-    // TODO: Fix this
-    getVariableSeries(token, path, variable, Periodicity.Eternity).map(_.total(Periodicity.Eternity))
-  }
-
-  /** Retrieves a count for the specified observed value of a variable
-   *  over the given time period.
-   */
-  def getValueCount(token: Token, path: Path, variable: Variable, value: JValue,
-                    start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
-    searchCount(token, path, Set(variable -> HasValue(value)), start, end)
-  }
-
-  /** Retrieves a time series for the specified observed value of a variable
-   *  over the given time period.
-   */
-  def getValueSeries(token: Token, path: Path, variable: Variable, value: JValue, 
-                     periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
-    searchSeries(token, path, Set(variable -> HasValue(value)), periodicity, start, end)
-  }
-
 
   /** Retrieves a count of observations matching the specified set of variables and values
    *  over the given time period

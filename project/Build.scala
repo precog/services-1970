@@ -29,7 +29,7 @@ object ServicesBuild extends Build {
     val analyticsSettings = Seq( 
       resolvers ++= Seq("Scala-Tools Maven2 Snapshots Repository" at "http://scala-tools.org/repo-snapshots"),
       libraryDependencies ++= Seq(
-	"joda-time"                   % "joda-time"           % "1.6.2",
+        "joda-time"               % "joda-time"    % "1.6.2",
         "org.scalaz"              %% "scalaz-core" % "6.0.1",
         "org.scala-tools.testing" %% "specs"       % "1.6.8"  % "test",
         "org.scala-tools.testing" %% "scalacheck"  % "1.8"    % "test"),

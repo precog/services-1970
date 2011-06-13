@@ -346,10 +346,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           get { request: HttpRequest[JValue] =>
                             tokenOf(request).flatMap { token =>
                               val path     = fullPathOf(token, request)
-                              val variable = variableOf(request)
-                              val value    = valueOf(request)
-
-                              aggregationEngine.getValueCount(token, path, variable, value).map { count =>
+                              val observation = Obs.ofValue(variableOf(request), valueOf(request))
+                              aggregationEngine.searchCount(token, path, observation) map { count =>
                                 HttpResponse[JValue](content = Some(count.serialize))
                               }
                             }
@@ -373,18 +371,17 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             getRange { (ranges, unit) => (request: HttpRequest[JValue]) =>
                               tokenOf(request).flatMap { token =>
                                 val path        = fullPathOf(token, request)
-                                val variable    = variableOf(request)
                                 val periodicity = periodicityOf(request)
-                                val value       = valueOf(request)
+                                val observation = Obs.ofValue(variableOf(request), valueOf(request))
 
                                 unit.toLowerCase match {
                                   case "time" =>
                                     val (start, end) = ranges.head
 
-                                    val startTime = new DateTime(start, DateTimeZone.UTC)
-                                    val endTime   = new DateTime(end,   DateTimeZone.UTC)
+                                    val startTime = Some(new DateTime(start, DateTimeZone.UTC))
+                                    val endTime   = Some(new DateTime(end,   DateTimeZone.UTC))
 
-                                    aggregationEngine.getValueSeries(token, path, variable, value, periodicity, Some(startTime), Some(endTime)).map { series =>
+                                    aggregationEngine.searchSeries(token, path, observation, periodicity, startTime, endTime) map { series =>
                                       HttpResponse[JValue](content = Some(series.toJValue))
                                     }
 
@@ -395,11 +392,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             get { request: HttpRequest[JValue] =>
                               tokenOf(request).flatMap { token =>
                                 val path        = fullPathOf(token, request)
-                                val variable    = variableOf(request)
-                                val value       = valueOf(request)
+                                val observation = Obs.ofValue(variableOf(request), valueOf(request))
                                 val periodicity = periodicityOf(request)
 
-                                aggregationEngine.getValueSeries(token, path, variable, value, periodicity).map { series =>
+                                aggregationEngine.searchSeries(token, path, observation, periodicity).map { series =>
                                   HttpResponse[JValue](content = Some(series.toJValue))
                                 }
                               }

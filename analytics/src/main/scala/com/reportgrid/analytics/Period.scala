@@ -7,7 +7,7 @@ import org.joda.time.{DateTime, DateTimeZone, Duration}
 /** A globally unique identifier for a particular period in time (second,
  * minute, hour, day, week, month, year, or eternity).
  */
-case class Period private (periodicity: Periodicity, start: DateTime, end: DateTime) extends Ordered[Period] {
+class Period private (val periodicity: Periodicity, _start: DateTime) extends Ordered[Period] {
   /** Compares this id and another based first on periodicity, and second on index.
    */
   def compare(that: Period) = (this.periodicity.compare(that.periodicity) :: this.start.getMillis.compare(that.start.getMillis) :: Nil).dropWhile(_ == 0).headOption.getOrElse(0)
@@ -20,6 +20,10 @@ case class Period private (periodicity: Periodicity, start: DateTime, end: DateT
 
   def withPeriodicity(p: Periodicity): Period = Period(p, start)
 
+  def start = periodicity.floor(_start)
+
+  def end = periodicity.increment(start)
+
   /** The next period of this periodicity.
     */
   def next: Period = Period(periodicity, periodicity.increment(start))
@@ -27,7 +31,6 @@ case class Period private (periodicity: Periodicity, start: DateTime, end: DateT
   def to(that: DateTime): Stream[Period] = {
     import Stream.{cons, empty}
 
-    
     if (this.start.getMillis > that.getMillis) empty
     else cons(this, next.to(that))
   }
@@ -38,6 +41,15 @@ case class Period private (periodicity: Periodicity, start: DateTime, end: DateT
     if (s.headOption.isEmpty) Stream.empty
     else s.init
   }
+
+  override def equals(that: Any) = that match {
+    case that @ Period(`periodicity`, _) => this.start.getMillis == that.start.getMillis
+    case _ => false
+  }
+
+  override def hashCode: Int = periodicity.hashCode | start.getMillis.hashCode
+
+  override def toString = "Period(" + periodicity + "," + start + ")"
 }
 
 object Period {
@@ -49,6 +61,8 @@ object Period {
   def apply(periodicity: Periodicity, start: DateTime): Period = {
     val flooredStart = periodicity.floor(start)
 
-    new Period(periodicity, flooredStart, periodicity.increment(flooredStart))
+    new Period(periodicity, flooredStart)
   }
+
+  def unapply(p: Period): Option[(Periodicity, DateTime)] = Some((p.periodicity, p.start))
 }
