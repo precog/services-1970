@@ -14,8 +14,8 @@ object Sha1HashFunction extends HashFunction {
 }
 
 object Hashable {
-  def hashSignature[T](t: T)(implicit genSignature: SignatureGen[T], hashFunction: HashFunction): String = {
-    Hex.encodeHexString(hashFunction(genSignature(t)))
+  def hashSignature[T](t: T)(implicit sigGen: SignatureGen[T], hashFunction: HashFunction): String = {
+    Hex.encodeHexString(hashFunction(sigGen(t)))
   }
 }
 

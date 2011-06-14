@@ -11,93 +11,121 @@ import blueeyes.persistence.mongo._
 import org.joda.time.{DateTime, DateTimeZone}
 
 import com.reportgrid.util.MapUtil._
+import scala.annotation.tailrec
+import scala.collection.immutable.SortedMap
 import scalaz._
 import Scalaz._
 
+case class TimeSeriesSpan[T: AbelianGroup] private (series: SortedMap[Period, T]) {
+  def toTimeSeries(periodicity: Periodicity): TimeSeries[T] = error("todo")
+
+  def flatten = series.values
+
+  def total = series.values.asMA.sum
+}
+
+object TimeSeriesSpan {
+  def apply[T: AbelianGroup](entries: (Period, T)*) = {
+    val isValidSpan = entries.size <= 1 || {
+      val sortedPeriods = entries.view.map(_._1).sorted
+      sortedPeriods.zip(sortedPeriods.tail).foldLeft(true) { 
+        case (false, _)     => false
+        case (true, (a, b)) => a.end == b.start 
+      }
+    }
+
+    if (isValidSpan) new TimeSeriesSpan(SortedMap(entries: _*))
+    else error("The periods provided do not form a contiguous span")
+  }
+}
+
 /** A time series stores an unlimited amount of time series data.
- * TODO: Maybe this map should be specialized to a periodicity of a single type?
  */
-case class TimeSeries[T](series: Map[Period, T])(implicit aggregator: AbelianGroup[T]) {
-  def flatten: List[T] = series.values.toList
-
-  /** Groups the time series by period.
-   */
-  def groupByPeriod: Map[Period, TimeSeries[T]] = series.transform { 
-    (period, count) => TimeSeries[T](Map[Period, T](period -> count))
-  }
-
-  /** Groups the time series by periodicity.
-   */
-  def groupByPeriodicity: Map[Periodicity, TimeSeries[T]] = {
-    series.groupBy(_._1.periodicity).mapValues(TimeSeries(_))
-  }
-
-  /** Returns a "friendly" JSON rendering of the time series, sorted first by
-   * periodicity, and then by period start.
-   * {{{
-   *  {"minute":[[1301279340000,10],[1301279520000,10]]}
-   * }}}
-   */
-  def toJValue(implicit d: Decomposer[T]): JValue = JObject(groupByPeriodicity.toList.sortBy(_._1).map { 
-    case (periodicity, series) => JField(
-      periodicity.name, 
-      JArray(series.series.toList.sortWith(_._1 < _._1).map { 
-        case (period, count) => JArray(JInt(period.start.getMillis) :: count.serialize :: Nil)
-      })
-    )
-  })
-
+case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime, T])(implicit aggregator: AbelianGroup[T]) {
   /** Fill all gaps in the returned time series -- i.e. any period that does
    * not exist will be mapped to a count of 0. Note that this function may
    * behave strangely if the time series contains periods of a different
    * periodicity.
    */
   def fillGaps: TimeSeries[T] = {
-    if (series.size == 0) this
+    if (series.isEmpty) this
     else {
-      implicit val ordering = Ordering.ordered[Period]
+      import blueeyes.util._
+      val startTimes = series.keys
 
-      val periods = series.keys
-
-      val minPeriod = periods.min
-      val maxPeriod = periods.max
-
-      val filledSeries = (minPeriod to maxPeriod.start).foldLeft(series) { (series, period) =>
-        val count = series.get(period)
-
-        if (!count.isEmpty) series
-        else series + (period -> aggregator.zero)
-      }
-
-      TimeSeries(filledSeries)
+      TimeSeries(
+        periodicity,
+        (periodicity.period(startTimes.min) to startTimes.max).foldLeft(series) { (series, period) =>
+          if (series.contains(period.start)) series
+          else series + (period.start -> aggregator.zero)
+        }
+      )
     }
+  }
+
+  def aggregates = {
+    @tailrec def superAggregates(periodicity: Periodicity, acc: List[TimeSeries[T]]): List[TimeSeries[T]] = {
+      periodicity.nextOption match {
+        case Some(p) => superAggregates(p, this.withPeriodicity(p).get :: acc)
+        case None => acc
+      }
+    }
+
+    superAggregates(periodicity, List(this))
+  }
+
+  def withPeriodicity(newPeriodicity: Periodicity): Option[TimeSeries[T]] = {
+    if (newPeriodicity < periodicity) None
+    else if (newPeriodicity == periodicity) Some(this)
+    else Some(
+      TimeSeries(
+        newPeriodicity,
+        series.foldLeft(Map.empty[DateTime, T]) {
+          case (series, entry) => addToMap(newPeriodicity, series, entry)
+        }
+      )
+    )
   }
 
   /** Combines the data in this time series with the data in that time series.
    */
-  def + (that: TimeSeries[T]): TimeSeries[T] = TimeSeries(this.series <+> that.series)
+  def + (that: TimeSeries[T]): TimeSeries[T] = {
+    TimeSeries(periodicity, series <+> that.series)
+  }
 
-  def + (entry: (Period, T)): TimeSeries[T]  = TimeSeries(this.series <+> Map(entry))
+  def + (entry: (DateTime, T)): TimeSeries[T] = TimeSeries(periodicity, addToMap(periodicity, series, entry))
 
-  /** Returns total.
-   */
-  def total(p: Periodicity): T = groupByPeriodicity.getOrElse(p, TimeSeries.empty[T]).series.values.asMA.sum
+  def total: T = series.values.asMA.sum
 
-  def unary_- = TimeSeries(series.transform((k, v) => aggregator.inverse(v)))
+  def toJValue(implicit d: Decomposer[T]): JValue = JObject(List(
+    JField(
+      periodicity.name, 
+      JArray(series.toList.sortWith(_._1 < _._1).map { 
+        case (time, count) => JArray(JInt(time.getMillis) :: count.serialize :: Nil)
+      })
+    )
+  ))
+
+  private def addToMap(p: Periodicity, m: Map[DateTime, T], entry: (DateTime, T)) = {
+    val countTime = p.floor(entry._1)
+    m + (countTime -> (m.getOrElse(countTime, aggregator.zero) |+| entry._2))
+  }
 }
 
 object TimeSeries {
-  def empty[T: AbelianGroup]: TimeSeries[T] = apply[T](Map.empty[Period, T])
+  def empty[T: AbelianGroup](periodicity: Periodicity): TimeSeries[T] = {
+    new TimeSeries(periodicity, Map.empty[DateTime, T])
+  }
 
-  def apply[T: AbelianGroup](time: DateTime, count: T) = TimeSeriesEncoding.default[T].encode(time, count)
+  def point[T: AbelianGroup](periodicity: Periodicity, time: DateTime, value: T) = {
+    new TimeSeries(periodicity, Map(periodicity.floor(time) -> value))
+  }
 
-  def all[T: AbelianGroup](time: DateTime, count: T) = TimeSeriesEncoding.all[T].encode(time, count)
-
-  def eternity[T: AbelianGroup](time: DateTime, count: T) = TimeSeriesEncoding.eternity[T].encode(time, count)
+  implicit def Semigroup[T: AbelianGroup] = Scalaz.semigroup[TimeSeries[T]](_ + _)
 }
 
 object TimeSeriesEncoding {
-  val DefaultGrouping = Map[Periodicity, Periodicity](
+  private val DefaultGrouping = Map[Periodicity, Periodicity](
     Minute   -> Month,
     Hour     -> Year,
     Day      -> Year,
@@ -108,19 +136,13 @@ object TimeSeriesEncoding {
   )
 
   /** Returns an encoding for all periodicities from minute to eternity */
-  def default[T: AbelianGroup] = new TimeSeriesEncoding[T](DefaultGrouping)
+  val Default = new TimeSeriesEncoding(DefaultGrouping)
 
   /** Returns an aggregator for all periodicities from second to eternity */
-  def all[T: AbelianGroup] = new TimeSeriesEncoding[T](DefaultGrouping + (Second -> Day))
-
-  def eternity[T: AbelianGroup] = new TimeSeriesEncoding[T](Map(Eternity -> Eternity))
+  val All = new TimeSeriesEncoding(DefaultGrouping + (Second -> Day))
 }
 
-class TimeSeriesEncoding[T: AbelianGroup](val grouping: Map[Periodicity, Periodicity]) {
-  def encode(time: DateTime, count: T): TimeSeries[T] = {
-    TimeSeries(grouping.keys.map(Period(_, time) -> count).toMap)
-  }
-
+class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
   def expand(start: DateTime, end: DateTime): Stream[Period] = {
     def expand0(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
       import Stream._

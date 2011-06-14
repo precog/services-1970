@@ -43,12 +43,12 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   /** Returns a list of all periodicities from this one up to and including
    * that one.
    */
-  def to(that: Periodicity): List[Periodicity] = (Periodicity.All.indexOf(this) to Periodicity.All.indexOf(that)).map(Periodicity.All.apply _).toList
+  def to(that: Periodicity): List[Periodicity] = (Periodicity.All.indexOf(this) to Periodicity.All.indexOf(that)).map(Periodicity.All.apply _)(collection.breakOut)
 
   /** Returns a list of all periodicities from this one up to but not including
    * that one.
    */
-  def until(that: Periodicity): List[Periodicity] = (Periodicity.All.indexOf(this) until Periodicity.All.indexOf(that)).map(Periodicity.All.apply _).toList
+  def until(that: Periodicity): List[Periodicity] = (Periodicity.All.indexOf(this) until Periodicity.All.indexOf(that)).map(Periodicity.All.apply _)(collection.breakOut)
 
   /** Compares this periodicity to that periodicity based on length.
    */

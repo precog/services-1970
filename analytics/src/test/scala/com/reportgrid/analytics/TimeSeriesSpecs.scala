@@ -13,7 +13,7 @@ import scalaz.Scalaz._
 
 class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with ScalaCheck {
   "TimeSeriesEncoding.expand" should {
-    val encoding = TimeSeriesEncoding.default[Long]
+    val encoding = TimeSeriesEncoding.Default
 
     "create periods whose total size is close to the duration between start and end" in {
       forAll { (time1: DateTime, time2: DateTime) =>

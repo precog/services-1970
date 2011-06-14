@@ -163,7 +163,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       values.foreach {
         case ((eventName, path), values) =>
-          engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)) must whenDelivered {
+          engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)).map(_.map(_.value)) must whenDelivered {
             haveSameElementsAs(values)
           }
       }
@@ -180,11 +180,13 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       arrayValues.foreach {
         case ((eventName, path), values) =>
-          engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)) must whenDelivered {
+          engine.getValues(Token.Test, "/gluecon", Variable(JPath(eventName) \ path)).map(_.map(_.value)) must whenDelivered {
             haveSameElementsAs(values)
           }
       }
     }
+
+    def histogramResult(t: (HasValue, Long)) = (t._1.value, t._2)
 
     "retrieve the top results of a histogram" in {
       println("retrieve the top results of a histogram")
@@ -196,7 +198,8 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      engine.getHistogramTop(Token.Test, "/gluecon", Variable(".tweeted.retweet"), 10) must whenDelivered {
+
+      engine.getHistogramTop(Token.Test, "/gluecon", Variable(".tweeted.retweet"), 10).map(_.map(histogramResult)) must whenDelivered {
         haveTheSameElementsAs(retweetCounts)
       }
     }
@@ -207,7 +210,6 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
-          println("testing " + subset)
           val variable = Variable(JPath(eventName) \ path) 
 
           engine.searchCount(Token.Test, "/gluecon", Obs.ofValue(variable, value)) must whenDelivered {
@@ -231,10 +233,9 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       expectedTotals.foreach {
         case (subset @ (eventName, path), count) =>
-          println("testing " + subset)
           engine.getVariableSeries(
             Token.Test, "/gluecon", Variable(JPath(eventName) \ path), Minute, Some(minDate), Some(maxDate)
-          ) map (_.total(Minute)) must whenDelivered {
+          ) map (_.total) must whenDelivered {
             beEqualTo(count.toLong)
           }
       }
@@ -247,11 +248,10 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       println("Value occurrences in " + minDate.getMillis + "-" + maxDate.getMillis)
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
-          println("testing " + subset)
           val observation = Obs.ofValue(Variable(JPath(eventName) \ path), value)
           engine.searchSeries(
             Token.Test, "/gluecon", observation, Minute, Some(minDate), Some(maxDate)
-          ) map (_.total(Minute)) must whenDelivered {
+          ) map (_.total) must whenDelivered {
             beEqualTo(count.toLong)
           }
       }

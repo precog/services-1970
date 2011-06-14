@@ -48,10 +48,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
         request { state =>
           import state._
 
-          def renderHistogram(histogram: Traversable[(JValue, Long)]): JObject = {
+          def renderHistogram(histogram: Traversable[(HasValue, Long)]): JObject = {
             histogram.foldLeft(JObject.empty) {
-              case (content, (value, count)) =>
-                val name = JPathField(renderNormalized(value))
+              case (content, (hasValue, count)) =>
+                val name = JPathField(renderNormalized(hasValue.value))
 
                 content.set(name, JInt(count)).asInstanceOf[JObject]
             }
@@ -145,7 +145,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   tokenOf(request).flatMap { token =>
                     val path = fullPathOf(token, request)
 
-                    aggregationEngine.getChildren(token, path).map { children =>
+                    aggregationEngine.getPathChildren(token, path).map { children =>
                       HttpResponse[JValue](content = Some(children.serialize))
                     }
                   }
@@ -158,7 +158,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       val path     = fullPathOf(token, request)
                       val variable = variableOf(request)
 
-                      aggregationEngine.getChildren(token, path, variable).map { children =>
+                      aggregationEngine.getVariableChildren(token, path, variable).map { children =>
                         HttpResponse[JValue](content = Some(children.serialize))
                       }
                     }
@@ -494,8 +494,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     case Series(p) => 
                       aggregationEngine.intersectSeries(token, from, properties, p, start, end).map {
                         _.foldLeft[JValue](JObject(Nil)) {
-                          case (result, (values, count)) => 
-                            result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), count.serialize)
+                          case (result, (values, series)) => 
+                            result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), series.toJValue)
                         }
                       }
                   }) map {

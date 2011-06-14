@@ -16,7 +16,10 @@ case class HasValue(value: JValue) extends Predicate
 case class HasChild(child: JPathNode) extends Predicate
 
 object Obs {
+  def empty[P <: Predicate]: Observation[P] = Set.empty[(Variable, P)]
+  def ofValue(variable: Variable, value: HasValue) = Set(variable -> value)
   def ofValue(variable: Variable, value: JValue) = Set(variable -> HasValue(value))
+  def ofChild(variable: Variable, child: HasChild) = Set(variable -> child)
   def ofChild(variable: Variable, child: JPathNode) = Set(variable -> HasChild(child))
 }
 

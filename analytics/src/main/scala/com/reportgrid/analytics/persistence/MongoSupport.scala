@@ -13,6 +13,7 @@ import blueeyes.util.SpecialCharTranscoder
 import com.reportgrid.analytics._
 
 import org.joda.time.{DateTime, DateTimeZone}
+import scalaz.Scalaz._
 
 /** Support for persitence via MongoDB.
  */
@@ -56,10 +57,10 @@ object MongoSupport {
 
   implicit def DoubleUpdater(jpath: JPath, value: Double): MongoUpdate = jpath inc value
 
-  def timeSeriesUpdater[T](implicit updater: (JPath, T) => MongoUpdate) = (jpath: JPath, value: TimeSeries[T]) => {
+  def timeSeriesUpdater[T](jpath: JPath, value: TimeSeries[T]) (implicit updater: (JPath, T) => MongoUpdate) = {
     value.series.foldLeft[MongoUpdate](MongoUpdateNothing) {
-      case (fullUpdate, (period, count)) =>
-        fullUpdate :+ updater(jpath \ period.start.getMillis.toString, count)
+      case (fullUpdate, (time, count)) =>
+        fullUpdate |+| updater(jpath \ time.getMillis.toString, count)
     }
   }
 
@@ -96,35 +97,24 @@ object MongoSupport {
   }
 
   implicit def TimeSeriesDecomposer[T](implicit decomposer: Decomposer[T]) = new Decomposer[TimeSeries[T]] {
-    def decompose(value: TimeSeries[T]): JValue = JObject(value.groupByPeriodicity.toList.map { tuple =>
-      val (periodicity, timeSeries) = tuple
-
-      JField(periodicity.name,
-        (timeSeries.series.map { (tuple) =>
-          val (period, count) = tuple
-
-          (period.start.getMillis.toString, count)
-        }: Map[String, T]).serialize
-      )
-    })
+    def decompose(value: TimeSeries[T]): JValue = JObject(List(
+      JField("periodicity", JString(value.periodicity.name)),
+      JField("series", JObject(value.series.map { case (time, count) => JField(time.getMillis.toString, count.serialize) }.toList))
+    ))
   }
 
   implicit def TimeSeriesExtractor[T](implicit aggregator: AbelianGroup[T], extractor: Extractor[T]) = new Extractor[TimeSeries[T]] {
-    def extract(value: JValue): TimeSeries[T] = value match {
-      case JObject(fields) =>
-        TimeSeries[T](
-          fields.foldLeft(Map.empty[Period, T]) { (map, field) =>
-            val periodicity = Periodicity(field.name)
-
-            map ++ field.value.deserialize[Map[String, T]].map { tuple =>
-              val (timeString, count) = tuple
-
-              (Period(periodicity, new DateTime(timeString.toLong, DateTimeZone.UTC)), count)
-            }
+    def extract(value: JValue): TimeSeries[T] = {
+      val periodicity = (value \ "periodicity").deserialize[Periodicity]
+      value \ "counts" match {
+        case JObject(fields) =>
+          fields.foldLeft(TimeSeries.empty[T](periodicity)) { 
+            case (series, JField(timeString, value)) =>
+              series + (new DateTime(timeString.toLong, DateTimeZone.UTC) -> value.deserialize[T])
           }
-        )
 
-      case _ => error("Expected object but found: " + value)
+        case _ => error("Expected object but found: " + value)
+      }
     }
   }
 

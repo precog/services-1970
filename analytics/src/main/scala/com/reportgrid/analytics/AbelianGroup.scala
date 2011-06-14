@@ -49,14 +49,6 @@ trait AggregatorImplicits {
     def append(v1: Report[S, T], v2: => Report[S, T]) = v1 + v2
   }
 
-  implicit def timeSeriesAggregator[T](implicit aggregator: AbelianGroup[T]) = new AbelianGroup[TimeSeries[T]] {
-    val zero = new TimeSeries[T](Map())
-
-    def inverse(v: TimeSeries[T]): TimeSeries[T] = -v
-
-    def append(t1: TimeSeries[T], t2: => TimeSeries[T]): TimeSeries[T] = t1 + t2
-  }
-
   implicit def mapAggregator[K, V](implicit aggregator: AbelianGroup[V]) = new AbelianGroup[Map[K, V]] {
     val zero = Map[K, V]()
 
