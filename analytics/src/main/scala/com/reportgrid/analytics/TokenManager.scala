@@ -1,12 +1,13 @@
 package com.reportgrid.analytics
 
+import blueeyes._
 import blueeyes.BlueEyesServiceBuilder
-import blueeyes.concurrent.{Future, FutureDeliveryStrategySequential}
+import blueeyes.concurrent._
 import blueeyes.core.http._
 import blueeyes.core.service._
 import blueeyes.core.http.MimeTypes.{application, json}
 import blueeyes.persistence.mongo._
-import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
+import blueeyes.persistence.cache._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JPath
 import blueeyes.json.xschema._
@@ -16,7 +17,7 @@ import net.lag.configgy.ConfigMap
 
 import org.joda.time.{DateTime, DateTimeZone}
 
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeUnit._
 
 import scala.util.matching.Regex
 import scala.math._
@@ -39,14 +40,22 @@ object TokenManager {
 }
 
 
-class TokenManager private (database: MongoDatabase, tokensCollection: MongoCollection) extends FutureDeliveryStrategySequential {
+class TokenManager private (database: MongoDatabase, tokensCollection: MongoCollection) {
+  //TODO: Add expiry settings.
+  val tokenCache = Cache.concurrent[String, Token](CacheSettings(ExpirationPolicy(None, None, MILLISECONDS)))
+  tokenCache.put(Token.Root.tokenId, Token.Root)
+  tokenCache.put(Token.Test.tokenId, Token.Test)
 
   /** Look up the specified token.
    */
   def lookup(tokenId: String): Future[Option[Token]] = {
-    database {
-      selectOne().from(tokensCollection).where("tokenId" === tokenId)
-    }.map(_.map(_.deserialize[Token]))
+    tokenCache.get(tokenId).map[Future[Option[Token]]](v => Future.lift(Some(v))) getOrElse {
+      database {
+        selectOne().from(tokensCollection).where("tokenId" === tokenId)
+      } map {
+        _.map(_.deserialize[Token] ->- (tokenCache.put(tokenId, _)))
+      }
+    }
   }
 
   def listChildren(parent: Token): Future[List[Token]] = {

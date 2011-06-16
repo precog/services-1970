@@ -97,13 +97,13 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   val config = new Config()
   config.load(mongoConfigFileData)
 
-  //val mongo = new RealMongo(config.configMap("mongo")) 
-  val mongo = new MockMongo()
+  val mongo = new RealMongo(config.configMap("mongo")) 
+  //val mongo = new MockMongo()
   val database = mongo.database("gluecon")
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(1000).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(10, toDuration(1000).milliseconds)
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
     case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>

@@ -1,7 +1,7 @@
 package com.reportgrid.analytics
 
 import blueeyes._
-import blueeyes.concurrent.{Future, FutureDeliveryStrategySequential}
+import blueeyes.concurrent._
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.json.JsonAST._
@@ -26,7 +26,44 @@ import Future._
 import Hashable._
 import SignatureGen._
 
-class AggregationEngine private (config: ConfigMap, logger: Logger, database: MongoDatabase) extends FutureDeliveryStrategySequential {
+/**
+ * Schema:
+ * 
+ * variable_value_series: {
+ *   _id: hashSig(accountTokenId, path, variable, order, observation, period, granularity),
+ *   counts: { "0123345555555": 3, ...}
+ * }
+ *
+ * variable_series: {
+ *   _id: hashSig(accountTokenId, path, variable, order, period, granularity),
+ *   counts: { "0123345555555": 3, ...}
+ * }
+ *
+ * variable_values: {
+ *   _id: hashSig(accountTokenId, path, variable),
+ *   values: {
+ *     "male" : 20,
+ *     "female" : 30,
+ *     ...
+ *   }
+ * }
+ *
+ * path_children: {
+ *   _id: mongo-generated,
+ *   accountTokenId: "foobar"
+ *   path: "baz/blork",
+ *   child: "blaarg"
+ * }
+ *
+ * variable_children: {
+ *   _id: mongo-generated,
+ *   accountTokenId: "foobar"
+ *   path: "/baz/blork/blaarg/.gweep"
+ *   child: "toodleoo"
+ * }
+ */
+
+class AggregationEngine private (config: ConfigMap, logger: Logger, database: MongoDatabase) {
   import AggregationEngine._
 
   val EarliestTime = new DateTime(0,             DateTimeZone.UTC)
@@ -339,7 +376,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         }
       }   
 
-    def observations[P <: Predicate](vs: List[Variable]): Iterable[Observation[HasValue]] = {
+      def observations[P <: Predicate](vs: List[Variable]): Iterable[Observation[HasValue]] = {
         def obs(i: Int, v: Variable, vs: List[Variable], o: Observation[HasValue]): Iterable[Observation[HasValue]] = {
           histograms(i).flatMap { 
             case (hasValue, _) => vs match {
@@ -369,6 +406,10 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
+  private def valuesKeyFilter(token: Token, path: Path, variable: Variable) = {
+    JPath("." + valuesId) === hashSignature(token.sig ++ path.sig ++ variable.sig)
+  }
+
   /** Retrieves a histogram of the values a variable acquires over its lifetime.
    */
   private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[HasValue, CountType]] = {
@@ -389,7 +430,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }    
   }
 
-  private def intervalKeys[T](granularity: Periodicity, start: Option[DateTime], end: Option[DateTime], keyBuilder: Period => T): List[T] = {
+  private def intervalKeys(granularity: Periodicity, start: Option[DateTime], end: Option[DateTime], keyBuilder: Period => MongoFilter): List[MongoFilter] = {
     val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
     val batchStartPeriod = start.map(batchPeriodicity.period)
     val batchEndPeriod =   end.map(batchPeriodicity.period)
@@ -425,14 +466,25 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
+  private def seriesKeyFilter[P <: Predicate : SignatureGen](
+      token: Token, path: Path, order: Int, 
+      period: Period, granularity: Periodicity, observation: Observation[P]) = {
+
+    JPath("." + seriesId) === hashSignature(
+      token.sig ++ path.sig ++ order.sig ++ 
+      period.sig ++ granularity.sig ++
+      observation.sig
+    )
+  }
+
   private def internalSearchSeries[P <: Predicate: SignatureGen](
       col: MongoCollection, token: Token, path: Path, observation: Observation[P],
       granularity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
 
-    val keyBuilder = seriesKeyBuilder(token, path, observation.size, _: Period, granularity, observation)
+    val keyBuilder = seriesKeyFilter(token, path, observation.size, _: Period, granularity, observation)
     Future {
       intervalKeys(granularity, start, end, keyBuilder).map {
-        filter => database(selectOne(".counts").from(col).where(seriesKeyFilter(filter))) 
+        filter => database(selectOne(".counts").from(col).where(filter)) 
       }: _*
     } map {
       _.flatten.foldLeft(TimeSeries.empty[CountType](granularity)) { 
@@ -496,10 +548,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     (filter -> valuesUpdate)
   }
 
-  private def valuesKeyFilter(token: Token, path: Path, variable: Variable) = {
-    JPath(".id") === hashSignature(token.sig ++ path.sig ++ variable.sig)
-  }
-
   /** Creates patches to record variable observations.
    */
   private def updateValues[P <: Predicate : Decomposer, T](token: Token, path: Path, report: Report[P, T]): MongoPatches = {
@@ -532,19 +580,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  private def seriesKeyBuilder[P <: Predicate : SignatureGen](
-      token: Token, path: Path, order: Int, 
-      period: Period, granularity: Periodicity, observation: Observation[P]) = {
-
-    hashSignature(
-      token.sig ++ path.sig ++ order.sig ++ 
-      period.sig ++ granularity.sig ++
-      observation.sig
-    )
-  }
-
-  private def seriesKeyFilter(key: String) = JPath(".id") === key
-
   private def updateTimeSeries[P <: Predicate : Decomposer : SignatureGen](token: Token, path: Path, report: Report[P, TimeSeries[CountType]]): MongoPatches = {
     report.groupByOrder.view.foldLeft(MongoPatches.empty) { 
       case (patches, (order, report)) => 
@@ -561,9 +596,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           }
         }.foldLeft(patches) {
           case (patches, ((period, granularity, observation), timeSeries)) => 
-            val updateKey = seriesKeyBuilder(token, path, order, period, granularity, observation)
+            val updateKey = seriesKeyFilter(token, path, order, period, granularity, observation)
 
-            patches + (seriesKeyFilter(updateKey) -> timeSeriesUpdater(".counts", timeSeries))
+            patches + (updateKey -> timeSeriesUpdater(".counts", timeSeries))
       }
     }
   }
@@ -577,18 +612,20 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   } yield ()
 }
 
-object AggregationEngine extends FutureDeliveryStrategySequential {
+object AggregationEngine {
+  private val seriesId               = "seriesId"
+  private val valuesId               = "valuesId"
+
   private val CollectionIndices = Map(
     "variable_series" -> Map(
       "val_series_query" -> ("path" :: "accountTokenId" :: "order" :: "period.periodicity" :: "period.start" :: "period.end" ::
                             ((0 to 9).flatMap(i => List("where.variable" + i, "where.predicate" + i)).toList))
     ),
     "variable_value_series" -> Map(
-      "var_val_series_query" -> ("accountTokenId" :: "granularity" :: "order" :: "path" :: "period.periodicity" :: "period.start" :: "period.end" ::  
-                                ((0 to 9).flatMap(i => List("where.variable" + i, "where.predicate" + i)).toList))
+      "var_val_series_id" -> List(seriesId)
     ),
     "variable_values" -> Map(
-      "variable_query" -> List("path", "accountTokenId", "variable")
+      "variable_query" -> List(valuesId)
     ),
     "variable_children" -> Map(
       "variable_query" -> List("path", "accountTokenId", "variable")
