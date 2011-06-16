@@ -430,34 +430,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }    
   }
 
-  private def intervalKeys(granularity: Periodicity, start: Option[DateTime], end: Option[DateTime], keyBuilder: Period => MongoFilter): List[MongoFilter] = {
-    val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
-    val batchStartPeriod = start.map(batchPeriodicity.period)
-    val batchEndPeriod =   end.map(batchPeriodicity.period)
-
-    (batchStartPeriod, batchEndPeriod) match {
-      case (Some(start), Some(end)) => 
-        if (start == end) keyBuilder(start) :: Nil
-        else if (start.end == end.start) keyBuilder(start) :: keyBuilder(end) :: Nil
-        else error("Query period too large; too many results to return.")
-
-      case (ostart, oend) => 
-        List(
-          ostart.orElse(oend).
-          orElse(if (granularity == Periodicity.Eternity) Some(Period.Eternity) else None).
-          map(keyBuilder).
-          getOrElse(error("For queries with granularity other than eternity, start and end must be specified."))
-        )
-    }
-  }
-
   private def deserializeTimeSeries(jv: JValue, granularity: Periodicity, start: Option[DateTime], end: Option[DateTime]): TimeSeriesType = {
+    val startFloor = start.map(granularity.floor)
+    val endCeil = end.map(granularity.ceil)
     (jv \ "counts") match {
       case JObject(fields) => 
         fields.foldLeft(TimeSeries.empty[CountType](granularity)) {
           case (series, JField(time, count)) => 
             val ltime = time.toLong 
-            if (start.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) 
+            if (startFloor.forall(_.getMillis <= ltime) && endCeil.forall(_.getMillis > ltime)) 
                series + ((new DateTime(ltime), count.deserialize[CountType]))
             else series
         }
@@ -466,12 +447,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  private def seriesKeyFilter[P <: Predicate : SignatureGen](
-      token: Token, path: Path, order: Int, 
-      period: Period, granularity: Periodicity, observation: Observation[P]) = {
+  private def seriesKeyFilter[P <: Predicate : SignatureGen](token: Token, path: Path, observation: Observation[P],
+                                                             period: Period, granularity: Periodicity) = {
 
     JPath("." + seriesId) === hashSignature(
-      token.sig ++ path.sig ++ order.sig ++ 
+      token.sig ++ path.sig ++ 
       period.sig ++ granularity.sig ++
       observation.sig
     )
@@ -481,14 +461,25 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       col: MongoCollection, token: Token, path: Path, observation: Observation[P],
       granularity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
 
-    val keyBuilder = seriesKeyFilter(token, path, observation.size, _: Period, granularity, observation)
+    val keyBuilder = seriesKeyFilter(token, path, observation, _: Period, granularity)
+    val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
+
+    val intervalFilters = (start.map(batchPeriodicity.period), end.map(batchPeriodicity.period)) match {
+      case (Some(start), Some(end)) => 
+        if      (start == end)           keyBuilder(start) :: Nil
+        else if (start.end == end.start) keyBuilder(start) :: keyBuilder(end) :: Nil
+        else                             error("Query interval too large - too many results to return.")
+
+      case (ostart, oend) => 
+        ostart.orElse(oend).orElse((granularity == Periodicity.Eternity).option(Period.Eternity)).
+        map(keyBuilder).toList
+    }
+
     Future {
-      intervalKeys(granularity, start, end, keyBuilder).map {
-        filter => database(selectOne(".counts").from(col).where(filter)) 
-      }: _*
+      intervalFilters.map(filter => database(selectOne(".counts").from(col).where(filter))): _*
     } map {
       _.flatten.foldLeft(TimeSeries.empty[CountType](granularity)) { 
-        (cur, jv) =>  cur + deserializeTimeSeries(jv, granularity, start, end) 
+        (cur, jv) => cur + deserializeTimeSeries(jv, granularity, start, end) 
       } 
     }
   }
@@ -581,25 +572,24 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   }
 
   private def updateTimeSeries[P <: Predicate : Decomposer : SignatureGen](token: Token, path: Path, report: Report[P, TimeSeries[CountType]]): MongoPatches = {
-    report.groupByOrder.view.foldLeft(MongoPatches.empty) { 
-      case (patches, (order, report)) => 
-        //Convert this report to a map of reports from period to time series report. In the resulting
-        //map, the keys will be periods that batch reports of finer granularity.
-        report.observationCounts.mapValues(_.aggregates).
-        foldLeft(Map.empty[(Period, Periodicity, Observation[P]), TimeSeries[CountType]]) {
-          case (m, (observation, multiSeries)) => multiSeries.foldLeft(m) {
-            case (m, TimeSeries(granularity, values)) => values.foldLeft(m) {
-              case (m, entry @ (start, count)) =>
-                val batchKey = (timeSeriesEncoding.grouping(granularity).period(start), granularity, observation)
-                m + (batchKey -> (m.getOrElse(batchKey, TimeSeries.empty[CountType](granularity)) + entry))
-            }
-          }
-        }.foldLeft(patches) {
-          case (patches, ((period, granularity, observation), timeSeries)) => 
-            val updateKey = seriesKeyFilter(token, path, order, period, granularity, observation)
 
-            patches + (updateKey -> timeSeriesUpdater(".counts", timeSeries))
+    // aggregate time series up the scale of coarser granularities.   
+    report.observationCounts.mapValues(_.aggregates).
+    // build a map from period, contained granularity, and observation to time series at that granularity
+    foldLeft(Map.empty[(Period, Periodicity, Observation[P]), TimeSeries[CountType]]) {
+      case (m, (observation, multiSeries)) => multiSeries.foldLeft(m) {
+        case (m, TimeSeries(granularity, values)) => values.foldLeft(m) {
+          case (m, entry @ (start, _)) =>
+
+            val batchKey = (timeSeriesEncoding.grouping(granularity).period(start), granularity, observation)
+            m + (batchKey -> (m.getOrElse(batchKey, TimeSeries.empty[CountType](granularity)) + entry))
+        }
       }
+    }.foldLeft(MongoPatches.empty) {
+      case (patches, ((period, granularity, observation), timeSeries)) => 
+        val seriesKey = seriesKeyFilter(token, path, observation, period, granularity)
+
+        patches + (seriesKey -> timeSeriesUpdater(".counts", timeSeries))
     }
   }
 
@@ -613,32 +603,34 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 }
 
 object AggregationEngine {
-  private val seriesId               = "seriesId"
-  private val valuesId               = "valuesId"
+  private val seriesId = "seriesId"
+  private val valuesId = "valuesId"
+
 
   private val CollectionIndices = Map(
     "variable_series" -> Map(
-      "val_series_query" -> ("path" :: "accountTokenId" :: "order" :: "period.periodicity" :: "period.start" :: "period.end" ::
-                            ((0 to 9).flatMap(i => List("where.variable" + i, "where.predicate" + i)).toList))
+      "var_series_id" -> (List(seriesId), true)
     ),
     "variable_value_series" -> Map(
-      "var_val_series_id" -> List(seriesId)
+      "var_val_series_id" -> (List(seriesId), true)
     ),
     "variable_values" -> Map(
-      "variable_query" -> List(valuesId)
+      "var_val_id" -> (List(valuesId), true)
     ),
     "variable_children" -> Map(
-      "variable_query" -> List("path", "accountTokenId", "variable")
+      "variable_query" -> (List("path", "accountTokenId", "variable"), false)
     ),
     "path_children" -> Map(
-      "path_query" -> List("path", "accountTokenId")
+      "path_query" -> (List("path", "accountTokenId"), false)
     )
   )
 
   private def createIndices(database: MongoDatabase) = {
-    val futures = for ((collection, indices) <- CollectionIndices; (indexName, fields) <- indices) yield {
+    val futures = for ((collection, indices) <- CollectionIndices; 
+                       (indexName, (fields, unique)) <- indices) yield {
       database[JNothing.type] {
-        ensureIndex(indexName + "_index").on(fields.map(JPath(_)): _*).in(collection)
+        if (unique) ensureUniqueIndex(indexName + "_index").on(fields.map(JPath(_)): _*).in(collection)
+        else ensureIndex(indexName + "_index").on(fields.map(JPath(_)): _*).in(collection)
       }.toUnit
     }
 

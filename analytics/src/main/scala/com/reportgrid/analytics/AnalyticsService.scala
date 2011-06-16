@@ -38,7 +38,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
           val database = mongo.database(mongoConfig.getString("database").getOrElse("analytics"))
 
-          val tokensCollection  = mongoConfig.getString("tokensCollection").getOrElse("tokens")
+          val tokensCollection = mongoConfig.getString("tokensCollection").getOrElse("tokens")
           
           for {
             tokenManager      <- TokenManager(database, tokensCollection)

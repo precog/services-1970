@@ -26,16 +26,17 @@ import Gen._
 
 class AnalyticsServiceSpec extends BlueEyesServiceSpecification with PendingUntilFixed with ScalaCheck 
 with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
-  override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
-  //override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
   override val configuration = "services{analytics{v0{" + mongoConfigFileData + "}}}"
 
-  lazy val analytics = service.contentType[JValue](application/(MimeTypes.json)).query("tokenId", Token.Test.tokenId)
+  override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
+  //override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
+
+  lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
+                                     query("tokenId", Token.Test.tokenId)
 
   override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(10, 1000L.milliseconds)
 
-  "Demo Service" should {
-    shareVariables()
+  "Analytics Service" should {
     "create events" in {
       val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
 
@@ -45,35 +46,14 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
 
       for (event <- sampleEvents) {
-        analytics.post[JValue]("/vfs/gluecon")(event.message)
+        jsonTestService.post[JValue]("/vfs/test")(event.message)
       }
 
-      (analytics.get[JValue]("/vfs/gluecon/.tweeted/count")) must whenDelivered {
+      (jsonTestService.get[JValue]("/vfs/test/.tweeted/count")) must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
         }
       } 
     }
-
- //   "calculate intersections" in {
- //     val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
- //     
- //     analytics.post[JValue]("/intersect") {
- //       JObject(List(
- //         JField("select",     JString("count")),
- //         JField("from",       JString("/vfs/gluecon/")),
- //         JField("properties", JArray(List(
- //           VariableDescriptor(Variable(".tweeted.retweet"), 10, SortOrder.Descending).serialize,
- //           VariableDescriptor(Variable(".tweeted.recipientCount"), 10, SortOrder.Descending).serialize
- //         )))
- //       ))
- //     } must whenDelivered {
- //       beLike {
- //         case HttpResponse(status, _, Some(result), _) =>
- //           println((status, renderNormalized(result)))
- //           fail
- //       }
- //     }
- //   }
   }
 }
