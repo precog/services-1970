@@ -185,15 +185,19 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
         react {
           case Sample(sample) => 
             val start = System.nanoTime
-            testApi.track(
-              path       = benchmarkPath,
-              name       = "track",
-              properties = sample,
-              rollup     = false,
-              timestamp  = Some(conf.clock.now().toDate)
-            )
+            try {
+              testApi.track(
+                path       = benchmarkPath,
+                name       = "track",
+                properties = sample,
+                rollup     = false,
+                timestamp  = Some(conf.clock.now().toDate)
+              )
 
-            resultsActor ! TrackTime(System.nanoTime - start)
+              resultsActor ! TrackTime(System.nanoTime - start)
+            } catch {
+              case t: Throwable => t.printStackTrace
+            }
 
           case Done => queryActor ! Done
         }
@@ -210,26 +214,30 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
               }
             }).toSet
 
-            //count
-            time(testApi.select(Count).of(".track").from(benchmarkPath), QueryTime(QueryType.Count, _))
+            try {
+              //count
+              time(testApi.select(Count).of(".track").from(benchmarkPath), QueryTime(QueryType.Count, _))
 
-            //select
-            time(testApi.select(Minute(Some((startTime.toDate, conf.clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Series,_))
+              //select
+              time(testApi.select(Minute(Some((startTime.toDate, conf.clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Series,_))
 
-            //search
-            //time(testApi.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Search,_))
+              //search
+              //time(testApi.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Search,_))
 
-            //intersect
-            if (sampleKeys.size > 1) {
-              val k1 :: k2 :: Nil = sampleKeys.take(2).toList
-              time(
-                  testApi.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(benchmarkPath),
-                  QueryTime(QueryType.Intersect, _)
-              )
+              //intersect
+              if (sampleKeys.size > 1) {
+                val k1 :: k2 :: Nil = sampleKeys.take(2).toList
+                time(
+                    testApi.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(benchmarkPath),
+                    QueryTime(QueryType.Intersect, _)
+                )
+              }
+
+              //histogram
+              //TODO
+            } catch {
+              case t: Throwable => t.printStackTrace
             }
-
-            //histogram
-            //TODO
 
           case Done => resultsActor ! Done
         }

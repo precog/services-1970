@@ -54,7 +54,7 @@ trait LocalMongo {
       time_to_live_millis = 500
 
       initial_capacity = 1000
-      maximum_capacity = 10000
+      maximum_capacity = 100000
     }
 
     variable_values {
