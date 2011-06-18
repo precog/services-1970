@@ -49,7 +49,7 @@ class TokenManager private (database: MongoDatabase, tokensCollection: MongoColl
   /** Look up the specified token.
    */
   def lookup(tokenId: String): Future[Option[Token]] = {
-    tokenCache.get(tokenId).map[Future[Option[Token]]](v => Future.lift(Some(v))) getOrElse {
+    tokenCache.get(tokenId).map[Future[Option[Token]]](v => Future.sync(Some(v))) getOrElse {
       database {
         selectOne().from(tokensCollection).where("tokenId" === tokenId)
       } map {
@@ -64,7 +64,7 @@ class TokenManager private (database: MongoDatabase, tokensCollection: MongoColl
         ("parentTokenId" === parent.tokenId) &&
         ("tokenId"      !== parent.tokenId)
       }
-    }.map { result =>
+    } map { result =>
       result.toList.map(_.deserialize[Token])
     }
   }
@@ -97,11 +97,10 @@ class TokenManager private (database: MongoDatabase, tokensCollection: MongoColl
 
       val tokenJ = newToken.serialize.asInstanceOf[JObject]
 
-      database[JNothing.type] {
-        insert(tokenJ).into(tokensCollection)
-      }.map(_ => newToken)
+      database[JNothing.type](insert(tokenJ).into(tokensCollection)) map (_ => newToken)
+    } else {
+      Future.dead(new Exception("Token " + parent + " does not have permission to share"))
     }
-    else Future.dead(new Exception("Token " + parent + " does not have permission to share"))
   }
 
   /** Get details about a specified child token.

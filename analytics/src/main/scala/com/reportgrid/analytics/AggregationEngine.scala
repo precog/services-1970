@@ -246,7 +246,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
     variable.parent match {
       case None =>
-        Future.lift(TimeSeries.empty[CountType](periodicity))
+        Future.sync(TimeSeries.empty[CountType](periodicity))
 
       case Some(parent) =>
         val lastNode = variable.name.nodes.last

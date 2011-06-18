@@ -43,10 +43,13 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           for {
             tokenManager      <- TokenManager(database, tokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, database)
-          } yield AnalyticsState(aggregationEngine, tokenManager)
+          } yield {
+            AnalyticsState(aggregationEngine, tokenManager)
+          }
         } ->
-        request { state =>
-          import state._
+        request { (state: AnalyticsState) =>
+          import state.tokenManager
+          import state.aggregationEngine
 
           def renderHistogram(histogram: Traversable[(HasValue, Long)]): JObject = {
             histogram.foldLeft(JObject.empty) {
@@ -325,7 +328,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     path('value) {
                       $ {
                         get { request: HttpRequest[JValue] =>
-                          tokenOf(request).flatMap { token =>
+                          tokenOf(request).map { token =>
                             val path     = fullPathOf(token, request)
                             val variable = variableOf(request)
                             val value    = valueOf(request)
@@ -355,7 +358,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         } ~
                         path("series/") {
                           get { request: HttpRequest[JValue] =>
-                            tokenOf(request).flatMap { token =>
+                            tokenOf(request).map { token =>
                               val path     = fullPathOf(token, request)
                               val variable = variableOf(request)
                               val value    = valueOf(request)
@@ -404,7 +407,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         } ~
                         path("geo") {
                           get { request: HttpRequest[JValue] =>
-                            tokenOf(request).flatMap { token =>
+                            tokenOf(request).map { token =>
                               val path     = fullPathOf(token, request)
                               val variable = variableOf(request)
 
@@ -455,8 +458,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           series => HttpResponse[JValue](content = Some(series.toJValue))
                         }
                     }
-                  }.getOrElse[Future[HttpResponse[JValue]]] {
-                    HttpResponse[JValue](content = None)
+                  } getOrElse {
+                    Future.sync(HttpResponse[JValue](content = None))
                   }
                 }
               }
@@ -482,7 +485,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     case jvalue   => Some(jvalue.deserialize[DateTime])
                   }
 
-                  (select match {
+                  val resultContent = select match {
                     case Count => 
                       aggregationEngine.intersectCount(token, from, properties, start, end).map {
                         _.foldLeft[JValue](JObject(Nil)) {
@@ -498,7 +501,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), series.toJValue)
                         }
                       }
-                  }) map {
+                  }
+                  
+                  resultContent map {
                     v => HttpResponse(content = Some(v))
                   }
                 }
@@ -506,12 +511,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             } ~ 
             path("/tokens/") {
               get { request: HttpRequest[JValue] =>
-                tokenOf(request).flatMap { token =>
-                  tokenManager.listDescendants(token).map { descendants =>
+                tokenOf(request) flatMap { token =>
+                  tokenManager.listDescendants(token) map { descendants =>
                     descendants.map { descendantToken =>
                       descendantToken.tokenId.serialize
                     }
-                  }.map { tokens =>
+                  } map { tokens =>
                     HttpResponse[JValue](content = Some(JArray(tokens)))
                   }
                 }
