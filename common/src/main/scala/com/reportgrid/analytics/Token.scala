@@ -1,11 +1,6 @@
 package com.reportgrid.analytics
-import blueeyes.json.xschema._
-import blueeyes.json.JsonAST._
-import blueeyes.json.xschema.DefaultSerialization._
 
 import org.joda.time.{DateTime, DateTimeZone}
-
-import scala.math.{min}
 
 /** A token gives a user access to a path in the ReportGrid virtual file
  * system. Every customer of ReportGrid has a "root" token which gives
@@ -34,7 +29,7 @@ case class Token(tokenId: String, parentTokenId: Option[String], accountTokenId:
     accountTokenId = this.accountTokenId,
     path           = this.path / relativePath,
     permissions    = permissions.limitTo(this.permissions),
-    expires        = new DateTime(min(expires.getMillis, this.expires.getMillis), DateTimeZone.UTC),
+    expires        = new DateTime(expires.getMillis.min(this.expires.getMillis), DateTimeZone.UTC),
     limits         = limits.limitTo(this.limits)
   )
 
@@ -73,30 +68,4 @@ object Token {
       limits         = limits.limitTo(Token.Root.limits)
     )
   }
-
-  implicit val TokenExtractor = new Extractor[Token] {
-    def extract(jvalue: JValue): Token = Token(
-      tokenId         = (jvalue \ "tokenId").deserialize[String],
-      parentTokenId   = (jvalue \ "parentTokenId").deserialize[Option[String]],
-      accountTokenId  = (jvalue \ "accountTokenId").deserialize[String],
-      path            = (jvalue \ "path").deserialize[Path],
-      permissions     = (jvalue \ "permissions").deserialize[Permissions],
-      expires         = (jvalue \ "expires").deserialize[DateTime],
-      limits          = (jvalue \ "limits").deserialize[Limits]
-    )
-  }
-
-  implicit val TokenDecomposer = new Decomposer[Token] {
-    def decompose(token: Token): JValue = JObject(
-      JField("tokenId",         token.tokenId.serialize)  ::
-      JField("parentTokenId",   token.parentTokenId.serialize) ::
-      JField("accountTokenId",  token.accountTokenId.serialize) ::
-      JField("path",            token.path.serialize) ::
-      JField("permissions",     token.permissions.serialize) ::
-      JField("expires",         token.expires.serialize) ::
-      JField("limits",          token.limits.serialize) ::
-      Nil
-    )
-  }
-
 }

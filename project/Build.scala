@@ -31,12 +31,11 @@ object ServicesBuild extends Build {
   }
 
   override def projectDefinitions(base: File) = {
-    val common = tryLocalGit(base, 
-      Project("common", file("common"), settings = serviceSettings),
-      file("../blueeyes"),
-      uri("git://github.com/jdegoes/blueeyes")
+    val common = Project("common", file("common"), 
+      settings = serviceSettings ++ Seq(
+        libraryDependencies += "joda-time"               % "joda-time"    % "1.6.2"
+      )
     )
-
 
     val analyticsSettings = serviceSettings ++ Seq( 
       libraryDependencies ++= Seq(
@@ -47,20 +46,22 @@ object ServicesBuild extends Build {
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
     )
 
-    val analytics = Project("analytics", file("analytics"), settings = analyticsSettings ++ oneJarSettings) dependsOn(common)
-
+    val analytics = tryLocalGit(base,
+      Project("analytics", file("analytics"), settings = analyticsSettings ++ oneJarSettings) dependsOn(common),
+      file("../blueeyes"),
+      uri("git://github.com/jdegoes/blueeyes")
+    )
 
     val benchmarkSettings = serviceSettings ++ Seq(
-      libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile",
+      libraryDependencies ++= Seq(
+        "com.reportgrid"          %% "blueeyes"    % "0.4.0",
+        "com.reportgrid"          %% "reportgrid-client" % "0.3.0",
+        "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile"
+      ),
       mainClass := Some("com.reportgrid.benchmark.AnalyticsBenchmark")
     )
 
-    val benchmark = tryLocalDep(base,
-      Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ oneJarSettings) dependsOn(common),
-      file("../client-libraries/scala"),
-      "com.reportgrid" % "client-libraries" % "0.0.2"
-    )
-
+    val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ oneJarSettings) dependsOn(common)
 
     val services = Project("services", file(".")) aggregate (common, analytics, benchmark) 
     common :: analytics :: benchmark :: services :: Nil
