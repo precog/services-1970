@@ -7,7 +7,7 @@ import org.joda.time.{DateTime, DateTimeZone}
 sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   /** The name of the periodicity, e.g., "hour"
    */
-  def name: String = self.productPrefix.toLowerCase
+  lazy val name: String = self.productPrefix.toLowerCase
 
   /** Chops off all components of the date time whose periodicities are
    * smaller than this periodicity.
@@ -24,18 +24,18 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
 
   /** The previous periodicity in the chain.
    */
-  def previous: Periodicity = previousOption.getOrElse(this)
+  lazy val previous: Periodicity = previousOption.getOrElse(this)
 
-  def previousOption: Option[Periodicity] = (Periodicity.All.indexOf(this) - 1) match {
+  lazy val previousOption: Option[Periodicity] = (Periodicity.All.indexOf(this) - 1) match {
     case index: Int if (index < 0) => None
     case index: Int => Some(Periodicity.All(index))
   }
 
   /** The next periodicity in the chain.
    */
-  def next: Periodicity = nextOption.getOrElse(this)
+  lazy val next: Periodicity = nextOption.getOrElse(this)
 
-  def nextOption: Option[Periodicity] = (Periodicity.All.indexOf(this) + 1) match {
+  lazy val nextOption: Option[Periodicity] = (Periodicity.All.indexOf(this) + 1) match {
     case index: Int if (index == Periodicity.All.length) => None
     case index: Int => Some(Periodicity.All(index))
   }
@@ -53,22 +53,12 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   /** Compares this periodicity to that periodicity based on length.
    */
   def compare(that: Periodicity): Int = Periodicity.All.indexOf(this).compare(Periodicity.All.indexOf(that))
-
-  override def equals(that: Any): Boolean = that match {
-    case that: Periodicity => this.name == that.name
-
-    case _ => false
-  }
-
-  override def hashCode = name.hashCode
-
-  override def toString = self.productPrefix.toLowerCase
 }
 
 object Periodicity {
-  private[analytics] lazy val Zero = new DateTime(0, DateTimeZone.UTC)
+  private[analytics] val Zero = new DateTime(0, DateTimeZone.UTC)
 
-  private[analytics] lazy val Inf = new DateTime(Long.MaxValue, DateTimeZone.UTC)
+  private[analytics] val Inf = new DateTime(Long.MaxValue, DateTimeZone.UTC)
 
   case object Second extends Periodicity {
     def floor(time: DateTime) = time.withMillisOfSecond(0)
@@ -118,6 +108,7 @@ object Periodicity {
     def increment(time: DateTime, amount: Int = 1) = Inf
   }
 
+  // WARNING! IF YOU MAKE THIS NON-LAZY, SHIT STOPS WORKING.
   lazy val All = Second   ::
                  Minute   ::
                  Hour     ::
@@ -128,6 +119,7 @@ object Periodicity {
                  Eternity ::
                  Nil
 
+  // WARNING! IF YOU MAKE THIS NON-LAZY, SHIT STOPS WORKING.
   lazy val Default = Periodicity.Minute to Periodicity.Eternity
 
   def byName(name: String): Periodicity = All.find(_.name == name.toLowerCase).getOrElse(error("Invalid periodicity name: " + name))
