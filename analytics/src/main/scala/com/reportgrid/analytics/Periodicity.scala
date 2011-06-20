@@ -108,19 +108,17 @@ object Periodicity {
     def increment(time: DateTime, amount: Int = 1) = Inf
   }
 
-  // WARNING! IF YOU MAKE THIS NON-LAZY, SHIT STOPS WORKING.
-  lazy val All = Second   ::
-                 Minute   ::
-                 Hour     ::
-                 Day      ::
-                 Week     ::
-                 Month    ::
-                 Year     ::
-                 Eternity ::
-                 Nil
+  val All = Second   ::
+            Minute   ::
+            Hour     ::
+            Day      ::
+            Week     ::
+            Month    ::
+            Year     ::
+            Eternity ::
+            Nil
 
-  // WARNING! IF YOU MAKE THIS NON-LAZY, SHIT STOPS WORKING.
-  lazy val Default = Periodicity.Minute to Periodicity.Eternity
+  val Default = Periodicity.Minute to Periodicity.Eternity
 
   def byName(name: String): Periodicity = All.find(_.name == name.toLowerCase).getOrElse(error("Invalid periodicity name: " + name))
 

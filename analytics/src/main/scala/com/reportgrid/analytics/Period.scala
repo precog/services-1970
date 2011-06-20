@@ -43,7 +43,7 @@ class Period private (val periodicity: Periodicity, _start: DateTime) extends Or
   }
 
   override def equals(that: Any) = that match {
-    case that @ Period(`periodicity`, _) => this.start.getMillis == that.start.getMillis
+    case that @ Period(`periodicity`, _, _) => this.start.getMillis == that.start.getMillis
     case _ => false
   }
 
@@ -64,5 +64,5 @@ object Period {
     new Period(periodicity, flooredStart)
   }
 
-  def unapply(p: Period): Option[(Periodicity, DateTime)] = Some((p.periodicity, p.start))
+  def unapply(p: Period): Option[(Periodicity, DateTime, DateTime)] = Some((p.periodicity, p.start, p.end))
 }

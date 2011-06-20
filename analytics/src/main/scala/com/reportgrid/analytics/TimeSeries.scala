@@ -2,6 +2,7 @@ package com.reportgrid.analytics
 
 import Periodicity._
 
+import blueeyes._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonParser._
 import blueeyes.json.xschema._
@@ -87,6 +88,12 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime
     )
   }
 
+  def slice(start: DateTime, end: DateTime) = {
+    val minTime = periodicity.floor(start)
+    val maxTime = periodicity.ceil(end)
+    TimeSeries(periodicity, series.filter(t => t._1 >= minTime && t._1 < maxTime))
+  }
+
   /** Combines the data in this time series with the data in that time series.
    */
   def + (that: TimeSeries[T]): TimeSeries[T] = {
@@ -144,35 +151,76 @@ object TimeSeriesEncoding {
 
 class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
   def expand(start: DateTime, end: DateTime): Stream[Period] = {
-    def expand0(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
-      import Stream._
+    import Stream._
 
-      def expandFiner(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
-        periodicity.previousOption.filter(grouping.contains).
-        map(expand0(start, end, _)).
-        getOrElse {
-          val length = end.getMillis - start.getMillis
-          val period = periodicity.period(start)
+    def expandFiner(start: DateTime, end: DateTime, periodicity: Periodicity, 
+                    expansion: (DateTime, DateTime, Periodicity) => Stream[Period]): Stream[Period] = {
 
-          if (length.toDouble / period.size.getMillis >= 0.5) period +: Empty else Empty
-        }
+      periodicity.previousOption.filter(grouping.contains).
+      map(expansion(start, end, _)).
+      getOrElse {
+        val length = end.getMillis - start.getMillis
+        val period = periodicity.period(start)
+
+        if (length.toDouble / period.size.getMillis >= 0.5) period +: Empty else Empty
       }
+    }
 
+    def expandBoth(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
       if (start.getMillis >= end.getMillis) Empty 
       else {
         val periods = periodicity.period(start) to end
         val head = periods.head
         val tail = periods.tail
 
-        if (periods.tail.isEmpty) expandFiner(start, end, periodicity)
+        if (tail.isEmpty) expandFiner(start, end, periodicity, expandBoth _)
         else {
-          expandFiner(start, head.end, periodicity) ++ 
+          expandFiner(start, head.end, periodicity, expandLeft _) ++ 
           tail.init ++ 
-          expandFiner(tail.last.start, end, periodicity)
+          expandFiner(tail.last.start, end, periodicity, expandRight _)
         }
       }
     }
 
-    expand0(start, end, Periodicity.Year)
+    def expandLeft(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
+      if (start.getMillis >= end.getMillis) Empty 
+      else {
+        val periods = (periodicity.period(start) until end)
+        expandFiner(start, periods.head.end, periodicity, expandLeft _) ++ periods.tail
+      }
+    }
+
+    def expandRight(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
+      if (start.getMillis >= end.getMillis) Empty 
+      else {
+        val periods = (periodicity.period(start) to end)
+        periods.init ++ expandFiner(periods.last.start, end, periodicity, expandRight _)
+      }
+    }
+
+    expandBoth(start, end, Periodicity.Year)
   }
+
+  def queriableExpansion(start: DateTime, end: DateTime): Stream[(Periodicity, DateTime, DateTime)] = {
+    queriableExpansion(expand(start, end))
+  }
+
+  def queriableExpansion(expansion: Stream[Period]) = {
+    def qe(expansion: Stream[Period], results: Stream[(Periodicity, DateTime, DateTime)]): Stream[(Periodicity, DateTime, DateTime)]  = {
+      if (expansion.isEmpty) results
+      else {
+        val Period(periodicity, nstart, nend) = expansion.head
+        results match {
+          case Stream.Empty => qe(expansion.tail, (periodicity, nstart, nend) #:: results)
+          case (`periodicity`, start, `nstart`) #:: rest => qe(expansion.tail, (periodicity, start, nend) #:: rest)
+          case currentHead #:: rest => currentHead #:: qe(expansion.tail, (periodicity, nstart, nend) #:: rest)
+        }
+      }
+    }
+
+    qe(expansion, Stream.Empty)
+  }
+
+
+
 }
