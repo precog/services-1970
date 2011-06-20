@@ -220,7 +220,4 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
 
     qe(expansion, Stream.Empty)
   }
-
-
-
 }

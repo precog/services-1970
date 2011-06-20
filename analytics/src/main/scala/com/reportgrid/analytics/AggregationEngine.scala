@@ -255,12 +255,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  private def searchPeriod[T](start: Option[DateTime], end: Option[DateTime], f: Period => Future[T]): Future[List[T]] = {
+  private def searchPeriod[T](start: Option[DateTime], end: Option[DateTime], f: (Periodicity, Option[DateTime], Option[DateTime]) => Future[T]): Future[List[T]] = {
     Future {
       (start <**> end) {
-        (start, end) => timeSeriesEncoding.expand(start, end) map f
+        (start, end) => timeSeriesEncoding.queriableExpansion(start, end) map {
+          case (p, s, e) => f(p, Some(s), Some(e))
+        }
       } getOrElse {
-        f(Period.Eternity) :: Nil
+        f(Periodicity.Eternity, None, None) :: Nil
       }.toSeq: _*
     }
   }
@@ -269,14 +271,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
                   start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
 
-    searchPeriod(start, end, searchSeries(token, path, observation, _: Period)) map {
+    searchPeriod(start, end, searchSeries(token, path, observation, _, _, _)) map {
       _.map(_.total).asMA.sum
     }
-  }
-
-  def searchSeries(token: Token, path: Path, observation: Observation[HasValue], period: Period): Future[TimeSeriesType] = {
-    if (period == Period.Eternity) searchSeries(token, path, observation, Periodicity.Eternity, None, None)
-    else searchSeries(token, path, observation, period.periodicity, Some(period.start), Some(period.end))
   }
 
   /** Retrieves a time series of counts of the specified observed state
@@ -319,7 +316,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor],
                      start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[CountType]] = {
 
-    searchPeriod(start, end, intersectSeries(token, path, properties, _: Period)) map {
+    searchPeriod(start, end, intersectSeries(token, path, properties, _, _, _)) map {
       _.foldLeft(SortedMap.empty[List[JValue], CountType](ListJValueOrdering)) {
         case (total, partialResult) => partialResult.foldLeft(total) {
           case (total, (key, timeSeries)) => 
@@ -327,11 +324,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         }
       } 
     }
-  }
-
-  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], period: Period): Future[IntersectionResult[TimeSeriesType]] = {
-    if (period == Period.Eternity) intersectSeries(token, path, properties, Periodicity.Eternity, None, None)
-    else intersectSeries(token, path, properties, period.periodicity, Some(period.start), Some(period.end))
   }
 
   def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], 
@@ -441,7 +433,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
             if (startFloor.forall(_.getMillis <= ltime) && endCeil.forall(_.getMillis > ltime)) 
                series + ((new DateTime(ltime), count.deserialize[CountType]))
             else series
-        }
+        } 
 
       case x => error("Unexpected serialization format for time series count data: " + renderNormalized(x))
     }
