@@ -105,7 +105,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(10, toDuration(1000).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(1, toDuration(10000).milliseconds)
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
     case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
@@ -273,6 +273,30 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
     }
 
+    "count observations of a given value in a restricted time slice" in {
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+
+      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+
+      var expectedPeriods = Set.empty[Period]
+      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
+        case (map, Event(JObject(JField("tweeted", obj) :: Nil), time)) =>
+          expectedPeriods += (granularity.period(time))
+          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+
+        case (map, _) => map
+      }
+
+      expectedCounts.map {
+        case (values, count) =>
+          val observation = variables.zip(values.map(v => HasValue(v))).toSet
+
+          engine.searchCount(Token.Test, "/test", observation, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(count))
+      }
+    }
+
     "retrieve intersection counts" in {      
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
@@ -287,6 +311,27 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
 
       engine.intersectCount(Token.Test, "/test", descriptors) must whenDelivered (beEqualTo(expectedCounts)) 
+    }
+
+    "retrieve intersection counts for a slice of time" in {      
+      println("intersection time slice")
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val expectedTotals = valueCounts(events)
+
+      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+
+      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
+        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+
+          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+
+        case (map, _) => map
+      }
+
+      engine.intersectCount(Token.Test, "/test", descriptors, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
     }
   }
 

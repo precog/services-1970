@@ -424,16 +424,16 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   private def deserializeTimeSeries(jv: JValue, granularity: Periodicity, start: Option[DateTime], end: Option[DateTime]): TimeSeriesType = {
     val startFloor = start.map(granularity.floor)
-    val endCeil = end.map(granularity.ceil)
     (jv \ "counts") match {
       case JObject(fields) => 
         fields.foldLeft(TimeSeries.empty[CountType](granularity)) {
           case (series, JField(time, count)) => 
             val ltime = time.toLong 
-            if (startFloor.forall(_.getMillis <= ltime) && endCeil.forall(_.getMillis > ltime)) 
+            if (startFloor.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) 
                series + ((new DateTime(ltime), count.deserialize[CountType]))
             else series
         } 
+
 
       case x => error("Unexpected serialization format for time series count data: " + renderNormalized(x))
     }
