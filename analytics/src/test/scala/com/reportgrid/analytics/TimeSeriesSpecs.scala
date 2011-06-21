@@ -11,6 +11,25 @@ import Arbitrary._
 
 import scalaz.Scalaz._
 
+class TimeSeriesSpec extends Specification with ArbitraryTime with ScalaCheck {
+  "TimeSeries.fillGaps" should {
+    "create a time series where there are no gaps" in {
+      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: DateTime, time2: DateTime, periodicity: Periodicity) => 
+        (periodicity != Second) ==> {
+          val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
+          
+          val allDates = periodicity.period(start).datesTo(end).toSet
+          val testSeries = allDates.filter(_ => scala.util.Random.nextBoolean).foldLeft(TimeSeries.empty[Int](periodicity) + ((start, 0)) + ((end, 0))) {
+            (series, date) => series + ((date, scala.util.Random.nextInt))
+          }
+
+          testSeries.fillGaps.series.keySet == allDates
+        }
+      } must pass
+    }
+  }
+}
+
 class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with ScalaCheck {
   "TimeSeriesEncoding.expand" should {
     val encoding = TimeSeriesEncoding.Default

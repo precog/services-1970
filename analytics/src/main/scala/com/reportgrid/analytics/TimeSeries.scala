@@ -52,15 +52,9 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime
     if (series.isEmpty) this
     else {
       import blueeyes.util._
-      val startTimes = series.keys
-
-      TimeSeries(
-        periodicity,
-        (periodicity.period(startTimes.min) to startTimes.max).foldLeft(series) { (series, period) =>
-          if (series.contains(period.start)) series
-          else series + (period.start -> aggregator.zero)
-        }
-      )
+      TimeSeries(periodicity, ((periodicity.period(series.keys.min) datesTo series.keys.max)).foldLeft(series) {
+        (series, date) => series + (date -> (series.getOrElse(date, aggregator.zero)))
+      })
     }
   }
 

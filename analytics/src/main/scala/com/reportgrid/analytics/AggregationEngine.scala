@@ -470,9 +470,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     Future {
       intervalFilters.map(filter => database(selectOne(".counts").from(col).where(filter))): _*
     } map {
-      _.flatten.foldLeft(TimeSeries.empty[CountType](granularity)) { 
-        (cur, jv) => cur + deserializeTimeSeries(jv, granularity, start, end) 
-      } 
+      _.flatten.
+        foldLeft(TimeSeries.empty[CountType](granularity)) {
+          (cur, jv) => cur + deserializeTimeSeries(jv, granularity, start, end)
+        }.
+        fillGaps
     }
   }
 
@@ -597,7 +599,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 object AggregationEngine {
   private val seriesId = "seriesId"
   private val valuesId = "valuesId"
-
 
   private val CollectionIndices = Map(
     "variable_series" -> Map(

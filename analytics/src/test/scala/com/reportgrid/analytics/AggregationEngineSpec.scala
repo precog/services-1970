@@ -105,7 +105,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(1, toDuration(10000).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(20, toDuration(500).milliseconds)
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
     case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>

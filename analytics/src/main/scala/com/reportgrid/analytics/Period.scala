@@ -31,15 +31,21 @@ class Period private (val periodicity: Periodicity, _start: DateTime) extends Or
   def to(that: DateTime): Stream[Period] = {
     import Stream.{cons, empty}
 
-    if (this.start.getMillis > that.getMillis) empty
+    if (this.periodicity == Periodicity.Eternity) cons(Period.Eternity, empty)
+    else if (this.start.getMillis > that.getMillis) empty
     else cons(this, next.to(that))
   }
 
+  def datesTo(that: DateTime): Stream[DateTime] = to(that).map(_.start)
+
   def until(that: DateTime): Stream[Period] = {
     val s = to(that)
+    if (s.headOption.isEmpty) Stream.Empty else s.init
+  }
 
-    if (s.headOption.isEmpty) Stream.empty
-    else s.init
+  def datesUntil(that: DateTime): Stream[DateTime] = {
+    val s = datesTo(that)
+    if (s.headOption.isEmpty) Stream.Empty else s.init
   }
 
   override def equals(that: Any) = that match {

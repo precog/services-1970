@@ -47,6 +47,7 @@ class TokenManager private (database: MongoDatabase, tokensCollection: MongoColl
   val tokenCache = Cache.concurrent[String, Token](CacheSettings(ExpirationPolicy(None, None, MILLISECONDS)))
   tokenCache.put(Token.Root.tokenId, Token.Root)
   tokenCache.put(Token.Test.tokenId, Token.Test)
+  tokenCache.put(Token.Benchmark.tokenId, Token.Benchmark)
 
   /** Look up the specified token.
    */

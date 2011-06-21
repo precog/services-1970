@@ -23,6 +23,7 @@ import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 
 case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager)
+
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString {
   def mongoFactory(configMap: ConfigMap): Mongo
 
