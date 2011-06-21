@@ -55,6 +55,16 @@ object Token {
     limits         = Limits(order = 2, depth = 3, limit = 20)
   )
 
+  lazy val Benchmark = Token(
+    tokenId        = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
+    parentTokenId  = Some(Root.tokenId),
+    accountTokenId = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D",
+    path           = "test-account-benchmark",
+    permissions    = Permissions(true, true, true),
+    expires        = Never,
+    limits         = Limits(order = 3, depth = 5, limit = 20)
+  )
+
   def newAccount(path: Path, limits: Limits, permissions: Permissions = Permissions.All, expires: DateTime = Never): Token = {
     val newTokenId = newUUID()
 

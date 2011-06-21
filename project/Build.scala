@@ -54,8 +54,8 @@ object ServicesBuild extends Build {
 
     val benchmarkSettings = serviceSettings ++ Seq(
       libraryDependencies ++= Seq(
-        "com.reportgrid"          %% "blueeyes"    % "0.4.0",
-        "com.reportgrid"          %% "reportgrid-client" % "0.3.0",
+        "com.reportgrid"          %% "blueeyes"    % "0.4.0" % "compile",
+        "com.reportgrid"          %% "reportgrid-client" % "0.3.0" % "compile",
         "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile"
       ),
       mainClass := Some("com.reportgrid.benchmark.AnalyticsBenchmark")

@@ -27,13 +27,15 @@ import com.reportgrid.analytics.persistence.MongoSupport._
 
 object TokenManager {
   def apply(database: MongoDatabase, tokensCollection: MongoCollection) = {
-    val RootTokenJ: JObject = Token.Root.serialize.asInstanceOf[JObject]
-    val TestTokenJ: JObject = Token.Test.serialize.asInstanceOf[JObject]
+    val RootTokenJ: JObject      = Token.Root.serialize.asInstanceOf[JObject]
+    val TestTokenJ: JObject      = Token.Test.serialize.asInstanceOf[JObject]
+    val BenchmarkTokenJ: JObject = Token.Benchmark.serialize.asInstanceOf[JObject]
 
-    val rootTokenFuture = database[JNothing.type](upsert(tokensCollection).set(RootTokenJ)).toUnit
-    val testTokenFuture = database[JNothing.type](upsert(tokensCollection).set(TestTokenJ)).toUnit
+    val rootTokenFuture  = database[JNothing.type](upsert(tokensCollection).set(RootTokenJ)).toUnit
+    val testTokenFuture  = database[JNothing.type](upsert(tokensCollection).set(TestTokenJ)).toUnit
+    val benchTokenFuture = database[JNothing.type](upsert(tokensCollection).set(BenchmarkTokenJ)).toUnit
 
-    (rootTokenFuture zip testTokenFuture) map {
+    (rootTokenFuture zip testTokenFuture zip benchTokenFuture) map {
       tokens => new TokenManager(database, tokensCollection)
     }
   }
@@ -87,16 +89,15 @@ class TokenManager private (database: MongoDatabase, tokensCollection: MongoColl
    */
   def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Token] = {
     if (parent.canShare) {
-      val newToken = ((parent == Token.Root) match {
-        // This is a customer token being used to create a child token:
-        case false => parent.issue(path, permissions, expires, limits)
-
+      val newToken = if (parent == Token.Root) {
         // This is the root token being used to create a new account:
-        case true => Token.newAccount(path, limits, permissions, expires)
-      })
+        Token.newAccount(path, limits, permissions, expires)
+      } else {
+        // This is a customer token being used to create a child token:
+        parent.issue(path, permissions, expires, limits)
+      }
 
       val tokenJ = newToken.serialize.asInstanceOf[JObject]
-
       database[JNothing.type](insert(tokenJ).into(tokensCollection)) map (_ => newToken)
     } else {
       Future.dead(new Exception("Token " + parent + " does not have permission to share"))

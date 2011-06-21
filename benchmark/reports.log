@@ -1,0 +1,8 @@
+
+Can't load 'akka.conf'.
+One of the three ways of locating the 'akka.conf' file needs to be defined:
+	1. Define the '-Dakka.config=...' system property option.
+	2. Put the 'akka.conf' file on the classpath.
+	3. Define 'AKKA_HOME' environment variable pointing to the root of the Akka distribution.
+I have no way of finding the 'akka.conf' configuration file.
+Using default values everywhere.

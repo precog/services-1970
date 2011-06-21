@@ -14,12 +14,14 @@ import com.reportgrid.analytics.{Token, RunningStats}
 import com.reportgrid.api._
 import com.reportgrid.api.blueeyes._
 import com.reportgrid.api.Series._
-import scala.collection.mutable.ArrayBuffer
 
 import net.lag.configgy.Configgy
 import net.lag.configgy.Config
+import org.joda.time.DateTime
 
 import scala.actors.Actor._
+import scala.collection.mutable.ArrayBuffer
+
 import org.scalacheck.Gen._
 
 object AnalyticsBenchmark {
@@ -34,8 +36,10 @@ object AnalyticsBenchmark {
       println("""
         benchmarkToken = "your-token"
         benchmarkUrl = "http://benchmark-server/"
+        benchmarkPath = "myPath"
         resultsToken = "your-token"
         resultsUrl = "http://results-server/"
+        resultsPath = "benchmark-results"
         maxRate = 1000 # in samples/second
         samplesPerTestRate = 1000 # number of samples to send
       """)
@@ -45,39 +49,56 @@ object AnalyticsBenchmark {
   }
 
   def run(config: Config) = {
-    val benchmarkToken = config.getString("benchmarkToken", Token.Test.tokenId)
+    val clockSystem = ClockSystem.clockSystem
+    val startTime = clockSystem.now()
+    val benchmarkToken = config.getString("benchmarkToken", Token.Benchmark.tokenId)
     val benchmarkUrl = config.getString("benchmarkUrl", "http://localhost:8888")
 
     val resultsToken = config.getString("resultsToken", Token.Test.tokenId)
     val resultsUrl = config.getString("resultsUrl", "http://localhost:8889")
+    val resultsStream = config.getString("outStream") match {
+      case Some("/dev/null") => new java.io.PrintStream(new java.io.OutputStream {
+        override def write(i: Int) = ()
+      })
 
-    val testSystem = new BlueEyesReportGridClient {
-      val tokenId = benchmarkToken
-      val config = ReportGridConfig(benchmarkUrl)
-      val httpClient = new HttpClientApache
+      case _ => System.out
     }
 
-    val resultsSystem = new BlueEyesReportGridClient {
-      val tokenId = resultsToken
-      val config = ReportGridConfig(resultsUrl)
-      val httpClient = new HttpClientApache
-    }
+    val testSystem = BenchmarkApi( 
+      new BlueEyesReportGridClient {
+        val tokenId = benchmarkToken
+        val config = ReportGridConfig(benchmarkUrl)
+        val httpClient = new HttpClientApache
+      },
+      config.getString("benchmarkPath", "/benchmark/" + startTime.toDate.getTime)
+    )
+
+    val resultsSystem = BenchmarkApi(
+      new BlueEyesReportGridClient {
+        val tokenId = resultsToken
+        val config = ReportGridConfig(resultsUrl)
+        val httpClient = new HttpClientApache
+      },
+      config.getString("resultsPath", "/benchmark-results")
+    )
 
     val conf = new SamplingConfig {
-        override val clock = ClockSystem.clockSystem
+        override val clock = clockSystem
         override val maxRate = config.getLong("maxRate", 1000)
         override val samplesPerTestRate = config.getLong("samplesPerTestRate", 1000)
         override val sampleSet = new DistributedSampleSet(
-          Vector(containerOfN[List, Int](100, choose(0, 50)).sample.get: _*),
-          Vector(containerOfN[List, String](1000, for (i <- choose(3, 30); chars <- containerOfN[Array, Char](i, alphaChar)) yield new String(chars)).sample.get: _*),
+          //Vector(containerOfN[List, Int](100, choose(0, 50)).sample.get: _*),
+          //Vector(containerOfN[List, String](1000, for (i <- choose(3, 30); chars <- containerOfN[Array, Char](i, alphaChar)) yield new String(chars)).sample.get: _*),
           10
         )
     }
 
-    val benchmark = new AnalyticsBenchmark(testSystem, resultsSystem, conf, System.out)
+    val benchmark = new AnalyticsBenchmark(testSystem, resultsSystem, conf, startTime, resultsStream)
     benchmark.run()
   }
 }
+
+case class BenchmarkApi(client: BlueEyesReportGridClient, path: String)
 
 trait SamplingConfig {
   def clock: Clock
@@ -98,7 +119,13 @@ trait SampleSet {
   def next: (JObject, SampleSet)
 }
 
-case class DistributedSampleSet(sampleInts: Vector[Int], sampleStrings: Vector[String], queriableSampleSize: Int, queriableSamples: Option[List[JObject]] = None) extends SampleSet { self =>
+object AdSamples {
+  val genders = List("male", "female")
+  val ageRanges = List("0-17", "18-24", "25-36", "37-48", "49-60", "61-75", "76-130")
+  val platforms = List("android", "iphone", "web", "blackberry", "other")
+  val campaigns = for (i <- 0 to 30) yield "c" + i
+  val eventNames = List("impression", "click", "conversion")
+
   def gaussianIndex(size: Int): Int = {
     // multiplying by size / 5 means that 96% of the time, the sampled value will be within the range and no second try will be necessary
     val testIndex = (scala.util.Random.nextGaussian * (size / 5)) + (size / 2)
@@ -110,14 +137,17 @@ case class DistributedSampleSet(sampleInts: Vector[Int], sampleStrings: Vector[S
     import scala.math._
     round(exp(-random * 8) * size).toInt.min(size - 1).max(0)
   }
+}
 
+case class DistributedSampleSet(queriableSampleSize: Int, queriableSamples: Option[List[JObject]] = None) extends SampleSet { self =>
+  import AdSamples._
   def next = {
     val sample = JObject(
-      JField("exp_str", sampleStrings(exponentialIndex(sampleStrings.size))) ::
-      JField("exp_int", sampleInts(exponentialIndex(sampleInts.size))) ::
-      JField("normal_str", sampleStrings(gaussianIndex(sampleStrings.size))) ::
-      JField("normal_int", sampleInts(gaussianIndex(sampleInts.size))) ::
-      JField("uniform_int", sampleInts(scala.util.Random.nextInt(sampleInts.size))) :: Nil
+      JField("gender", oneOf(genders).sample) ::
+      JField("platform", platforms(exponentialIndex(platforms.size))) ::
+      JField("campaign", campaigns(gaussianIndex(campaigns.size))) ::
+      JField("cpm", chooseNum(1, 100).sample) ::
+      JField("ageRange", ageRanges(gaussianIndex(ageRanges.size))) :: Nil
     )
     
     (sample, if (queriableSamples.exists(_.size >= queriableSampleSize)) this else this.copy(queriableSamples = Some(sample :: self.queriableSamples.getOrElse(Nil))))
@@ -149,7 +179,9 @@ sealed trait Timing
 case class TrackTime(time: Long) extends Timing
 case class QueryTime(queryType: QueryType, time: Long) extends Timing
 
-class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyesReportGridClient, conf: SamplingConfig, resultsStream: java.io.PrintStream) {
+class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: SamplingConfig, startTime: DateTime, resultsStream: java.io.PrintStream) {
+  import AdSamples._
+
   def run(): Unit = {
 		val rateStep = conf.maxRate / 5
 		for (rate <- rateStep to conf.maxRate by rateStep) {
@@ -158,8 +190,6 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
   }
 
   def benchmark(rate: Long): Unit = {
-    val startTime = conf.clock.now()
-    val benchmarkPath = "/benchmark/" + startTime.toDate.getTime
     val benchmarkExecutor = Executors.newScheduledThreadPool(4)
     val resultsExecutor = Executors.newScheduledThreadPool(1)
     val done = new CountDownLatch(1)
@@ -186,9 +216,9 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
           case Sample(sample) => 
             val start = System.nanoTime
             try {
-              testApi.track(
-                path       = benchmarkPath,
-                name       = "track",
+              testApi.client.track(
+                path       = testApi.path,
+                name       = eventNames(exponentialIndex(eventNames.size)),
                 properties = sample,
                 rollup     = false,
                 timestamp  = Some(conf.clock.now().toDate)
@@ -216,19 +246,19 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
 
             try {
               //count
-              time(testApi.select(Count).of(".track").from(benchmarkPath), QueryTime(QueryType.Count, _))
+              time(testApi.client.select(Count).of(".track").from(testApi.path), QueryTime(QueryType.Count, _))
 
               //select
-              time(testApi.select(Minute(Some((startTime.toDate, conf.clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Series,_))
+              time(testApi.client.select(Minute(Some((startTime.toDate, conf.clock.now().toDate)))).of(".track").from(testApi.path), QueryTime(QueryType.Series,_))
 
               //search
-              //time(testApi.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(benchmarkPath), QueryTime(QueryType.Search,_))
+              //time(testApi.client.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(testApi.path), QueryTime(QueryType.Search,_))
 
               //intersect
               if (sampleKeys.size > 1) {
                 val k1 :: k2 :: Nil = sampleKeys.take(2).toList
                 time(
-                    testApi.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(benchmarkPath),
+                    testApi.client.intersect(Count).top(20).of(k1).and.top(20).of(k2).from(testApi.path),
                     QueryTime(QueryType.Intersect, _)
                 )
               }
@@ -271,8 +301,8 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
         react {
           case TrackTime(time) => 
             trackStats = trackStats.update(time, 1)
-            resultsApi.track(
-              path       = benchmarkPath,
+            resultsApi.client.track(
+              path       = resultsApi.path,
               name       = "track",
               properties = JObject(List(JField("time", JInt(time)))),
               rollup     = false,
@@ -281,8 +311,8 @@ class AnalyticsBenchmark(testApi: BlueEyesReportGridClient, resultsApi: BlueEyes
 
           case QueryTime(queryType, time) => 
             queryStats = queryStats.update(time, 1)
-            resultsApi.track(
-              path       = benchmarkPath + "/" + queryType,
+            resultsApi.client.track(
+              path       = resultsApi.path + "/" + queryType.toString.toLowerCase,
               name       = "query",
               properties = JObject(List(JField("time", JInt(time)))),
               rollup     = false,
