@@ -24,14 +24,14 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.scalacheck.Gen._
 
-object AnalyticsBenchmark {
+object AnalyticsTool {
   def main(argv: Array[String]): Unit = {
     val args = CommandLineArguments(argv: _*)
     if (args.parameters.get("configFile").isDefined) {
       Configgy.configure(args.parameters.get("configFile").get)
-      run(Configgy.config)
+      Task(args.parameters.get("task").getOrElse("benchmark")).run(Configgy.config)
     } else {
-      println("Usage: --configFile [filename]")
+      println("Usage: --task [benchmark | token] --configFile [filename]")
       println("Config file format:")
       println("""
         benchmarkToken = "your-token"
@@ -47,7 +47,22 @@ object AnalyticsBenchmark {
       System.exit(-1)
     }
   }
+}
 
+sealed trait Task {
+  def run(config: Config): Unit
+}
+
+object Task {
+  def apply(s: String): Task = s match {
+    case "benchmark" => BenchmarkTask
+    case x => 
+      println("Unknown task: " + x)
+      sys.exit(1)
+  }
+}
+
+case object BenchmarkTask extends Task {
   def run(config: Config) = {
     val clockSystem = ClockSystem.clockSystem
     val startTime = clockSystem.now()

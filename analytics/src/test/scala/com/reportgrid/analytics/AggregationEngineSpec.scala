@@ -94,8 +94,10 @@ trait LocalMongo {
   """.format(dbName)
 }
 
-class AggregationEngineSpec extends Specification with PendingUntilFixed with ScalaCheck 
+class AggregationEngineSpec extends Specification with PendingUntilFixed 
 with ArbitraryEvent with FutureMatchers with LocalMongo {
+  import AggregationEngine._
+
   val config = (new Config()) ->- (_.load(mongoConfigFileData))
 
   val mongo = new RealMongo(config.configMap("mongo")) 
@@ -246,10 +248,14 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
           val observation = Obs.ofValue(Variable(JPath(eventName) \ path), value)
-          engine.searchSeries(
+          val results = engine.searchSeries(
             Token.Test, "/test", observation, granularity, Some(minDate), Some(maxDate)
-          ) map (_.total) must whenDelivered {
-            beEqualTo(count.toLong)
+          ) must whenDelivered {
+            verify {
+              results => 
+                (results.total must_== count.toLong) && 
+                (results.series must haveSize((granularity.period(minDate) to maxDate).size))
+            }
           }
       }
     }
@@ -314,7 +320,6 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve intersection counts for a slice of time" in {      
-      println("intersection time slice")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events)
@@ -332,6 +337,57 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
 
       engine.intersectCount(Token.Test, "/test", descriptors, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
+    }
+
+    "retrieve intersection series for a slice of time" in {      
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val expectedTotals = valueCounts(events)
+
+      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Variable(".tweeted.twitterClient") :: Nil
+      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+
+      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
+        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+
+          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+
+        case (map, _) => map
+      }
+
+      engine.intersectSeries(Token.Benchmark, "/test", descriptors, granularity, Some(minDate), Some(maxDate)) must whenDelivered {
+        verify { results => 
+          // all returned results must have the same length of time series
+          val sizes = results.values.map(_.series.size).toList
+          results must notBeEmpty
+          sizes.zip(sizes.tail).forall { case (a, b) => a must_== b }
+        }
+      }
+    }
+
+    // this test is here because it's testing internals of the analytics service
+    // which are not exposed though the analytics api
+    "AnalyticsService.serializeIntersectionResult must not create duplicate information" in {
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Variable(".tweeted.twitterClient") :: Nil
+      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+
+      def isFullTimeSeries(jobj: JObject): Boolean = {
+        jobj.fields.foldLeft(true) {
+          case (cur, JField(_, jobj @ JObject(_))) => cur && isFullTimeSeries(jobj)
+          case (cur, JField(_, JArray(values))) => cur && (values must notBeEmpty) && (values.toSet.size must_== values.size)
+          case _ => false
+        }
+      }
+
+      engine.intersectSeries(Token.Benchmark, "/test", descriptors, granularity, Some(minDate), Some(maxDate)).
+      map(AnalyticsService.serializeIntersectionResult[TimeSeriesType](_, _.toJValue)) must whenDelivered {
+        beLike {
+          case v @ JObject(_) => isFullTimeSeries(v)
+        }
+      }
     }
   }
 

@@ -25,6 +25,9 @@ import com.reportgrid.analytics.persistence.MongoSupport._
 case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString {
+  import AggregationEngine._
+  import AnalyticsService._
+
   def mongoFactory(configMap: ConfigMap): Mongo
 
   val analyticsService = service("analytics", "0.01") {
@@ -489,18 +492,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   val resultContent = select match {
                     case Count => 
                       aggregationEngine.intersectCount(token, from, properties, start, end).map {
-                        _.foldLeft[JValue](JObject(Nil)) {
-                          case (result, (values, count)) => 
-                            result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), count.serialize)
-                        }
+                        serializeIntersectionResult[CountType](_, _.serialize)
                       }
 
                     case Series(p) => 
                       aggregationEngine.intersectSeries(token, from, properties, p, start, end).map {
-                        _.foldLeft[JValue](JObject(Nil)) {
-                          case (result, (values, series)) => 
-                            result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), series.toJValue)
-                        }
+                        serializeIntersectionResult[TimeSeriesType](_, _.toJValue)
                       }
                   }
                   
@@ -563,6 +560,16 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           state.aggregationEngine.stop
         }
       }
+    }
+  }
+}
+
+object AnalyticsService {
+  import AggregationEngine._
+  def serializeIntersectionResult[T](result: IntersectionResult[T], f: T => JValue) = {
+    result.foldLeft[JValue](JObject(Nil)) {
+      case (result, (values, x)) => 
+        result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), f(x))
     }
   }
 }

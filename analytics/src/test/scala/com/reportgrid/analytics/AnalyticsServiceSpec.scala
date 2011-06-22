@@ -37,16 +37,16 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
   override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(10, 1000L.milliseconds)
 
   "Analytics Service" should {
-    "create events" in {
-      val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get
+    shareVariables()
 
+    val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get ->- {
+      _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
+    }
+
+    "count created events" in {
       lazy val tweetedCount = sampleEvents.count {
         case Event(JObject(JField("tweeted", _) :: Nil), _) => true
         case _ => false
-      }
-
-      for (event <- sampleEvents) {
-        jsonTestService.post[JValue]("/vfs/test")(event.message)
       }
 
       (jsonTestService.get[JValue]("/vfs/test/.tweeted/count")) must whenDelivered {

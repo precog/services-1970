@@ -23,7 +23,7 @@ class TimeSeriesSpec extends Specification with ArbitraryTime with ScalaCheck {
             (series, date) => series + ((date, scala.util.Random.nextInt))
           }
 
-          testSeries.fillGaps.series.keySet == allDates
+          testSeries.fillGaps(Some(start), Some(end)).series.keySet == allDates
         }
       } must pass
     }

@@ -48,14 +48,14 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime
    * behave strangely if the time series contains periods of a different
    * periodicity.
    */
-  def fillGaps: TimeSeries[T] = {
-    if (series.isEmpty) this
-    else {
-      import blueeyes.util._
-      TimeSeries(periodicity, ((periodicity.period(series.keys.min) datesTo series.keys.max)).foldLeft(series) {
+  def fillGaps(start: Option[DateTime], end: Option[DateTime]): TimeSeries[T] = {
+    import blueeyes.util._
+    TimeSeries(
+      periodicity, 
+      ((periodicity.period(start.getOrElse(series.keys.min)) datesTo end.getOrElse(series.keys.max))).foldLeft(series) {
         (series, date) => series + (date -> (series.getOrElse(date, aggregator.zero)))
-      })
-    }
+      }
+    )
   }
 
   def aggregates = {

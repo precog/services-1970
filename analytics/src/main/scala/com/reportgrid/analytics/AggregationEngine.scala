@@ -69,13 +69,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   val EarliestTime = new DateTime(0,             DateTimeZone.UTC)
   val LatestTime   = new DateTime(Long.MaxValue, DateTimeZone.UTC)
 
-  type CountType          = Long
-  type TimeSeriesType   = TimeSeries[CountType]
-
-  type ChildReport        = Report[HasChild, CountType]
   val  ChildReportEmpty   = Report.empty[HasChild, CountType]
 
-  type ValueReport        = Report[HasValue, TimeSeries[CountType]]
   val  ValueReportEmpty   = Report.empty[HasValue, TimeSeries[CountType]]
 
   val timeSeriesEncoding  = TimeSeriesEncoding.Default
@@ -311,8 +306,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  type IntersectionResult[T] = SortedMap[List[JValue], T]
-
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor],
                      start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[CountType]] = {
 
@@ -393,7 +386,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           }
         }.toSeq: _*
       } map {
-        results => SortedMap(results: _*)(resultOrder)
+        _.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType](resultOrder)) {
+          case (results, (k, v)) => results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
+        }
       }
     }
   }
@@ -472,9 +467,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     } map {
       _.flatten.
         foldLeft(TimeSeries.empty[CountType](granularity)) {
-          (cur, jv) => cur + deserializeTimeSeries(jv, granularity, start, end)
+          (cur, jv) => cur + (deserializeTimeSeries(jv, granularity, start, end))
         }.
-        fillGaps
+        fillGaps(start, end)
     }
   }
 
@@ -597,6 +592,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 }
 
 object AggregationEngine {
+  type CountType             = Long
+  type TimeSeriesType        = TimeSeries[CountType]
+  type IntersectionResult[T] = SortedMap[List[JValue], T]
+
+  type ChildReport        = Report[HasChild, CountType]
+  type ValueReport        = Report[HasValue, TimeSeries[CountType]]
+
   private val seriesId = "seriesId"
   private val valuesId = "valuesId"
 
