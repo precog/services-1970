@@ -10,9 +10,9 @@ import blueeyes.util.metrics.Duration
 import blueeyes.util.metrics.Duration.toDuration
 import MimeTypes._
 
+import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
-import blueeyes.json.JPath
 import blueeyes.json.JPathImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.persistence.mongo._
@@ -107,7 +107,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(20, toDuration(500).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(500).milliseconds)
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
     case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
@@ -130,7 +130,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     shareVariables()
 
     val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get ->- {
-      _.foreach(event => engine.aggregate(Token.Test, "/test", event.timestamp, event.data, 1))
+      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.timestamp, event.data, 1))
     }
 
     "count events" in {
@@ -350,18 +350,20 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
-
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
         case (map, _) => map
       }
 
-      engine.intersectSeries(Token.Benchmark, "/test", descriptors, granularity, Some(minDate), Some(maxDate)) must whenDelivered {
+      (engine.intersectSeries(Token.Benchmark, "/test", descriptors, granularity, Some(minDate), Some(maxDate))) must whenDelivered {
         verify { results => 
           // all returned results must have the same length of time series
           val sizes = results.values.map(_.series.size).toList
-          results must notBeEmpty
-          sizes.zip(sizes.tail).forall { case (a, b) => a must_== b }
+
+          (results.values.flatMap(_.series) must notBeEmpty) &&
+          sizes.zip(sizes.tail).forall { case (a, b) => a must_== b } &&
+          (results.values.map(_.periodicity).toSet must haveSize(1)) &&
+          (results.mapValues(_.total).filter(_._2 != 0) must haveTheSameElementsAs(expectedCounts))
         }
       }
     }
@@ -377,7 +379,8 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       def isFullTimeSeries(jobj: JObject): Boolean = {
         jobj.fields.foldLeft(true) {
           case (cur, JField(_, jobj @ JObject(_))) => cur && isFullTimeSeries(jobj)
-          case (cur, JField(_, JArray(values))) => cur && (values must notBeEmpty) && (values.toSet.size must_== values.size)
+          case (cur, JField(_, JArray(values))) => 
+            cur && (values must notBeEmpty) && (values.map{ case JArray(v) => v(0) }.toSet.size must_== values.size)
           case _ => false
         }
       }

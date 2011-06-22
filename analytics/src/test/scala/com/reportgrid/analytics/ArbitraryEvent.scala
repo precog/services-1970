@@ -8,9 +8,9 @@ import org.scalacheck.{Gen, Arbitrary}
 import Gen._
 
 trait ArbitraryEvent extends ArbitraryTime {
-  val Locations = for (i <- 0 to 10; v <- Gen.identifier.sample) yield v
-  val Startups = for (i <- 0 to 50; v <- Gen.identifier.sample) yield v
-  val TwitterClients = for (i <- 0 to 10; v <- Gen.identifier.sample) yield v  
+  val Locations = for (i <- 0 to 10) yield "location" + i
+  val Startups = for (i <- 0 to 50) yield "startup" + i
+  val TwitterClients = for (i <- 0 to 10) yield "client" + i 
   val EventTypes = List("tweeted", "funded")
 
   val genGender = oneOf("male", "female")

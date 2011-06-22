@@ -106,19 +106,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   private val variable_children      = newMongoStage("variable_children")
   private val path_children          = newMongoStage("path_children")
 
-  val ListJValueOrdering = new Ordering[List[JValue]] {
-    import blueeyes.json.xschema.DefaultOrderings.JValueOrdering
-
-    def compare(l1: List[JValue], l2: List[JValue]): Int = {
-      (l1.zip(l2).map {
-        case (v1, v2) => JValueOrdering.compare(v1, v2)
-      }).dropWhile(_ == 0).headOption match {
-        case None => l1.length compare l2.length
-        
-        case Some(c) => c
-      }
-    }
-  }
 
   /** Aggregates the specified data. The object may contain multiple events or
    * just one.
@@ -323,7 +310,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
                       granularity: Periodicity, start: Option[DateTime] = None, end: Option[DateTime] = None): 
                       Future[IntersectionResult[TimeSeriesType]] = {
 
-    internalIntersectSeries(variable_value_series.collection, token, path, properties, granularity, start, end)
+    internalIntersectSeries(variable_value_series.collection, token, path, properties, granularity, start, end) 
   }
 
   private def internalIntersectSeries(
@@ -333,7 +320,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
     val variables = variableDescriptors.map(_.variable)
 
-    val futureHistograms = Future {
+    val futureHistograms: Future[List[Map[HasValue, CountType]]]  = Future {
       variableDescriptors.map { 
         case VariableDescriptor(variable, maxResults, SortOrder.Ascending) =>
           getHistogramBottom(token, path, variable, maxResults).map(_.toMap)
@@ -344,22 +331,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
 
     futureHistograms.flatMap { histograms  => 
-      val resultOrder = new scala.math.Ordering[List[JValue]] {
-        override def compare(l1: List[JValue], l2: List[JValue]) = {
-          val valueOrder = (l1 zip l2).zipWithIndex.foldLeft(0) {
-            case (0, ((v1, v2), i)) => 
-              val m = histograms(i)  
-              variableDescriptors(i).sortOrder match {
-                case SortOrder.Ascending  => -(m(v1) compare m(v2))
-                case SortOrder.Descending =>   m(v1) compare m(v2)
-              }
-             
-            case (x, _) => x
-          }
-
-          if (valueOrder == 0) ListJValueOrdering.compare(l1, l2) else valueOrder
-        }
-      }   
+      implicit val resultOrder = intersectionOrder(variableDescriptors.map(_.sortOrder) zip histograms)
 
       def observations[P <: Predicate](vs: List[Variable]): Iterable[Observation[HasValue]] = {
         def obs(i: Int, v: Variable, vs: List[Variable], o: Observation[HasValue]): Iterable[Observation[HasValue]] = {
@@ -386,8 +358,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           }
         }.toSeq: _*
       } map {
-        _.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType](resultOrder)) {
-          case (results, (k, v)) => results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
+        _.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) {
+          case (results, (k, v)) => 
+            results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
         }
       }
     }
@@ -425,7 +398,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           case (series, JField(time, count)) => 
             val ltime = time.toLong 
             if (startFloor.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) 
-               series + ((new DateTime(ltime), count.deserialize[CountType]))
+               series + ((new DateTime(ltime, DateTimeZone.UTC), count.deserialize[CountType]))
             else series
         } 
 
@@ -436,7 +409,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   private def seriesKeyFilter[P <: Predicate : SignatureGen](token: Token, path: Path, observation: Observation[P],
                                                              period: Period, granularity: Periodicity) = {
-
     JPath("." + seriesId) === hashSignature(
       token.sig ++ path.sig ++ 
       period.sig ++ granularity.sig ++
@@ -465,11 +437,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     Future {
       intervalFilters.map(filter => database(selectOne(".counts").from(col).where(filter))): _*
     } map {
-      _.flatten.
-        foldLeft(TimeSeries.empty[CountType](granularity)) {
-          (cur, jv) => cur + (deserializeTimeSeries(jv, granularity, start, end))
-        }.
-        fillGaps(start, end)
+      _.flatten
+       .foldLeft(TimeSeries.empty[CountType](granularity)) {
+         (cur, jv) => cur + (deserializeTimeSeries(jv, granularity, start, end))
+       }
+       .fillGaps(start, end)
     }
   }
 
@@ -634,5 +606,38 @@ object AggregationEngine {
 
   def apply(config: ConfigMap, logger: Logger, database: MongoDatabase): Future[AggregationEngine] = {
     createIndices(database).map(_ => new AggregationEngine(config, logger, database))
+  }
+
+  val ListJValueOrdering: Ordering[List[JValue]] = new Ordering[List[JValue]] {
+    import blueeyes.json.xschema.DefaultOrderings.JValueOrdering
+
+    def compare(l1: List[JValue], l2: List[JValue]): Int = {
+      (l1.zip(l2).map {
+        case (v1, v2) => JValueOrdering.compare(v1, v2)
+      }).dropWhile(_ == 0).headOption match {
+        case None => l1.length compare l2.length
+        
+        case Some(c) => c
+      }
+    }
+  }
+
+  def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[HasValue, T])]): scala.math.Ordering[List[JValue]] = {
+    new scala.math.Ordering[List[JValue]] {
+      override def compare(l1: List[JValue], l2: List[JValue]) = {
+        val valueOrder = (l1 zip l2).zipWithIndex.foldLeft(0) {
+          case (0, ((v1, v2), i)) => 
+            val (sortOrder, m) = histograms(i)  
+            sortOrder match {
+              case SortOrder.Ascending  => -(m(HasValue(v1)) compare m(HasValue(v2)))
+              case SortOrder.Descending =>   m(HasValue(v1)) compare m(HasValue(v2))
+            }
+           
+          case (x, _) => x
+        }
+
+        if (valueOrder == 0) ListJValueOrdering.compare(l1, l2) else valueOrder
+      }
+    }   
   }
 }

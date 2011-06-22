@@ -1,5 +1,7 @@
 package com.reportgrid.analytics
 
+import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.JsonAST._
 import org.joda.time.{DateTime, Duration}
 import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
@@ -19,11 +21,40 @@ class TimeSeriesSpec extends Specification with ArbitraryTime with ScalaCheck {
           val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
           
           val allDates = periodicity.period(start).datesTo(end).toSet
-          val testSeries = allDates.filter(_ => scala.util.Random.nextBoolean).foldLeft(TimeSeries.empty[Int](periodicity) + ((start, 0)) + ((end, 0))) {
+          val someDates = allDates.filter(_ => scala.util.Random.nextBoolean)
+          val testSeries = someDates.foldLeft(TimeSeries.empty[Int](periodicity) + ((start, 0)) + ((end, 0))) {
             (series, date) => series + ((date, scala.util.Random.nextInt))
           }
 
-          testSeries.fillGaps(Some(start), Some(end)).series.keySet == allDates
+          (someDates.size < allDates.size && allDates.size > 0) ==> {
+            testSeries.fillGaps(Some(start), Some(end)).series.keySet == allDates
+          }
+        }
+      } must pass
+    }
+  }
+
+  "TimeSeries.toJValue" should {
+    "create a JObject with no duplicated timestamps" in {
+      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: DateTime, time2: DateTime, periodicity: Periodicity) => 
+        (periodicity != Second) ==> {
+          val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
+          
+          val allDates = periodicity.period(start).datesTo(end).toSet
+          val someDates = allDates.filter(_ => scala.util.Random.nextBoolean)
+          val testSeries = someDates.foldLeft(TimeSeries.empty[Int](periodicity) + ((start, 0)) + ((end, 0))) {
+            (series, date) => series + ((date, scala.util.Random.nextInt))
+          }
+
+          (someDates.size < allDates.size && allDates.size > 0) ==> {
+            val serializedTimes = testSeries.fillGaps(Some(start), Some(end)).toJValue match {
+              case JObject(List(JField(periodicity.name, JArray(tuples)))) => tuples.map {
+                case JArray(values) => values(0)
+              }
+            }
+
+            serializedTimes.toSet.size == serializedTimes.size
+          }
         }
       } must pass
     }
