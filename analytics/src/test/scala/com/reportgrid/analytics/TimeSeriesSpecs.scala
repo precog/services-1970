@@ -2,7 +2,7 @@ package com.reportgrid.analytics
 
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JsonAST._
-import org.joda.time.{DateTime, Duration}
+import org.joda.time.{Instant, DateTime, Duration}
 import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
@@ -16,7 +16,7 @@ import scalaz.Scalaz._
 class TimeSeriesSpec extends Specification with ArbitraryTime with ScalaCheck {
   "TimeSeries.fillGaps" should {
     "create a time series where there are no gaps" in {
-      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: DateTime, time2: DateTime, periodicity: Periodicity) => 
+      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: Instant, time2: Instant, periodicity: Periodicity) => 
         (periodicity != Second) ==> {
           val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
           
@@ -36,7 +36,7 @@ class TimeSeriesSpec extends Specification with ArbitraryTime with ScalaCheck {
 
   "TimeSeries.toJValue" should {
     "create a JObject with no duplicated timestamps" in {
-      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: DateTime, time2: DateTime, periodicity: Periodicity) => 
+      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: Instant, time2: Instant, periodicity: Periodicity) => 
         (periodicity != Second) ==> {
           val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
           
@@ -66,8 +66,8 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
     val encoding = TimeSeriesEncoding.Default
 
     "correctly expand over a known period" in {
-      val start = Minute.floor(new DateTime("2011-06-20T17:36:33.474-06:00"))
-      val end =   Minute.floor(new DateTime("2011-06-21T09:23:02.005-06:00"))
+      val start = Minute.floor(new DateTime("2011-06-20T17:36:33.474-06:00").toInstant)
+      val end =   Minute.floor(new DateTime("2011-06-21T09:23:02.005-06:00").toInstant)
 
       val expectedDuration = new Duration(start, end)
        
@@ -79,7 +79,7 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
     }
 
     "create periods whose total size is close to the duration between start and end" in {
-      forAll { (time1: DateTime, time2: DateTime) =>
+      forAll { (time1: Instant, time2: Instant) =>
         val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
 
         val expectedDuration = new Duration(start, end)
@@ -93,7 +93,7 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
     }
 
     "create a series where smaller periods are not sandwiched by larger periods" in {
-      forAll { (time1: DateTime, time2: DateTime) =>
+      forAll { (time1: Instant, time2: Instant) =>
         val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
 
         val expansion = encoding.expand(start, end)
@@ -118,7 +118,7 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
     val encoding = TimeSeriesEncoding.Default
 
     "create subsequences whose total size is close to the duration between start and end" in {
-      forAll { (time1: DateTime, time2: DateTime) =>
+      forAll { (time1: Instant, time2: Instant) =>
         val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
 
         val expectedDuration = new Duration(start, end)
@@ -132,7 +132,7 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
     }
 
     "have an expansion that has at most two elements of each periodicity" in {
-      forAll { (time1: DateTime, time2: DateTime) =>
+      forAll { (time1: Instant, time2: Instant) =>
         val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
 
         val expansion = encoding.expand(start, end)

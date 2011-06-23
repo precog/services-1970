@@ -1,6 +1,6 @@
 package com.reportgrid.analytics
 
-import org.joda.time.DateTime
+import org.joda.time.Instant
 import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
@@ -10,9 +10,9 @@ import Periodicity._
 import Arbitrary._
 
 trait ArbitraryTime {
-  val Now = new DateTime()
+  val Now = new Instant()
 
-  val genTime = for (i <- choose(0, 1000 * 60 * 60 * 24)) yield Now.plusMillis(i)
+  val genTime = for (i <- choose(0, 1000 * 60 * 60 * 24)) yield Now.plus(i)
   implicit val arbTime = Arbitrary(genTime)
 
   def genPeriodicity(pers: Periodicity*) = oneOf[Periodicity](pers)

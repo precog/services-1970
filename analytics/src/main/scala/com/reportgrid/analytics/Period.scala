@@ -2,12 +2,12 @@ package com.reportgrid.analytics
 
 import scala.collection.immutable.NumericRange
 
-import org.joda.time.{DateTime, DateTimeZone, Duration}
+import org.joda.time.{Instant, Duration}
 
 /** A globally unique identifier for a particular period in time (second,
  * minute, hour, day, week, month, year, or eternity).
  */
-class Period private (val periodicity: Periodicity, _start: DateTime) extends Ordered[Period] {
+class Period private (val periodicity: Periodicity, _start: Instant) extends Ordered[Period] {
   /** Compares this id and another based first on periodicity, and second on index.
    */
   def compare(that: Period) = (this.periodicity.compare(that.periodicity) :: this.start.getMillis.compare(that.start.getMillis) :: Nil).dropWhile(_ == 0).headOption.getOrElse(0)
@@ -16,7 +16,7 @@ class Period private (val periodicity: Periodicity, _start: DateTime) extends Or
    */
   def size: Duration = new Duration(start, end)
 
-  def contains(time: DateTime): Boolean = time.getMillis >= start.getMillis && time.getMillis < end.getMillis
+  def contains(time: Instant): Boolean = time.getMillis >= start.getMillis && time.getMillis < end.getMillis
 
   def withPeriodicity(p: Periodicity): Period = Period(p, start)
 
@@ -28,7 +28,7 @@ class Period private (val periodicity: Periodicity, _start: DateTime) extends Or
     */
   def next: Period = Period(periodicity, periodicity.increment(start))
 
-  def to(that: DateTime): Stream[Period] = {
+  def to(that: Instant): Stream[Period] = {
     import Stream.{cons, empty}
 
     if (this.periodicity == Periodicity.Eternity) cons(Period.Eternity, empty)
@@ -36,14 +36,14 @@ class Period private (val periodicity: Periodicity, _start: DateTime) extends Or
     else cons(this, next.to(that))
   }
 
-  def datesTo(that: DateTime): Stream[DateTime] = to(that).map(_.start)
+  def datesTo(that: Instant): Stream[Instant] = to(that).map(_.start)
 
-  def until(that: DateTime): Stream[Period] = {
+  def until(that: Instant): Stream[Period] = {
     val s = to(that)
     if (s.headOption.isEmpty) Stream.Empty else s.init
   }
 
-  def datesUntil(that: DateTime): Stream[DateTime] = {
+  def datesUntil(that: Instant): Stream[Instant] = {
     val s = datesTo(that)
     if (s.headOption.isEmpty) Stream.Empty else s.init
   }
@@ -64,11 +64,11 @@ object Period {
   /** Constructs a period from a periodicity and any time occurring within the
    * period.
    */
-  def apply(periodicity: Periodicity, start: DateTime): Period = {
+  def apply(periodicity: Periodicity, start: Instant): Period = {
     val flooredStart = periodicity.floor(start)
 
     new Period(periodicity, flooredStart)
   }
 
-  def unapply(p: Period): Option[(Periodicity, DateTime, DateTime)] = Some((p.periodicity, p.start, p.end))
+  def unapply(p: Period): Option[(Periodicity, Instant, Instant)] = Some((p.periodicity, p.start, p.end))
 }

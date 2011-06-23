@@ -4,8 +4,6 @@ import blueeyes.json.JsonAST._
 import blueeyes.json.JPath
 import blueeyes.json.Printer._
 
-import org.joda.time.{DateTime, DateTimeZone}
-
 package object analytics extends AggregatorImplicits {
   type Observation[A <: Predicate] = Set[(Variable, A)]
 

@@ -1,6 +1,6 @@
 package com.reportgrid.analytics
 
-import org.joda.time.{DateTime, Duration}
+import org.joda.time.{Instant, Duration}
 import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
@@ -23,7 +23,7 @@ class PeriodSpec extends Specification with ArbitraryTime with ScalaCheck {
 
   "Period.to" should {
     "create correct range of periods" in {
-      forAll { (tuple: (Period, DateTime)) =>
+      forAll { (tuple: (Period, Instant)) =>
         tuple match {
           case (start, end) =>
             val actualDuration = (start to end).foldLeft(new Duration(0, 0)) {
@@ -41,7 +41,7 @@ class PeriodSpec extends Specification with ArbitraryTime with ScalaCheck {
 
   "Period.until" should {
     "create correct range of periods" in {
-      forAll { (tuple: (Period, DateTime)) =>
+      forAll { (tuple: (Period, Instant)) =>
         tuple match {
           case (start, end) =>
             val actualDuration = (start until end).foldLeft(new Duration(0, 0)) {

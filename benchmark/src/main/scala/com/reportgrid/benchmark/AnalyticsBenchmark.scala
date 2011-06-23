@@ -357,7 +357,7 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
     def injector: Runnable = new Runnable {
       private var remaining = conf.samplesPerTestRate
       def run: Unit = {
-        if (remaining <= 0) {
+        if (remaining <= 0 && conf.samplesPerTestRate > 0) {
           sampleActor ! Done
           benchmarkExecutor.shutdown()
           resultsExecutor.shutdown()

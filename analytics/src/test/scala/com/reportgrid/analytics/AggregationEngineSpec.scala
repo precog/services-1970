@@ -24,6 +24,7 @@ import net.lag.logging.Logger
 import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
+import scala.math.Ordered._
 import Gen._
 import scalaz._
 import Scalaz._

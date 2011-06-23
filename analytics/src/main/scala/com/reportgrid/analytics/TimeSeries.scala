@@ -8,12 +8,14 @@ import blueeyes.json.JsonParser._
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.persistence.mongo._
+import blueeyes.util._
 
-import org.joda.time.{DateTime, DateTimeZone}
+import org.joda.time.Instant
 
 import com.reportgrid.util.MapUtil._
 import scala.annotation.tailrec
 import scala.collection.immutable.SortedMap
+import scala.math.Ordered._
 import scalaz._
 import Scalaz._
 
@@ -42,13 +44,13 @@ object TimeSeriesSpan {
 
 /** A time series stores an unlimited amount of time series data.
  */
-case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime, T])(implicit aggregator: AbelianGroup[T]) {
+case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant, T])(implicit aggregator: AbelianGroup[T]) {
   /** Fill all gaps in the returned time series -- i.e. any period that does
    * not exist will be mapped to a count of 0. Note that this function may
    * behave strangely if the time series contains periods of a different
    * periodicity.
    */
-  def fillGaps(start: Option[DateTime], end: Option[DateTime]): TimeSeries[T] = {
+  def fillGaps(start: Option[Instant], end: Option[Instant]): TimeSeries[T] = {
     import blueeyes.util._
     TimeSeries(
       periodicity, 
@@ -75,14 +77,14 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime
     else Some(
       TimeSeries(
         newPeriodicity,
-        series.foldLeft(Map.empty[DateTime, T]) {
+        series.foldLeft(Map.empty[Instant, T]) {
           case (series, entry) => addToMap(newPeriodicity, series, entry)
         }
       )
     )
   }
 
-  def slice(start: DateTime, end: DateTime) = {
+  def slice(start: Instant, end: Instant) = {
     val minTime = periodicity.floor(start)
     val maxTime = periodicity.ceil(end)
     TimeSeries(periodicity, series.filter(t => t._1 >= minTime && t._1 < maxTime))
@@ -94,7 +96,7 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime
     TimeSeries(periodicity, series <+> that.series)
   }
 
-  def + (entry: (DateTime, T)): TimeSeries[T] = TimeSeries(periodicity, addToMap(periodicity, series, entry))
+  def + (entry: (Instant, T)): TimeSeries[T] = TimeSeries(periodicity, addToMap(periodicity, series, entry))
 
   def total: T = series.values.asMA.sum
 
@@ -107,7 +109,7 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime
     )
   ))
 
-  private def addToMap(p: Periodicity, m: Map[DateTime, T], entry: (DateTime, T)) = {
+  private def addToMap(p: Periodicity, m: Map[Instant, T], entry: (Instant, T)) = {
     val countTime = p.floor(entry._1)
     m + (countTime -> (m.getOrElse(countTime, aggregator.zero) |+| entry._2))
   }
@@ -115,10 +117,10 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[DateTime
 
 object TimeSeries {
   def empty[T: AbelianGroup](periodicity: Periodicity): TimeSeries[T] = {
-    new TimeSeries(periodicity, Map.empty[DateTime, T])
+    new TimeSeries(periodicity, Map.empty[Instant, T])
   }
 
-  def point[T: AbelianGroup](periodicity: Periodicity, time: DateTime, value: T) = {
+  def point[T: AbelianGroup](periodicity: Periodicity, time: Instant, value: T) = {
     new TimeSeries(periodicity, Map(periodicity.floor(time) -> value))
   }
 
@@ -144,11 +146,11 @@ object TimeSeriesEncoding {
 }
 
 class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
-  def expand(start: DateTime, end: DateTime): Stream[Period] = {
+  def expand(start: Instant, end: Instant): Stream[Period] = {
     import Stream._
 
-    def expandFiner(start: DateTime, end: DateTime, periodicity: Periodicity, 
-                    expansion: (DateTime, DateTime, Periodicity) => Stream[Period]): Stream[Period] = {
+    def expandFiner(start: Instant, end: Instant, periodicity: Periodicity, 
+                    expansion: (Instant, Instant, Periodicity) => Stream[Period]): Stream[Period] = {
 
       periodicity.previousOption.filter(grouping.contains).
       map(expansion(start, end, _)).
@@ -160,7 +162,7 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
       }
     }
 
-    def expandBoth(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
+    def expandBoth(start: Instant, end: Instant, periodicity: Periodicity): Stream[Period] = {
       if (start.getMillis >= end.getMillis) Empty 
       else {
         val periods = periodicity.period(start) to end
@@ -176,7 +178,7 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
       }
     }
 
-    def expandLeft(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
+    def expandLeft(start: Instant, end: Instant, periodicity: Periodicity): Stream[Period] = {
       if (start.getMillis >= end.getMillis) Empty 
       else {
         val periods = (periodicity.period(start) until end)
@@ -184,7 +186,7 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
       }
     }
 
-    def expandRight(start: DateTime, end: DateTime, periodicity: Periodicity): Stream[Period] = {
+    def expandRight(start: Instant, end: Instant, periodicity: Periodicity): Stream[Period] = {
       if (start.getMillis >= end.getMillis) Empty 
       else {
         val periods = (periodicity.period(start) to end)
@@ -195,12 +197,12 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
     expandBoth(start, end, Periodicity.Year)
   }
 
-  def queriableExpansion(start: DateTime, end: DateTime): Stream[(Periodicity, DateTime, DateTime)] = {
+  def queriableExpansion(start: Instant, end: Instant): Stream[(Periodicity, Instant, Instant)] = {
     queriableExpansion(expand(start, end))
   }
 
   def queriableExpansion(expansion: Stream[Period]) = {
-    def qe(expansion: Stream[Period], results: Stream[(Periodicity, DateTime, DateTime)]): Stream[(Periodicity, DateTime, DateTime)]  = {
+    def qe(expansion: Stream[Period], results: Stream[(Periodicity, Instant, Instant)]): Stream[(Periodicity, Instant, Instant)]  = {
       if (expansion.isEmpty) results
       else {
         val Period(periodicity, nstart, nend) = expansion.head

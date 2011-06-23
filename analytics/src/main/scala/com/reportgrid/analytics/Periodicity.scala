@@ -2,7 +2,7 @@ package com.reportgrid.analytics
 
 import scala.collection.immutable.NumericRange
 
-import org.joda.time.{DateTime, DateTimeZone}
+import org.joda.time.Instant
 
 sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   /** The name of the periodicity, e.g., "hour"
@@ -12,15 +12,15 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   /** Chops off all components of the date time whose periodicities are
    * smaller than this periodicity.
    */
-  def floor(time: DateTime): DateTime
+  def floor(time: Instant): Instant
 
-  def ceil(time: DateTime): DateTime = increment(floor(time))
+  def ceil(time: Instant): Instant = increment(floor(time))
 
   /** Advances the date time by this periodicity.
    */
-  def increment(time: DateTime, amount: Int = 1): DateTime
+  def increment(time: Instant, amount: Int = 1): Instant
 
-  def period(time: DateTime): Period = Period(this, time)
+  def period(time: Instant): Period = Period(this, time)
 
   /** The previous periodicity in the chain.
    */
@@ -56,56 +56,56 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
 }
 
 object Periodicity {
-  private[analytics] val Zero = new DateTime(0, DateTimeZone.UTC)
+  private[analytics] val Zero = new Instant(0)
 
-  private[analytics] val Inf = new DateTime(Long.MaxValue, DateTimeZone.UTC)
+  private[analytics] val Inf = new Instant(Long.MaxValue)
 
   case object Second extends Periodicity {
-    def floor(time: DateTime) = time.withMillisOfSecond(0)
+    def floor(time: Instant) = time.toDateTime.withMillisOfSecond(0).toInstant
 
-    def increment(time: DateTime, amount: Int = 1) = time.plusSeconds(amount)
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusSeconds(amount).toInstant
   }
 
   case object Minute extends Periodicity {
-    def floor(time: DateTime) = Second.floor(time).withSecondOfMinute(0)
+    def floor(time: Instant) = Second.floor(time).toDateTime.withSecondOfMinute(0).toInstant
 
-    def increment(time: DateTime, amount: Int = 1) = time.plusMinutes(amount)
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusMinutes(amount).toInstant
   }
 
   case object Hour extends Periodicity {
-    def floor(time: DateTime) = Minute.floor(time).withMinuteOfHour(0)
+    def floor(time: Instant) = Minute.floor(time).toDateTime.withMinuteOfHour(0).toInstant
 
-    def increment(time: DateTime, amount: Int = 1) = time.plusHours(amount)
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusHours(amount).toInstant
   }
 
   case object Day extends Periodicity {
-    def floor(time: DateTime) = Hour.floor(time).withHourOfDay(0)
+    def floor(time: Instant) = Hour.floor(time).toDateTime.withHourOfDay(0).toInstant
 
-    def increment(time: DateTime, amount: Int = 1) = time.plusDays(amount)
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusDays(amount).toInstant
   }
 
   case object Week extends Periodicity {
-    def floor(time: DateTime) = Day.floor(time).withDayOfWeek(1)
+    def floor(time: Instant) = Day.floor(time).toDateTime.withDayOfWeek(1).toInstant
 
-    def increment(time: DateTime, amount: Int = 1) = time.plusWeeks(amount)
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusWeeks(amount).toInstant
   }
 
   case object Month extends Periodicity {
-    def floor(time: DateTime) = Day.floor(time).withDayOfMonth(1)
+    def floor(time: Instant) = Day.floor(time).toDateTime.withDayOfMonth(1).toInstant
 
-    def increment(time: DateTime, amount: Int = 1) = time.plusMonths(amount)
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusMonths(amount).toInstant
   }
 
   case object Year extends Periodicity {
-    def floor(time: DateTime) = Month.floor(time).withMonthOfYear(1)
+    def floor(time: Instant) = Month.floor(time).toDateTime.withMonthOfYear(1).toInstant
 
-    def increment(time: DateTime, amount: Int = 1) = time.plusYears(amount)
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusYears(amount).toInstant
   }
 
   case object Eternity extends Periodicity {
-    def floor(time: DateTime) = Zero
+    def floor(time: Instant) = Zero
 
-    def increment(time: DateTime, amount: Int = 1) = Inf
+    def increment(time: Instant, amount: Int = 1) = Inf
   }
 
   val All = Second   ::

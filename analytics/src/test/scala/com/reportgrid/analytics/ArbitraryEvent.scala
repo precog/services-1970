@@ -3,7 +3,7 @@ package com.reportgrid.analytics
 import blueeyes.json.JsonAST._
 import blueeyes.json.xschema.DefaultSerialization._
 
-import org.joda.time.DateTime
+import org.joda.time.Instant
 import org.scalacheck.{Gen, Arbitrary}
 import Gen._
 
@@ -20,7 +20,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     startups <- containerOfN[List, String](i, oneOf(Startups))
   } yield startups
 
-  case class Event(data: JObject, timestamp: DateTime) {
+  case class Event(data: JObject, timestamp: Instant) {
     def message = JObject(
       JField("events", data) :: JField("timestamp", timestamp.getMillis) :: Nil
     )

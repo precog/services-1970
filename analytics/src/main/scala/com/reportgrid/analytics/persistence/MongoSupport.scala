@@ -12,7 +12,7 @@ import blueeyes.util.SpecialCharTranscoder
 
 import com.reportgrid.analytics._
 
-import org.joda.time.{DateTime, DateTimeZone}
+import org.joda.time.{Instant, DateTime, DateTimeZone}
 import scalaz.Scalaz._
 
 /** Support for persitence via MongoDB.
@@ -64,6 +64,14 @@ object MongoSupport {
     }
   }
 
+  implicit val InstantExtractor = new Extractor[Instant] {
+    def extract(jvalue: JValue): Instant = new Instant(jvalue.deserialize[Long])
+  }
+
+  implicit val InstantDecomposer = new Decomposer[Instant] {
+    def decompose(dateTime: Instant): JValue = JInt(dateTime.getMillis)
+  }
+
   implicit val DateTimeExtractor = new Extractor[DateTime] {
     def extract(jvalue: JValue): DateTime = new DateTime(jvalue.deserialize[Long], DateTimeZone.UTC)
   }
@@ -92,7 +100,7 @@ object MongoSupport {
   implicit val PeriodExtractor = new Extractor[Period] {
     def extract(value: JValue): Period = Period(
       (value \ "periodicity").deserialize[Periodicity],
-      (value \ "start").deserialize[DateTime]
+      (value \ "start").deserialize[Instant]
     )
   }
 
@@ -110,7 +118,7 @@ object MongoSupport {
         case JObject(fields) =>
           fields.foldLeft(TimeSeries.empty[T](periodicity)) { 
             case (series, JField(timeString, value)) =>
-              series + (new DateTime(timeString.toLong, DateTimeZone.UTC) -> value.deserialize[T])
+              series + (new Instant(timeString.toLong) -> value.deserialize[T])
           }
 
         case _ => error("Expected object but found: " + value)

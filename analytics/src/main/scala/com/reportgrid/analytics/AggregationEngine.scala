@@ -13,7 +13,7 @@ import blueeyes.json.xschema.DefaultSerialization._
 import net.lag.configgy.ConfigMap
 import net.lag.logging.Logger
 
-import org.joda.time.{DateTime, DateTimeZone}
+import org.joda.time.Instant
 
 import java.util.concurrent.TimeUnit
 
@@ -66,8 +66,8 @@ import SignatureGen._
 class AggregationEngine private (config: ConfigMap, logger: Logger, database: MongoDatabase) {
   import AggregationEngine._
 
-  val EarliestTime = new DateTime(0,             DateTimeZone.UTC)
-  val LatestTime   = new DateTime(Long.MaxValue, DateTimeZone.UTC)
+  val EarliestTime = new Instant(0)
+  val LatestTime   = new Instant(Long.MaxValue)
 
   val  ChildReportEmpty   = Report.empty[HasChild, CountType]
 
@@ -110,7 +110,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   /** Aggregates the specified data. The object may contain multiple events or
    * just one.
    */
-  def aggregate(token: Token, path: Path, time: DateTime, jobject: JObject, count: Long) = Future.async {
+  def aggregate(token: Token, path: Path, time: Instant, jobject: JObject, count: Long) = Future.async {
     // Keep track of parent/child relationships:
     path_children putAll addPathChildrenOfPath(token, path).patches
 
@@ -223,7 +223,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Retrieves a time series of counts of occurrences of the specified variable in a path */
   def getVariableSeries(token: Token, path: Path, variable: Variable, 
-                        periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): 
+                        periodicity: Periodicity, start : Option[Instant] = None, end : Option[Instant] = None): 
                         Future[TimeSeriesType] = {
 
     variable.parent match {
@@ -237,7 +237,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
-  private def searchPeriod[T](start: Option[DateTime], end: Option[DateTime], f: (Periodicity, Option[DateTime], Option[DateTime]) => Future[T]): Future[List[T]] = {
+  private def searchPeriod[T](start: Option[Instant], end: Option[Instant], f: (Periodicity, Option[Instant], Option[Instant]) => Future[T]): Future[List[T]] = {
     Future {
       (start <**> end) {
         (start, end) => timeSeriesEncoding.queriableExpansion(start, end) map {
@@ -251,7 +251,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Retrieves a count of the specified observed state over the given time period */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
-                  start : Option[DateTime] = None, end : Option[DateTime] = None): Future[CountType] = {
+                  start : Option[Instant] = None, end : Option[Instant] = None): Future[CountType] = {
 
     searchPeriod(start, end, searchSeries(token, path, observation, _, _, _)) map {
       _.map(_.total).asMA.sum
@@ -262,7 +262,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
    *  over the given time period.
    */
   def searchSeries(token: Token, path: Path, observation: Observation[HasValue], 
-                   periodicity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): 
+                   periodicity: Periodicity, start : Option[Instant] = None, end : Option[Instant] = None): 
                    Future[TimeSeriesType] = {
 
     internalSearchSeries(variable_value_series.collection, token, path, observation, periodicity, start, end)
@@ -294,7 +294,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   }
 
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor],
-                     start: Option[DateTime] = None, end: Option[DateTime] = None): Future[IntersectionResult[CountType]] = {
+                     start: Option[Instant] = None, end: Option[Instant] = None): Future[IntersectionResult[CountType]] = {
 
     searchPeriod(start, end, intersectSeries(token, path, properties, _, _, _)) map {
       _.foldLeft(SortedMap.empty[List[JValue], CountType](ListJValueOrdering)) {
@@ -307,7 +307,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   }
 
   def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], 
-                      granularity: Periodicity, start: Option[DateTime] = None, end: Option[DateTime] = None): 
+                      granularity: Periodicity, start: Option[Instant] = None, end: Option[Instant] = None): 
                       Future[IntersectionResult[TimeSeriesType]] = {
 
     internalIntersectSeries(variable_value_series.collection, token, path, properties, granularity, start, end) 
@@ -315,7 +315,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   private def internalIntersectSeries(
       col: MongoCollection, token: Token, path: Path, variableDescriptors: List[VariableDescriptor], 
-      granularity: Periodicity, start : Option[DateTime], end : Option[DateTime]): 
+      granularity: Periodicity, start : Option[Instant], end : Option[Instant]): 
       Future[IntersectionResult[TimeSeriesType]] = { 
 
     val variables = variableDescriptors.map(_.variable)
@@ -390,7 +390,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }    
   }
 
-  private def deserializeTimeSeries(jv: JValue, granularity: Periodicity, start: Option[DateTime], end: Option[DateTime]): TimeSeriesType = {
+  private def deserializeTimeSeries(jv: JValue, granularity: Periodicity, start: Option[Instant], end: Option[Instant]): TimeSeriesType = {
     val startFloor = start.map(granularity.floor)
     (jv \ "counts") match {
       case JObject(fields) => 
@@ -398,7 +398,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           case (series, JField(time, count)) => 
             val ltime = time.toLong 
             if (startFloor.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) 
-               series + ((new DateTime(ltime, DateTimeZone.UTC), count.deserialize[CountType]))
+               series + ((new Instant(ltime), count.deserialize[CountType]))
             else series
         } 
 
@@ -418,7 +418,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   private def internalSearchSeries[P <: Predicate: SignatureGen](
       col: MongoCollection, token: Token, path: Path, observation: Observation[P],
-      granularity: Periodicity, start : Option[DateTime] = None, end : Option[DateTime] = None): Future[TimeSeriesType] = {
+      granularity: Periodicity, start : Option[Instant] = None, end : Option[Instant] = None): Future[TimeSeriesType] = {
 
     val keyBuilder = seriesKeyFilter(token, path, observation, _: Period, granularity)
     val batchPeriodicity = timeSeriesEncoding.grouping(granularity)

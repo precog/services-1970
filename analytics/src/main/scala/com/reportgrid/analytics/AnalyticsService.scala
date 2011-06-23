@@ -2,27 +2,29 @@ package com.reportgrid.analytics
 
 import blueeyes.{BlueEyesServiceBuilder, BlueEyesServer}
 import blueeyes.concurrent.Future
+import blueeyes.core.data.{Chunk, BijectionsChunkJson, BijectionsChunkString}
 import blueeyes.core.http._
-import blueeyes.core.service._
 import blueeyes.core.http.MimeTypes.{application, json}
-import blueeyes.persistence.mongo._
-import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
+import blueeyes.core.service._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.json.{JPath, JsonParser, JPathField}
 import blueeyes.json.xschema.DefaultSerialization._
-import blueeyes.core.data.{Chunk, BijectionsChunkJson, BijectionsChunkString}
+import blueeyes.persistence.mongo._
+import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
+import blueeyes.util.{Clock, ClockSystem}
 
 import net.lag.configgy.{Configgy, ConfigMap}
 
-import org.joda.time.{DateTime, DateTimeZone}
+import org.joda.time.Instant
+import org.joda.time.DateTime
 
 import java.util.concurrent.TimeUnit
 
 import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager)
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString {
   import AggregationEngine._
@@ -48,12 +50,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             tokenManager      <- TokenManager(database, tokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, database)
           } yield {
-            AnalyticsState(aggregationEngine, tokenManager)
+            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock)
           }
         } ->
         request { (state: AnalyticsState) =>
-          import state.tokenManager
-          import state.aggregationEngine
+          import state._
 
           def renderHistogram(histogram: Traversable[(HasValue, Long)]): JObject = {
             histogram.foldLeft(JObject.empty) {
@@ -126,9 +127,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     val path = fullPathOf(token, request)
 
                     request.content.foreach { content =>
-                      val timestamp: DateTime = (content \ "timestamp") match {
-                        case JNothing => new DateTime(DateTimeZone.UTC)
-                        case jvalue   => jvalue.deserialize[DateTime]
+                      val timestamp: Instant = (content \ "timestamp") match {
+                        case JNothing => clock.instant()
+                        case jvalue   => jvalue.deserialize[Instant]
                       }
 
                       val events: JObject = (content \ "events") match {
@@ -208,8 +209,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             case "time" =>
                               val (start, end) = ranges.head
 
-                              val startTime = new DateTime(start, DateTimeZone.UTC)
-                              val endTime   = new DateTime(end,   DateTimeZone.UTC)
+                              val startTime = new Instant(start)
+                              val endTime   = new Instant(end)
 
                               aggregationEngine.getVariableSeries(token, path, variable, periodicity, Some(startTime), Some(endTime)).map { series =>
                                 HttpResponse[JValue](content = Some(series.toJValue))
@@ -385,10 +386,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                   case "time" =>
                                     val (start, end) = ranges.head
 
-                                    val startTime = Some(new DateTime(start, DateTimeZone.UTC))
-                                    val endTime   = Some(new DateTime(end,   DateTimeZone.UTC))
-
-                                    aggregationEngine.searchSeries(token, path, observation, periodicity, startTime, endTime) map { series =>
+                                    aggregationEngine.searchSeries(token, path, observation, periodicity, Some(new Instant(start)), Some(new Instant(end))) map { series =>
                                       HttpResponse[JValue](content = Some(series.toJValue))
                                     }
 
@@ -443,12 +441,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                     val start = (content \ "start") match {
                       case JNothing | JNull => None
-                      case jvalue   => Some(jvalue.deserialize[DateTime])
+                      case jvalue   => Some(jvalue.deserialize[Instant])
                     }
 
                     val end = (content \ "end") match {
                       case JNothing | JNull => None
-                      case jvalue   => Some(jvalue.deserialize[DateTime])
+                      case jvalue   => Some(jvalue.deserialize[Instant])
                     }
 
                     Selection(select) match {
@@ -481,12 +479,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                   val start = (content \ "start") match {
                     case JNothing | JNull => None
-                    case jvalue   => Some(jvalue.deserialize[DateTime])
+                    case jvalue   => Some(jvalue.deserialize[Instant])
                   }
 
                   val end = (content \ "end") match {
                     case JNothing | JNull => None
-                    case jvalue   => Some(jvalue.deserialize[DateTime])
+                    case jvalue   => Some(jvalue.deserialize[Instant])
                   }
 
                   val resultContent = select match {

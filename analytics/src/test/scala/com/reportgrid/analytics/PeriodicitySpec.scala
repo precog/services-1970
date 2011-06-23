@@ -1,6 +1,6 @@
 package com.reportgrid.analytics
 
-import org.joda.time.DateTime
+import org.joda.time.Instant
 import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
@@ -23,7 +23,7 @@ class PeriodicitySpec extends Specification with ArbitraryTime with ScalaCheck {
 
   "Periodicity.floor" should {
     "return the same value for any number of calls" in {
-      def floorN(periodicity: Periodicity, time: DateTime, n: Int): DateTime = {
+      def floorN(periodicity: Periodicity, time: Instant, n: Int): Instant = {
         if (n > 1) floorN(periodicity, periodicity.floor(time), n - 1)
         else periodicity.floor(time)
       }
@@ -31,14 +31,14 @@ class PeriodicitySpec extends Specification with ArbitraryTime with ScalaCheck {
       implicit val arbCount = Arbitrary(choose(1, 10).map(Count))
 
       val prop = forAll {
-        (periodicity: Periodicity, time: DateTime, count: Count) => (floorN(periodicity, time, count.i) must_== periodicity.floor(time)) 
+        (periodicity: Periodicity, time: Instant, count: Count) => (floorN(periodicity, time, count.i) must_== periodicity.floor(time)) 
       }
 
       prop must pass
     }
 
     "always be less than or equal to the specified time" in {
-      forAll { (time: DateTime, periodicity: Periodicity) =>
+      forAll { (time: Instant, periodicity: Periodicity) =>
         periodicity.floor(time).getMillis must beLessThanOrEqualTo(time.getMillis)
       } must pass
     }

@@ -4,7 +4,7 @@ import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import java.io._
-import org.joda.time.DateTime
+import org.joda.time.Instant
 import Periodicity._
 
 trait SignatureGen[-T] extends (T => Array[Byte])
@@ -86,9 +86,9 @@ trait SignatureGens {
     override def apply(v: Path) = TypeSig ++ sig(v.path)
   }
 
-  implicit object DateTimeSignatureGen extends SignatureGen[DateTime] {
-    val TypeSig = sig("DateTime") 
-    override def apply(v: DateTime) = TypeSig ++ sig(v.getMillis)
+  implicit object InstantSignatureGen extends SignatureGen[Instant] {
+    val TypeSig = sig("Instant") 
+    override def apply(v: Instant) = TypeSig ++ sig(v.getMillis)
   }
 
   implicit object PeriodSignatureGen extends SignatureGen[Period] {
