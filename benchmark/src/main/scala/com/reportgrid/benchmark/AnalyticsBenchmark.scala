@@ -64,8 +64,8 @@ object Task {
 
 case object BenchmarkTask extends Task {
   def run(config: Config) = {
-    val clockSystem = ClockSystem.clockSystem
-    val startTime = clockSystem.now()
+    val realClock = ClockSystem.realtimeClock
+    val startTime = realClock.now()
     val benchmarkToken = config.getString("benchmarkToken", Token.Benchmark.tokenId)
     val benchmarkUrl = config.getString("benchmarkUrl", "http://localhost:8888")
 
@@ -98,7 +98,7 @@ case object BenchmarkTask extends Task {
     )
 
     val conf = new SamplingConfig {
-        override val clock = clockSystem
+        override val clock = realClock
         override val maxRate = config.getLong("maxRate", 1000)
         override val samplesPerTestRate = config.getLong("samplesPerTestRate", 1000)
         override val sampleSet = new DistributedSampleSet(

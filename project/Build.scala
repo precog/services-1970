@@ -2,6 +2,7 @@ import sbt._
 import Keys._
 //import ProguardPlugin._
 import OneJarPlugin._
+import AltDependency._
 
 object ServicesSettings {
   val buildOrganization = "com.reportgrid"
@@ -17,25 +18,17 @@ object ServicesSettings {
 
 object ServicesBuild extends Build {
   import ServicesSettings._
+  import AltDependency._
 
-  private def tryLocalGit(buildBase: java.io.File, p: Project, f: java.io.File, git: URI): Project = {
-    val resolved = if (f.isAbsolute) f else new java.io.File(buildBase, f.getPath)
-    val dep = if(resolved.isDirectory) RootProject(resolved) else RootProject(git)
-    p dependsOn dep
-  }
-
-  private def tryLocalDep(buildBase: java.io.File, p: Project, f: java.io.File, dep: ModuleID): Project = {
-   val resolved = if (f.isAbsolute) f else new java.io.File(buildBase, f.getPath)
-   if(resolved.isDirectory) p dependsOn ( RootProject(resolved) )
-   else                     p settings( libraryDependencies += dep )
-  }
+  val client   = GitAltDependency(_: java.io.File, file("../client-libraries/scala"), ProjectRef(uri("git://github.com/reportgrid/client-libraries"), "scala"))
+  val blueeyes = GitAltDependency(_: java.io.File, file("../blueeyes"), RootProject(uri("git://github.com/jdegoes/blueeyes")))
 
   override def projectDefinitions(base: File) = {
     val common = Project("common", file("common"), 
-      settings = serviceSettings ++ Seq(
-        libraryDependencies += "joda-time"               % "joda-time"    % "1.6.2"
-      )
+      settings = serviceSettings ++ Seq(libraryDependencies += "joda-time" % "joda-time" % "1.6.2")
     )
+
+    val instrumentation = Project("instrumentation", file("instrumentation"), settings = serviceSettings) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
 
     val analyticsSettings = serviceSettings ++ Seq( 
       libraryDependencies ++= Seq(
@@ -46,22 +39,14 @@ object ServicesBuild extends Build {
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
     )
 
-    val analytics = tryLocalGit(base,
-      Project("analytics", file("analytics"), settings = analyticsSettings ++ oneJarSettings) dependsOn(common),
-      file("../blueeyes"),
-      uri("git://github.com/jdegoes/blueeyes")
-    )
+    val analytics = Project("analytics", file("analytics"), settings = analyticsSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt (blueeyes(base))
 
     val benchmarkSettings = serviceSettings ++ Seq(
-      libraryDependencies ++= Seq(
-        "com.reportgrid"          %% "blueeyes"    % "0.4.0" % "compile",
-        "com.reportgrid"          %% "reportgrid-client" % "0.3.0" % "compile",
-        "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile"
-      ),
+      libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile",
       mainClass := Some("com.reportgrid.benchmark.AnalyticsBenchmark")
     )
 
-    val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ oneJarSettings) dependsOn(common)
+    val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
 
     val services = Project("services", file(".")) aggregate (common, analytics, benchmark) 
     common :: analytics :: benchmark :: services :: Nil
