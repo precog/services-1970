@@ -1,8 +1,8 @@
 package com.reportgrid
 
-import blueeyes.json.JsonAST._
-import blueeyes.json.JPath
-import blueeyes.json.Printer._
+import _root_.blueeyes.json.JsonAST._
+import _root_.blueeyes.json.JPath
+import _root_.blueeyes.json.Printer._
 
 package object analytics extends AggregatorImplicits {
   type Observation[A <: Predicate] = Set[(Variable, A)]

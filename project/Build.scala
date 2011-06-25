@@ -28,8 +28,6 @@ object ServicesBuild extends Build {
       settings = serviceSettings ++ Seq(libraryDependencies += "joda-time" % "joda-time" % "1.6.2")
     )
 
-    val instrumentation = Project("instrumentation", file("instrumentation"), settings = serviceSettings) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
-
     val analyticsSettings = serviceSettings ++ Seq( 
       libraryDependencies ++= Seq(
         "joda-time"               % "joda-time"    % "1.6.2",
@@ -39,7 +37,7 @@ object ServicesBuild extends Build {
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
     )
 
-    val analytics = Project("analytics", file("analytics"), settings = analyticsSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt (blueeyes(base))
+    val analytics = Project("analytics", file("analytics"), settings = analyticsSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))
 
     val benchmarkSettings = serviceSettings ++ Seq(
       libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile",

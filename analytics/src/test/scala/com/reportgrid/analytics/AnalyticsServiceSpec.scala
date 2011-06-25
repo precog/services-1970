@@ -16,20 +16,31 @@ import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
 import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo}
 
+import com.reportgrid.api.ReportGridTrackingClient
+
+import java.util.Date
 import net.lag.configgy.{Configgy, ConfigMap}
 
 import org.specs._
 import org.specs.specification.PendingUntilFixed
-//import org.specs.util.TimeConversions._
 import org.scalacheck._
+
+import rosetta.json.blueeyes._
+
 import Gen._
 
 class AnalyticsServiceSpec extends BlueEyesServiceSpecification with PendingUntilFixed with ScalaCheck 
 with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
   override val configuration = "services{analytics{v0{" + mongoConfigFileData + "}}}"
 
-  override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
-  //override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
+  //override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
+  override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
+
+  override def auditClientFactory(config: ConfigMap) = new ReportGridTrackingClient[JValue] {
+    override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = jsonImplementation.EmptyObject, rollup: Boolean = false, timestamp: Option[Date] = None, count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
+      println("Tracked " + path + "; " + name + " - " + properties)
+    }
+  }
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", Token.Test.tokenId)
