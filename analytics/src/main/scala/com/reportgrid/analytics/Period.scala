@@ -59,7 +59,7 @@ class Period private (val periodicity: Periodicity, _start: Instant) extends Ord
 }
 
 object Period {
-  val Eternity = Periodicity.Eternity.period(Periodicity.Zero)
+  val Eternity = apply(Periodicity.Eternity, Instants.Zero)
 
   /** Constructs a period from a periodicity and any time occurring within the
    * period.

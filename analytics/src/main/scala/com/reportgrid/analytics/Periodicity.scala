@@ -55,10 +55,13 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   def compare(that: Periodicity): Int = Periodicity.All.indexOf(this).compare(Periodicity.All.indexOf(that))
 }
 
-object Periodicity {
-  private[analytics] val Zero = new Instant(0)
+object Instants {
+  val Zero = new Instant(0)
+  val Inf = new Instant(Long.MaxValue)
+}
 
-  private[analytics] val Inf = new Instant(Long.MaxValue)
+object Periodicity {
+
 
   case object Second extends Periodicity {
     def floor(time: Instant) = time.toDateTime.withMillisOfSecond(0).toInstant
@@ -103,9 +106,9 @@ object Periodicity {
   }
 
   case object Eternity extends Periodicity {
-    def floor(time: Instant) = Zero
+    def floor(time: Instant) = Instants.Zero
 
-    def increment(time: Instant, amount: Int = 1) = Inf
+    def increment(time: Instant, amount: Int = 1) = Instants.Inf
   }
 
   val All = Second   ::

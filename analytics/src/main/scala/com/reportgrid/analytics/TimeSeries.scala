@@ -52,9 +52,12 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
    */
   def fillGaps(start: Option[Instant], end: Option[Instant]): TimeSeries[T] = {
     import blueeyes.util._
+    val instants = if (periodicity == Eternity) Stream(Instants.Zero)
+                   else periodicity.period(start.getOrElse(series.keys.min)) datesTo end.getOrElse(series.keys.max)
+
     TimeSeries(
       periodicity, 
-      ((periodicity.period(start.getOrElse(series.keys.min)) datesTo end.getOrElse(series.keys.max))).foldLeft(series) {
+      instants.foldLeft(series) {
         (series, date) => series + (date -> (series.getOrElse(date, aggregator.zero)))
       }
     )
