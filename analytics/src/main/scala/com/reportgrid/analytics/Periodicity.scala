@@ -31,6 +31,8 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
     case index: Int => Some(Periodicity.All(index))
   }
 
+  def finer: Option[Periodicity]
+
   /** The next periodicity in the chain.
    */
   lazy val next: Periodicity = nextOption.getOrElse(this)
@@ -61,54 +63,68 @@ object Instants {
 }
 
 object Periodicity {
-
-
   case object Second extends Periodicity {
     def floor(time: Instant) = time.toDateTime.withMillisOfSecond(0).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusSeconds(amount).toInstant
+
+    override val finer = None
   }
 
   case object Minute extends Periodicity {
     def floor(time: Instant) = Second.floor(time).toDateTime.withSecondOfMinute(0).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusMinutes(amount).toInstant
+
+    override val finer = Some(Second)
   }
 
   case object Hour extends Periodicity {
     def floor(time: Instant) = Minute.floor(time).toDateTime.withMinuteOfHour(0).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusHours(amount).toInstant
+
+    override val finer = Some(Minute)
   }
 
   case object Day extends Periodicity {
     def floor(time: Instant) = Hour.floor(time).toDateTime.withHourOfDay(0).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusDays(amount).toInstant
+
+    override val finer = Some(Hour)
   }
 
   case object Week extends Periodicity {
     def floor(time: Instant) = Day.floor(time).toDateTime.withDayOfWeek(1).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusWeeks(amount).toInstant
+
+    override val finer = Some(Day)
   }
 
   case object Month extends Periodicity {
     def floor(time: Instant) = Day.floor(time).toDateTime.withDayOfMonth(1).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusMonths(amount).toInstant
+
+    override val finer = Some(Day)
   }
 
   case object Year extends Periodicity {
     def floor(time: Instant) = Month.floor(time).toDateTime.withMonthOfYear(1).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusYears(amount).toInstant
+
+    override val finer = Some(Month)
   }
 
   case object Eternity extends Periodicity {
     def floor(time: Instant) = Instants.Zero
 
     def increment(time: Instant, amount: Int = 1) = Instants.Inf
+
+    override val finer = Some(Year)
   }
 
   val All = Second   ::

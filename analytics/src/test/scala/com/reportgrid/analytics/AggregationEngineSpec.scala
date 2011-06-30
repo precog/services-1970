@@ -134,6 +134,16 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.timestamp, event.data, 1))
     }
 
+    "retrieve path children" in {
+      val children = sampleEvents.map {
+        case Event(JObject(JField(eventName, _) :: Nil), _) => "." + eventName
+      }.toSet
+
+      engine.getPathChildren(Token.Test, "/test") must whenDelivered {
+        haveTheSameElementsAs(children)
+      }
+    }
+ 
     "count events" in {
       def countEvents(eventName: String) = sampleEvents.count {
         case Event(JObject(JField(`eventName`, _) :: Nil), _) => true

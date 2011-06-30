@@ -155,7 +155,7 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
     def expandFiner(start: Instant, end: Instant, periodicity: Periodicity, 
                     expansion: (Instant, Instant, Periodicity) => Stream[Period]): Stream[Period] = {
 
-      periodicity.previousOption.filter(grouping.contains).
+      periodicity.finer.filter(grouping.contains).
       map(expansion(start, end, _)).
       getOrElse {
         val length = end.getMillis - start.getMillis

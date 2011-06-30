@@ -39,6 +39,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
   def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
 
   val analyticsService = service("analytics", "0.01") {
+    requestLogging { 
     logging { logger =>
       healthMonitor { monitor => context =>
         startup {
@@ -597,12 +598,13 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 }
               }
             }
-          }
+          } 
         } ->
         shutdown { state =>
           state.aggregationEngine.stop
         }
       }
+    }
     }
   }
 }
@@ -624,7 +626,7 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
 
   def auditClientFactory(config: ConfigMap) = {
     val auditToken = config.getString("token", Token.Test.tokenId)
-    val environment = config.getString("environment", "local") match {
+    val environment = config.getString("environment", "production") match {
       case "production" => ReportGridConfig.Production
       case _            => ReportGridConfig.Local
     }

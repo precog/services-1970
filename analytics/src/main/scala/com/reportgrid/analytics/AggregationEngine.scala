@@ -52,14 +52,16 @@ import SignatureGen._
  *   _id: mongo-generated,
  *   accountTokenId: "foobar"
  *   path: "baz/blork",
- *   child: "blaarg"
+ *   child: "blaarg",
+ *   count: 1
  * }
  *
  * variable_children: {
  *   _id: mongo-generated,
  *   accountTokenId: "foobar"
  *   path: "/baz/blork/blaarg/.gweep"
- *   child: "toodleoo"
+ *   child: "toodleoo",
+ *   count: 1
  * }
  */
 
@@ -166,7 +168,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Retrieves children of the specified path.  */
   def getPathChildren(token: Token, path: Path): Future[List[String]] = {
-    extractValues(forTokenAndPath(token, path), path_children.collection) { (jvalue, _) =>
+    extractChildren(forTokenAndPath(token, path), path_children.collection) { (jvalue, _) =>
       jvalue.deserialize[String]
     }
   }
@@ -445,6 +447,19 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
+  private def extractChildren[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
+    database {
+      select(".child", ".count").from(collection).where(filter)
+    } map {
+      _.foldLeft(List.empty[T]) { 
+        case (l, result) => 
+          val child = (result \ "child")
+          val count = (result \ "count").deserialize[CountType]
+          extractor(child, count) :: l
+      }
+    }
+  }
+
   private def extractValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
     database {
       selectOne(".values").from(collection).where(filter)
@@ -483,21 +498,17 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   private def addPathChildrenOfPath(token: Token, path: Path): MongoPatches = {
     val patches = path.parentChildRelations.foldLeft(MongoPatches.empty) { 
       case (patches, (parent, child)) =>
-        patches + addChildOfPath(forTokenAndPath(token, parent), child.elements.last + "/")
+        patches + addChildOfPath(forTokenAndPath(token, parent), child.elements.last)
     }
 
     patches
   }
 
-  /** Pushes the specified name onto a ".values" member of a document. This
+  /** Pushes the specified name onto a "." member of a document. This
    * function is used to keep track of the layout of the virtual file system.
    */
   private def addChildOfPath(filter: MongoFilter, child: String): (MongoFilter, MongoUpdate) = {
-    val childField = MongoEscaper.encode(renderNormalized(child.serialize))
-
-    val valuesUpdate = (".values." + childField) inc 1
-
-    (filter -> valuesUpdate)
+    ((filter & (".child" === child.serialize)) -> (".count" inc 1))
   }
 
   /** Creates patches to record variable observations.
@@ -588,7 +599,8 @@ object AggregationEngine {
       "variable_query" -> (List("path", "accountTokenId", "variable"), false)
     ),
     "path_children" -> Map(
-      "path_query" -> (List("path", "accountTokenId"), false)
+      "path_query" -> (List("path", "accountTokenId"), false),
+      "path_child_query" -> (List("path", "accountTokenId", "child"), false)
     )
   )
 
