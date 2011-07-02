@@ -25,25 +25,27 @@ trait ArbitraryEvent extends ArbitraryTime {
       JField("events", data) :: JField("timestamp", timestamp.getMillis) :: Nil
     )
   }
-	
+  
   implicit val eventGen = for {
     eventName      <- oneOf(EventTypes)
     location       <- oneOf(Locations)
-    time 			     <- genTime
-    retweet 		   <- oneOf(true, false)
+    time           <- genTime
+    retweet        <- oneOf(true, false)
     recipientCount <- choose(0, 3)
-    startup 		   <- oneOf(Startups)
+    startup        <- oneOf(Startups)
     otherStartups  <- genOtherStartups
     twitterClient  <- oneOf(TwitterClients)
+    tweet          <- identifier
   } yield Event(
     JObject(
       JField(eventName, JObject(
-        JField("location", 			location.serialize) ::
-        JField("retweet",			retweet.serialize) ::
-        JField("recipientCount", 	recipientCount.serialize) ::
-        JField("startup", 			startup.serialize) ::
-        JField("otherStartups",     otherStartups.serialize) ::
-        JField("twitterClient",     twitterClient) ::
+        JField("location",       location.serialize) ::
+        JField("retweet",        retweet.serialize) ::
+        JField("recipientCount", recipientCount.serialize) ::
+        JField("startup",        startup.serialize) ::
+        JField("otherStartups",  otherStartups.serialize) ::
+        JField("twitterClient",  twitterClient) ::
+        JField("~tweet",         tweet) ::
         Nil
       )) :: Nil
     ),

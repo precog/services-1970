@@ -20,7 +20,7 @@ import scalaz._
 import Scalaz._
 
 case class TimeSeriesSpan[T: AbelianGroup] private (series: SortedMap[Period, T]) {
-  def toTimeSeries(periodicity: Periodicity): TimeSeries[T] = error("todo")
+  def toTimeSeries(periodicity: Periodicity): TimeSeries[T] = sys.error("todo")
 
   def flatten = series.values
 
@@ -38,7 +38,7 @@ object TimeSeriesSpan {
     }
 
     if (isValidSpan) new TimeSeriesSpan(SortedMap(entries: _*))
-    else error("The periods provided do not form a contiguous span")
+    else sys.error("The periods provided do not form a contiguous span")
   }
 }
 

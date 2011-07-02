@@ -2,6 +2,7 @@ package com.reportgrid
 
 import _root_.blueeyes.json.JsonAST._
 import _root_.blueeyes.json.JPath
+import _root_.blueeyes.json.JPathField
 import _root_.blueeyes.json.Printer._
 
 package object analytics extends AggregatorImplicits {
@@ -50,6 +51,14 @@ package object analytics extends AggregatorImplicits {
 
         all.updated(jpath, all.get(jpath).getOrElse(Nil) :+ jvalue)
       }
+    }
+  }
+
+  implicit def jpath2rich(jpath: JPath): RichJPath = new RichJPath(jpath)
+  class RichJPath(jpath: JPath) {
+    def endsInInfiniteValueSpace = jpath.nodes.exists {
+      case JPathField(name) => name startsWith "~"
+      case _ => false
     }
   }
 }

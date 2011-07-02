@@ -159,7 +159,7 @@ trait SignatureGens {
       case JDouble(v)       => JDoubleTypeSig  ++ sig(v)
       case JNull            => JNullTypeSig    ++ Array(0: Byte)
       case JNothing         => JNothingTypeSig ++ Array(Byte.MaxValue)
-      case _ => error("JField shouldn't be a JValue")
+      case _ => sys.error("JField shouldn't be a JValue")
     }
   }
 

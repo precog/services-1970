@@ -139,7 +139,7 @@ object Periodicity {
 
   val Default = Periodicity.Minute to Periodicity.Eternity
 
-  def byName(name: String): Periodicity = All.find(_.name == name.toLowerCase).getOrElse(error("Invalid periodicity name: " + name))
+  def byName(name: String): Periodicity = All.find(_.name == name.toLowerCase).getOrElse(sys.error("Invalid periodicity name: " + name))
 
   def apply(name: String): Periodicity = byName(name)
 

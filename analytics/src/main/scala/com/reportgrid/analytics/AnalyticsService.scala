@@ -146,7 +146,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                         val events: JObject = (content \ "events") match {
                           case jobject: JObject => jobject
-                          case _ => error("Expecting to find .events field containing object to aggregate")
+                          case _ => sys.error("Expecting to find .events field containing object to aggregate")
                         }
 
                         val count: Int = (content \ "count") match {

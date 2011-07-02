@@ -57,7 +57,7 @@ object Selection {
     case _ => select.split("/").toList.map(_.toLowerCase) match {
       case "series" :: p :: Nil => Series(Periodicity(p))
 
-      case _ => error("Invalid series")
+      case _ => sys.error("Invalid series")
     }
   }
 }

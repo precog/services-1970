@@ -10,15 +10,18 @@ import blueeyes.json._
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
 
+import com.reportgrid.analytics._
+import com.reportgrid.analytics.AggregatorImplicits._
+import com.reportgrid.analytics.persistence.MongoSupport._
+
+import java.util.concurrent.TimeUnit
+
 import net.lag.configgy.ConfigMap
 import net.lag.logging.Logger
 
 import org.joda.time.Instant
 
-import java.util.concurrent.TimeUnit
 
-import com.reportgrid.analytics.AggregatorImplicits._
-import com.reportgrid.analytics.persistence.MongoSupport._
 import scala.collection.SortedMap
 import scalaz.{Ordering => _, _}
 import Scalaz._
@@ -30,24 +33,34 @@ import SignatureGen._
  * Schema:
  * 
  * variable_value_series: {
- *   _id: hashSig(accountTokenId, path, variable, order, observation, period, granularity),
+ *   _id: mongo-generated,
+ *   id: hashSig(accountTokenId, path, variable, order, observation, period, granularity),
  *   counts: { "0123345555555": 3, ...}
  * }
  *
  * variable_series: {
- *   _id: hashSig(accountTokenId, path, variable, order, period, granularity),
+ *   _id: mongo-generated,
+ *   id: hashSig(accountTokenId, path, variable, order, period, granularity),
  *   counts: { "0123345555555": 3, ...}
  * }
  *
  * variable_values: {
- *   _id: hashSig(accountTokenId, path, variable),
+ *   _id: mongo-generated,
+ *   id: hashSig(accountTokenId, path, variable),
  *   values: {
- *     "male" : 20,
- *     "female" : 30,
+ *     "male" : 23,
+ *     "female" : 42,
  *     ...
  *   }
  * }
  *
+ * variable_values_infinite: {
+ *   _id: mongo-generated,
+ *   id: hashSig(accountTokenId, path, variable),
+ *   value: "John Doe"
+ *   count: 42
+ * }
+ * 
  * path_children: {
  *   _id: mongo-generated,
  *   accountTokenId: "foobar"
@@ -104,9 +117,10 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   private val variable_series        = newMongoStage("variable_series")
   private val variable_value_series  = newMongoStage("variable_value_series")
 
-  private val variable_values        = newMongoStage("variable_values")
-  private val variable_children      = newMongoStage("variable_children")
-  private val path_children          = newMongoStage("path_children")
+  private val variable_values           = newMongoStage("variable_values")
+  private val variable_values_infinite  = newMongoStage("variable_values_infinite")
+  private val variable_children         = newMongoStage("variable_children")
+  private val path_children             = newMongoStage("path_children")
 
 
   /** Aggregates the specified data. The object may contain multiple events or
@@ -124,7 +138,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
         path_children += addChildOfPath(forTokenAndPath(token, path), "." + eventName)
 
-        val valueReport = Report.ofValues(
+        val (finite, infinite) = Report.ofValues(
           event = event,
           count = seriesCount,
           order = token.limits.order,
@@ -132,9 +146,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
           limit = token.limits.limit
         )
 
-        variable_value_series putAll updateTimeSeries(token, path, valueReport).patches
-        variable_values       putAll updateValues(token, path, valueReport.order(1)).patches
+        variable_value_series putAll updateTimeSeries(token, path, finite).patches
+        variable_value_series putAll updateTimeSeries(token, path, infinite).patches
 
+        variable_values          putAll updateFiniteValues(token, path, finite.order(1), count).patches
+        variable_values_infinite putAll updateInfiniteValues(token, path, infinite, count).patches
 
         val childCountReport = Report.ofChildren(
           event = event,
@@ -145,7 +161,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         )
 
         variable_children putAll updateChildren(token, path, childCountReport.order(1)).patches
-
 
         val childSeriesReport = Report.ofChildren(
           event = event,
@@ -375,11 +390,16 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   /** Retrieves a histogram of the values a variable acquires over its lifetime.
    */
   private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[HasValue, CountType]] = {
+    type R = (HasValue, CountType)
     getVariableLength(token, path, variable).flatMap { 
       case 0 =>
-        (extractValues(valuesKeyFilter(token, path, variable), variable_values.collection) { 
-          (jvalue, count) => (jvalue.deserialize[HasValue], count)
-        }).map(_.toMap)
+        val extractor = if (variable.name.endsInInfiniteValueSpace) {
+          extractInfiniteValues[R](valuesKeyFilter(token, path, variable), variable_values_infinite.collection) _
+        } else {
+          extractValues[R](valuesKeyFilter(token, path, variable), variable_values.collection) _
+        }
+
+        extractor((jvalue, count) => (jvalue.deserialize[HasValue], count)) map (_.toMap)
 
       case length =>
         Future((0 until length).map { index =>
@@ -405,7 +425,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
         } 
 
 
-      case x => error("Unexpected serialization format for time series count data: " + renderNormalized(x))
+      case x => sys.error("Unexpected serialization format for time series count data: " + renderNormalized(x))
     }
   }
 
@@ -429,7 +449,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       case (Some(start), Some(end)) => 
         if      (start == end)           keyBuilder(start) :: Nil
         else if (start.end == end.start) keyBuilder(start) :: keyBuilder(end) :: Nil
-        else                             error("Query interval too large - too many results to return.")
+        else                             sys.error("Query interval too large - too many results to return.")
 
       case (ostart, oend) => 
         ostart.orElse(oend).orElse((granularity == Periodicity.Eternity).option(Period.Eternity)).
@@ -476,6 +496,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }
   }
 
+  private def extractInfiniteValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[Iterable[T]] = {
+    database {
+      select(".value", ".count").from(collection).where(filter)
+    } map { 
+      _.map(result => extractor((result \ "value"), (result \ "count").deserialize[CountType]))
+    }
+  }
+
   private def forTokenAndPath(token: Token, path: Path): MongoFilter = {
     (".accountTokenId" === token.accountTokenId) &
     (".path"           === path.toString)
@@ -513,15 +541,26 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
   /** Creates patches to record variable observations.
    */
-  private def updateValues[P <: Predicate : Decomposer, T](token: Token, path: Path, report: Report[P, T]): MongoPatches = {
+  private def updateFiniteValues[P <: Predicate : Decomposer, T](token: Token, path: Path, report: Report[P, T], count: CountType): MongoPatches = {
     report.observationCounts.foldLeft(MongoPatches.empty) { 
       case (patches, (observation, _)) => observation.foldLeft(patches) {
         case (patches, (variable, predicate)) =>
 
           val predicateField = MongoEscaper.encode(renderNormalized(predicate.serialize))
-          val valuesUpdate = (JPath(".values") \ JPathField(predicateField)) inc 1
+          val valuesUpdate = (JPath(".values") \ JPathField(predicateField)) inc count
 
           patches + (valuesKeyFilter(token, path, variable) -> valuesUpdate)
+      }
+    }
+  }
+
+  private def updateInfiniteValues[P <: Predicate : Decomposer, T](token: Token, path: Path, report: Report[P, T], count: CountType): MongoPatches = {
+    report.observationCounts.foldLeft(MongoPatches.empty) { 
+      case (patches, (observation, _)) => observation.foldLeft(patches) {
+        case (patches, (variable, predicate)) =>
+          val valuesUpdate = JPath(".count") inc count
+
+          patches + ((valuesKeyFilter(token, path, variable) & (".value" === predicate.serialize)) -> valuesUpdate)
       }
     }
   }
@@ -582,8 +621,8 @@ object AggregationEngine {
   type ChildReport        = Report[HasChild, CountType]
   type ValueReport        = Report[HasValue, TimeSeries[CountType]]
 
-  private val seriesId = "seriesId"
-  private val valuesId = "valuesId"
+  private val seriesId = "id"
+  private val valuesId = "id"
 
   private val CollectionIndices = Map(
     "variable_series" -> Map(
@@ -594,6 +633,9 @@ object AggregationEngine {
     ),
     "variable_values" -> Map(
       "var_val_id" -> (List(valuesId), true)
+    ),
+    "variable_values_infinite" -> Map(
+      "var_val_id" -> (List(valuesId, "value"), true)
     ),
     "variable_children" -> Map(
       "variable_query" -> (List("path", "accountTokenId", "variable"), false)

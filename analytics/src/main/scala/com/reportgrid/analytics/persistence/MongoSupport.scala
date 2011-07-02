@@ -36,7 +36,7 @@ object MongoSupport {
       JPath(string).nodes match {
         case node :: Nil => node
 
-        case _ => error("Too many or few nodes to extract JPath node from " + v)
+        case _ => sys.error("Too many or few nodes to extract JPath node from " + v)
       }
     }
   }
@@ -121,7 +121,7 @@ object MongoSupport {
               series + (new Instant(timeString.toLong) -> value.deserialize[T])
           }
 
-        case _ => error("Expected object but found: " + value)
+        case _ => sys.error("Expected object but found: " + value)
       }
     }
   }
