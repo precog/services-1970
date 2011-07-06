@@ -126,6 +126,13 @@ object MongoSupport {
     }
   }
 
+  implicit def DeltaSetDecomposer[A: Decomposer, D: Decomposer, V : Decomposer : AbelianGroup]: Decomposer[DeltaSet[A, D, V]] = new Decomposer[DeltaSet[A, D, V]] {
+    def decompose(value: DeltaSet[A, D, V]): JValue = JObject(List(
+      JField("zero", value.zero.serialize),
+      JField("data", value.data.serialize)
+    ))
+  }
+
   /** Serializes HasChild Predicate into a JValue.
    */
   implicit val HasChildDecomposer = new Decomposer[HasChild] {

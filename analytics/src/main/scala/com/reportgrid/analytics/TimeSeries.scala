@@ -11,13 +11,17 @@ import blueeyes.persistence.mongo._
 import blueeyes.util._
 
 import org.joda.time.Instant
+import org.joda.time.Duration
+import org.joda.time.ReadableDuration
 
+import com.reportgrid.ct._
 import com.reportgrid.util.MapUtil._
 import scala.annotation.tailrec
 import scala.collection.immutable.SortedMap
 import scala.math.Ordered._
-import scalaz._
-import Scalaz._
+import scala.math.Ordering
+import scalaz.Scalaz._
+import scalaz.Semigroup
 
 case class TimeSeriesSpan[T: AbelianGroup] private (series: SortedMap[Period, T]) {
   def toTimeSeries(periodicity: Periodicity): TimeSeries[T] = sys.error("todo")
@@ -45,6 +49,29 @@ object TimeSeriesSpan {
 /** A time series stores an unlimited amount of time series data.
  */
 case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant, T])(implicit aggregator: AbelianGroup[T]) {
+  def deltaSet: Option[DeltaSet[Instant, ReadableDuration, T]] = {
+    implicit val periodicitySpace: DeltaSpace[Instant, ReadableDuration] = new PeriodicitySpace(periodicity)
+    implicit val instantSAct: SAct[Instant, ReadableDuration] = InstantSAct
+    DeltaSet(series)
+  }
+
+  def groupBy(grouping: Periodicity): Option[DeltaSet[Int, Int, T]] = {
+    import SAct._
+    (!series.isEmpty).option {
+      implicit val deltaSpace: DeltaSpace[Int, Int] = CountingSpace
+      new DeltaSet(0,
+        series.foldLeft(Map.empty[Int, T]) {
+          case (m, (instant, value)) =>
+            periodicity.indexOf(instant, grouping) map { index => 
+              m + (index -> m.get(index).map(_ |+| value).getOrElse(value))
+            } getOrElse {
+              sys.error("Cannot group time series of periodicity " + periodicity + " by " + grouping)
+            }
+        } 
+      )
+    }
+  }
+
   /** Fill all gaps in the returned time series -- i.e. any period that does
    * not exist will be mapped to a count of 0. Note that this function may
    * behave strangely if the time series contains periods of a different
@@ -81,7 +108,7 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
       TimeSeries(
         newPeriodicity,
         series.foldLeft(Map.empty[Instant, T]) {
-          case (series, entry) => addToMap(newPeriodicity, series, entry)
+          (series, entry) => addToMap(newPeriodicity, series, entry)
         }
       )
     )
@@ -127,7 +154,78 @@ object TimeSeries {
     new TimeSeries(periodicity, Map(periodicity.floor(time) -> value))
   }
 
-  implicit def Semigroup[T: AbelianGroup] = Scalaz.semigroup[TimeSeries[T]](_ + _)
+  implicit def Semigroup[T: AbelianGroup] = semigroup[TimeSeries[T]](_ + _)
+}
+
+/**
+ * A generalization of time series and other types that can be encoded using
+ * delta compression. 
+ */
+class DeltaSet[A, D, V](val zero: A, val data: Map[D, V])(implicit sact: SAct[A, D], d: DeltaSpace[A, D], ord: Ordering[A], group: AbelianGroup[V]) {
+  lazy val series: SortedMap[A, V] = data.foldLeft(SortedMap.empty[A, V]) {
+    case (m, (d, v)) => 
+      val key = sact.append(zero, d)
+      m + (key -> (m.getOrElse(key, group.zero) |+| v))
+  }
+
+  def fillGaps(start: Option[A], end: Option[A]): DeltaSet[A, D, V] = {
+    def streamFrom(origin: A, to: A): Stream[D] = {
+      import Stream._
+      def _streamFrom(from: A): Stream[D] = {
+        if (from >= to) empty[D]
+        else cons(d.difference(origin, from), _streamFrom(sact.append(from, d(from))))
+      }
+
+      _streamFrom(origin)
+    }
+
+    val filled = streamFrom(start.getOrElse(zero), end.getOrElse(series.keySet.max)).foldLeft(data) {
+      (data, delta) => data + (delta -> (data.getOrElse(delta, group.zero)))
+    }
+
+    new DeltaSet(start.map(ord.min(_, zero)).getOrElse(zero), filled)
+  }
+
+  def + (that: DeltaSet[A, D, V]) = new DeltaSet(zero, data <+> that.data)
+
+  def + (entry: (A, V)): DeltaSet[A, D, V] = new DeltaSet(zero, data + (d.difference(_: A, zero)).first.apply(entry))
+
+  def total: V = data.values.asMA.sum
+}
+
+object DeltaSet {
+  def apply[A, D, V](series: Map[A, V])(implicit sact: SAct[A, D], d: DeltaSpace[A, D], ord: Ordering[A], group: AbelianGroup[V]): Option[DeltaSet[A, D, V]] = {
+    (!series.isEmpty).option {
+      val zero = series.keySet.min
+      new DeltaSet(zero, series.map((d.difference(zero, _: A)).first))
+    }
+  }
+}
+
+/** 
+ * A metric space for deltas. Type A refers to a measurement type, such as an instant or a
+ * geolocation; type B refers to the type that represents the difference between two
+ * values of type A. For instants, this is a duration; for geolocation, this is a vector
+ * on an oblate spheroid.
+ */
+trait DeltaSpace[-A, +B] {
+  /** Returns the incremental delta amount given the base value a. */
+  def apply(a: A): B
+  def difference(a1: A, a2: A): B
+}
+
+class PeriodicitySpace(periodicity: Periodicity) extends DeltaSpace[Instant, ReadableDuration] {
+  def apply(i: Instant) = new Duration(i, periodicity.increment(i))  
+  def difference(i1: Instant, i2: Instant) = new Duration(i1, i2)
+}
+
+object InstantSAct extends SAct[Instant, ReadableDuration] {
+  def append(i: Instant, d: => ReadableDuration) = i.plus(d)
+}
+
+object CountingSpace extends DeltaSpace[Int, Int] {
+  def apply(i: Int): Int = 1
+  def difference(i1: Int, i2: Int): Int = i2 - i1
 }
 
 object TimeSeriesEncoding {

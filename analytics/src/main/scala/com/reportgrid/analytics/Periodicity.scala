@@ -1,8 +1,9 @@
 package com.reportgrid.analytics
 
 import scala.collection.immutable.NumericRange
-
 import org.joda.time.Instant
+
+import scalaz.Scalaz._
 
 sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   /** The name of the periodicity, e.g., "hour"
@@ -21,6 +22,8 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   def increment(time: Instant, amount: Int = 1): Instant
 
   def period(time: Instant): Period = Period(this, time)
+
+  def indexOf(time: Instant, in: Periodicity): Option[Int]
 
   /** The previous periodicity in the chain.
    */
@@ -68,6 +71,13 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusSeconds(amount).toInstant
 
+    def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
+      case Minute => Some(time.toDateTime.getSecondOfMinute)
+      case Hour   => Some(time.toDateTime |> {t => t.getSecondOfMinute + (60 * t.getMinuteOfHour)})
+      case Day    => Some(time.toDateTime.getSecondOfDay)
+      case _ => None
+    }
+
     override val finer = None
   }
 
@@ -75,6 +85,12 @@ object Periodicity {
     def floor(time: Instant) = Second.floor(time).toDateTime.withSecondOfMinute(0).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusMinutes(amount).toInstant
+
+    def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
+      case Hour => Some(time.toDateTime.getMinuteOfHour)
+      case Day  => Some(time.toDateTime.getMinuteOfDay)
+      case _ => None
+    }
 
     override val finer = Some(Second)
   }
@@ -84,6 +100,14 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusHours(amount).toInstant
 
+    def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
+      case Day   => Some(time.toDateTime.getHourOfDay)
+      case Week  => Some(time.toDateTime |> {t => t.getHourOfDay + (t.getDayOfWeek * 24)})
+      case Month => Some(time.toDateTime |> {t => t.getHourOfDay + (t.getDayOfMonth * 24)})
+      case Year  => Some(time.toDateTime |> {t => t.getHourOfDay + (t.getDayOfYear * 24)})
+      case _ => None
+    }
+
     override val finer = Some(Minute)
   }
 
@@ -91,6 +115,13 @@ object Periodicity {
     def floor(time: Instant) = Hour.floor(time).toDateTime.withHourOfDay(0).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusDays(amount).toInstant
+
+    def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
+      case Week => Some(time.toDateTime.getDayOfWeek)
+      case Month => Some(time.toDateTime.getDayOfMonth)
+      case Year => Some(time.toDateTime.getDayOfYear)
+      case _ => None
+    }
 
     override val finer = Some(Hour)
   }
@@ -100,6 +131,11 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusWeeks(amount).toInstant
 
+    def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
+      case Year => Some(time.toDateTime.getWeekOfWeekyear)
+      case _ => None
+    }
+
     override val finer = Some(Day)
   }
 
@@ -107,6 +143,11 @@ object Periodicity {
     def floor(time: Instant) = Day.floor(time).toDateTime.withDayOfMonth(1).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusMonths(amount).toInstant
+
+    def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
+      case Year => Some(time.toDateTime.getMonthOfYear)
+      case _ => None
+    }
 
     override val finer = Some(Day)
   }
@@ -116,6 +157,8 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusYears(amount).toInstant
 
+    def indexOf(time: Instant, in: Periodicity): Option[Int] = None
+
     override val finer = Some(Month)
   }
 
@@ -123,6 +166,8 @@ object Periodicity {
     def floor(time: Instant) = Instants.Zero
 
     def increment(time: Instant, amount: Int = 1) = Instants.Inf
+
+    def indexOf(time: Instant, in: Periodicity): Option[Int] = None
 
     override val finer = Some(Year)
   }
@@ -139,9 +184,9 @@ object Periodicity {
 
   val Default = Periodicity.Minute to Periodicity.Eternity
 
-  def byName(name: String): Periodicity = All.find(_.name == name.toLowerCase).getOrElse(sys.error("Invalid periodicity name: " + name))
+  def byName(name: String): Option[Periodicity] = All.find(_.name == name.toLowerCase)
 
-  def apply(name: String): Periodicity = byName(name)
+  def apply(name: String): Periodicity = byName(name).getOrElse(sys.error("Invalid periodicity name: " + name))
 
   def unapply(periodicity: Periodicity): Option[String] = Some(periodicity.name)
 }

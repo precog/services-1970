@@ -84,9 +84,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   val EarliestTime = new Instant(0)
   val LatestTime   = new Instant(Long.MaxValue)
 
-  val  ChildReportEmpty   = Report.empty[HasChild, CountType]
-
-  val  ValueReportEmpty   = Report.empty[HasValue, TimeSeries[CountType]]
+  val ChildReportEmpty    = Report.empty[HasChild, CountType]
+  val ValueReportEmpty    = Report.empty[HasValue, TimeSeries[CountType]]
 
   val timeSeriesEncoding  = TimeSeriesEncoding.Default
   val timeGranularity     = timeSeriesEncoding.grouping.keys.min
@@ -285,31 +284,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     internalSearchSeries(variable_value_series.collection, token, path, observation, periodicity, start, end)
   }
 
-  private implicit def filterWhereObserved(filter: MongoFilter) = FilterWhereObserved(filter)
-  private case class FilterWhereObserved(filter: MongoFilter) {
-    /*
-     * "where": {
-     *   "variable1":  ".click.gender",
-     *   "predicate1": "male"
-     * }
-     */
-    def whereVariablesEqual[P <: Predicate : Decomposer](observation: Observation[P]): MongoFilter = {
-      observation.toSeq.sortBy(_._1).zipWithIndex.foldLeft[MongoFilter](filter) {
-        case (filter, ((variable, predicate), index)) =>
-          filter & 
-          JPath(".where.variable" + index)  === variable.serialize &
-          JPath(".where.predicate" + index) === predicate.serialize
-      }
-    }
-
-    def whereVariablesExist(variables: Seq[Variable]): MongoFilter = {
-      variables.sorted.zipWithIndex.foldLeft[MongoFilter](filter) {
-        case (filter, (variable, index)) =>
-          filter & (JPath(".where.variable" + index) === variable.serialize)
-      }
-    }
-  }
-
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor],
                      start: Option[Instant] = None, end: Option[Instant] = None): Future[IntersectionResult[CountType]] = {
 
@@ -412,22 +386,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
     }    
   }
 
-  private def deserializeTimeSeries(jv: JValue, granularity: Periodicity, start: Option[Instant], end: Option[Instant]): TimeSeriesType = {
-    val startFloor = start.map(granularity.floor)
-    (jv \ "counts") match {
-      case JObject(fields) => 
-        fields.foldLeft(TimeSeries.empty[CountType](granularity)) {
-          case (series, JField(time, count)) => 
-            val ltime = time.toLong 
-            if (startFloor.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) 
-               series + ((new Instant(ltime), count.deserialize[CountType]))
-            else series
-        } 
-
-
-      case x => sys.error("Unexpected serialization format for time series count data: " + renderNormalized(x))
-    }
-  }
 
   private def seriesKeyFilter[P <: Predicate : SignatureGen](token: Token, path: Path, observation: Observation[P],
                                                              period: Period, granularity: Periodicity) = {
@@ -442,26 +400,23 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       col: MongoCollection, token: Token, path: Path, observation: Observation[P],
       granularity: Periodicity, start : Option[Instant] = None, end : Option[Instant] = None): Future[TimeSeriesType] = {
 
-    val keyBuilder = seriesKeyFilter(token, path, observation, _: Period, granularity)
     val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
 
-    val intervalFilters = (start.map(batchPeriodicity.period), end.map(batchPeriodicity.period)) match {
-      case (Some(start), Some(end)) => 
-        if      (start == end)           keyBuilder(start) :: Nil
-        else if (start.end == end.start) keyBuilder(start) :: keyBuilder(end) :: Nil
-        else                             sys.error("Query interval too large - too many results to return.")
-
-      case (ostart, oend) => 
-        ostart.orElse(oend).orElse((granularity == Periodicity.Eternity).option(Period.Eternity)).
-        map(keyBuilder).toList
+    val interval = Interval(start, end, granularity)
+    val intervalFilters = interval.mapBatchPeriods(batchPeriodicity) {
+      seriesKeyFilter(token, path, observation, _: Period, granularity)
     }
 
     Future {
-      intervalFilters.map(filter => database(selectOne(".counts").from(col).where(filter))): _*
+      intervalFilters.map(filter => database(selectOne(".counts").from(col).where(filter))).toSeq: _*
     } map {
       _.flatten
        .foldLeft(TimeSeries.empty[CountType](granularity)) {
-         (cur, jv) => cur + (deserializeTimeSeries(jv, granularity, start, end))
+         (series, result) => ((result \ "counts") -->? classOf[JObject]) map { jobj => 
+           series + interval.deserializeTimeSeries[CountType](jobj)
+         } getOrElse {
+           series
+         }
        }
        .fillGaps(start, end)
     }
@@ -658,10 +613,6 @@ object AggregationEngine {
     Future(futures.toSeq: _*)
   }
 
-  def apply(config: ConfigMap, logger: Logger, database: MongoDatabase): Future[AggregationEngine] = {
-    createIndices(database).map(_ => new AggregationEngine(config, logger, database))
-  }
-
   val ListJValueOrdering: Ordering[List[JValue]] = new Ordering[List[JValue]] {
     import blueeyes.json.xschema.DefaultOrderings.JValueOrdering
 
@@ -674,6 +625,10 @@ object AggregationEngine {
         case Some(c) => c
       }
     }
+  }
+
+  def apply(config: ConfigMap, logger: Logger, database: MongoDatabase): Future[AggregationEngine] = {
+    createIndices(database).map(_ => new AggregationEngine(config, logger, database))
   }
 
   def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[HasValue, T])]): scala.math.Ordering[List[JValue]] = {

@@ -34,6 +34,18 @@ class TimeSeriesSpec extends Specification with ArbitraryTime with ScalaCheck {
     }
   }
 
+  "TimeSeries.groupbBy" should {
+    "batch counts over months  by day" in {
+      val startDate = new DateTime()
+      val times = for (i <- 0 to 90) yield (startDate.plusDays(i).toInstant, 2)
+      val testSeries = times.foldLeft(TimeSeries.empty[Int](Day))(_ + _) 
+
+      val result = testSeries.groupBy(Month).get
+      result.total must_== testSeries.total
+      result.data(1) must_== 6
+    }
+  }
+
   "TimeSeries.toJValue" should {
     "create a JObject with no duplicated timestamps" in {
       forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: Instant, time2: Instant, periodicity: Periodicity) => 
