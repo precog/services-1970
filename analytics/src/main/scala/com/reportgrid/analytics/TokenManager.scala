@@ -26,7 +26,7 @@ import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 
 object TokenManager {
-  def apply(database: MongoDatabase, tokensCollection: MongoCollection) = {
+  def apply(database: Database, tokensCollection: MongoCollection) = {
     val RootTokenJ: JObject      = Token.Root.serialize.asInstanceOf[JObject]
     val TestTokenJ: JObject      = Token.Test.serialize.asInstanceOf[JObject]
     val BenchmarkTokenJ: JObject = Token.Benchmark.serialize.asInstanceOf[JObject]
@@ -42,7 +42,7 @@ object TokenManager {
 }
 
 
-class TokenManager private (database: MongoDatabase, tokensCollection: MongoCollection) {
+class TokenManager private (database: Database, tokensCollection: MongoCollection) {
   //TODO: Add expiry settings.
   val tokenCache = Cache.concurrent[String, Token](CacheSettings(ExpirationPolicy(None, None, MILLISECONDS)))
   tokenCache.put(Token.Root.tokenId, Token.Root)

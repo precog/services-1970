@@ -29,6 +29,7 @@ object ServicesBuild extends Build {
       settings = serviceSettings ++ Seq(libraryDependencies += "joda-time" % "joda-time" % "1.6.2")
     )
 
+
     val analyticsSettings = serviceSettings ++ Seq( 
       libraryDependencies ++= Seq(
         "joda-time"               % "joda-time"    % "1.6.2",
@@ -40,6 +41,23 @@ object ServicesBuild extends Build {
 
     val analytics = Project("analytics", file("analytics"), settings = analyticsSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))
 
+
+    val yggdrasilSettings = serviceSettings ++ Seq(
+      resolvers ++= Seq(
+        "riptano" at "http://mvn.riptano.com/content/repositories/public",
+        "Scale7 Maven Repo" at "https://github.com/s7/mvnrepo/raw/master"
+      ),
+      libraryDependencies ++= Seq(
+        "org.scale7" % "scale7-pelops" % "1.2-0.8.x-SNAPSHOT",
+        "joda-time"               % "joda-time"    % "1.6.2",
+        "org.scalaz"              %% "scalaz-core" % "6.0.1"
+      ),
+      mainClass := Some("com.reportgrid.yggdrasil.Yggdrasil")
+    )
+
+    val yggdrasil = Project("yggdrasil", file("yggdrasil"), settings = yggdrasilSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt (blueeyes(base))
+
+
     val benchmarkSettings = serviceSettings ++ Seq(
       libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile",
       mainClass := Some("com.reportgrid.benchmark.AnalyticsBenchmark")
@@ -47,7 +65,7 @@ object ServicesBuild extends Build {
 
     val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
 
-    val services = Project("services", file(".")) aggregate (common, analytics, benchmark) 
-    common :: analytics :: benchmark :: services :: Nil
+    val services = Project("services", file(".")) aggregate (common, analytics, benchmark, yggdrasil) 
+    common :: analytics :: benchmark :: yggdrasil :: services :: Nil
   }
 }

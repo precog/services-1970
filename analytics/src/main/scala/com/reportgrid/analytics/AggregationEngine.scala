@@ -78,7 +78,15 @@ import SignatureGen._
  * }
  */
 
-class AggregationEngine private (config: ConfigMap, logger: Logger, database: MongoDatabase) {
+case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
+  def put(filter: MongoFilter, update: MongoUpdate): Unit = stage.put(filter & collection, update)
+  def put(t: (MongoFilter, MongoUpdate)): Unit = put(t._1, t._2)
+  def putAll(filters: Iterable[(MongoFilter, MongoUpdate)]): Unit = {
+    stage.putAll(filters.map(((_: MongoFilter) & collection).first[MongoUpdate]))
+  }
+}
+
+class AggregationEngine private (config: ConfigMap, logger: Logger, database: Database) {
   import AggregationEngine._
 
   val EarliestTime = new Instant(0)
@@ -91,7 +99,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   val timeGranularity     = timeSeriesEncoding.grouping.keys.min
   implicit val HashSig    = Sha1HashFunction
 
-  private def newMongoStage(prefix: String): MongoStage = {
+  private def AggregationStage(prefix: String): AggregationStage = {
     val timeToIdle      = config.getLong(prefix + ".time_to_idle_millis").getOrElse(10000L)
     val timeToLive      = config.getLong(prefix + ".time_to_live_millis").getOrElse(10000L)
     val initialCapacity = config.getInt (prefix + ".initial_capacity").getOrElse(1000)
@@ -99,27 +107,29 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
 
     val collection = config.getString(prefix + ".collection").getOrElse(prefix)
 
-    new MongoStage(
-      database   = database,
+    new AggregationStage(
       collection = collection,
-      mongoStageSettings = MongoStageSettings(
-        expirationPolicy = ExpirationPolicy(
-          timeToIdle = Some(timeToIdle),
-          timeToLive = Some(timeToLive),
-          unit       = TimeUnit.MILLISECONDS
-        ),
-        maximumCapacity = maximumCapacity
+      stage = new MongoStage(
+        database   = database,
+        mongoStageSettings = MongoStageSettings(
+          expirationPolicy = ExpirationPolicy(
+            timeToIdle = Some(timeToIdle),
+            timeToLive = Some(timeToLive),
+            unit       = TimeUnit.MILLISECONDS
+          ),
+          maximumCapacity = maximumCapacity
+        )
       )
     )
   }
 
-  private val variable_series        = newMongoStage("variable_series")
-  private val variable_value_series  = newMongoStage("variable_value_series")
+  private val variable_series        = AggregationStage("variable_series")
+  private val variable_value_series  = AggregationStage("variable_value_series")
 
-  private val variable_values           = newMongoStage("variable_values")
-  private val variable_values_infinite  = newMongoStage("variable_values_infinite")
-  private val variable_children         = newMongoStage("variable_children")
-  private val path_children             = newMongoStage("path_children")
+  private val variable_values           = AggregationStage("variable_values")
+  private val variable_values_infinite  = AggregationStage("variable_values_infinite")
+  private val variable_children         = AggregationStage("variable_children")
+  private val path_children             = AggregationStage("path_children")
 
 
   /** Aggregates the specified data. The object may contain multiple events or
@@ -135,7 +145,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
       case field @ JField(eventName, _) => 
         val event = JObject(field :: Nil)
 
-        path_children += addChildOfPath(forTokenAndPath(token, path), "." + eventName)
+        path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)
 
         val (finite, infinite) = Report.ofValues(
           event = event,
@@ -560,11 +570,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Mo
   }
 
   def stop(): Future[Unit] =  for {
-    _ <- variable_value_series.flushAll
-    _ <- variable_series.flushAll
-    _ <- variable_children.flushAll
-    _ <- variable_values.flushAll
-    _ <- path_children.flushAll
+    _ <- variable_value_series.stage.flushAll
+    _ <- variable_series.stage.flushAll
+    _ <- variable_children.stage.flushAll
+    _ <- variable_values.stage.flushAll
+    _ <- path_children.stage.flushAll
   } yield ()
 }
 
@@ -601,7 +611,7 @@ object AggregationEngine {
     )
   )
 
-  private def createIndices(database: MongoDatabase) = {
+  private def createIndices(database: Database) = {
     val futures = for ((collection, indices) <- CollectionIndices; 
                        (indexName, (fields, unique)) <- indices) yield {
       database[JNothing.type] {
@@ -627,7 +637,7 @@ object AggregationEngine {
     }
   }
 
-  def apply(config: ConfigMap, logger: Logger, database: MongoDatabase): Future[AggregationEngine] = {
+  def apply(config: ConfigMap, logger: Logger, database: Database): Future[AggregationEngine] = {
     createIndices(database).map(_ => new AggregationEngine(config, logger, database))
   }
 

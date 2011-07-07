@@ -5,6 +5,7 @@ import blueeyes.json.{JPath, JPathNode, JPathField, JPathIndex, JPathImplicits}
 import blueeyes.json.JsonParser.{parse}
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.xschema.JodaSerializationImplicits
 
 import blueeyes.persistence.mongo._
 
@@ -12,12 +13,12 @@ import blueeyes.util.SpecialCharTranscoder
 
 import com.reportgrid.analytics._
 
-import org.joda.time.{Instant, DateTime, DateTimeZone}
+import org.joda.time.{DateTime, Instant}
 import scalaz.Scalaz._
 
 /** Support for persitence via MongoDB.
  */
-object MongoSupport {
+object MongoSupport extends JodaSerializationImplicits {
   val MongoEscaper = SpecialCharTranscoder.fromMap('/',
     Map(
       '.' -> '*',
@@ -64,21 +65,6 @@ object MongoSupport {
     }
   }
 
-  implicit val InstantExtractor = new Extractor[Instant] {
-    def extract(jvalue: JValue): Instant = new Instant(jvalue.deserialize[Long])
-  }
-
-  implicit val InstantDecomposer = new Decomposer[Instant] {
-    def decompose(dateTime: Instant): JValue = JInt(dateTime.getMillis)
-  }
-
-  implicit val DateTimeExtractor = new Extractor[DateTime] {
-    def extract(jvalue: JValue): DateTime = new DateTime(jvalue.deserialize[Long], DateTimeZone.UTC)
-  }
-
-  implicit val DateTimeDecomposer = new Decomposer[DateTime] {
-    def decompose(dateTime: DateTime): JValue = JInt(dateTime.getMillis)
-  }
 
   implicit val PeriodicityExtractor = new Extractor[Periodicity] {
     def extract(value: JValue): Periodicity = Periodicity(value.deserialize[String])

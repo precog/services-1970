@@ -2,10 +2,11 @@ package com.reportgrid.analytics
 
 import blueeyes.{BlueEyesServiceBuilder, BlueEyesServer}
 import blueeyes.concurrent.Future
-import blueeyes.core.data.{Chunk, BijectionsChunkJson, BijectionsChunkString}
+import blueeyes.core.data.{Chunk, ByteChunk, BijectionsChunkJson, BijectionsChunkString}
 import blueeyes.core.http._
 import blueeyes.core.http.MimeTypes.{application, json}
 import blueeyes.core.service._
+import blueeyes.core.service.engines.HttpClientXLightWeb
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.json.{JPath, JsonParser, JPathField}
@@ -19,6 +20,7 @@ import net.lag.configgy.{Configgy, ConfigMap}
 import org.joda.time.Instant
 import org.joda.time.DateTime
 
+import java.net.URL
 import java.util.concurrent.TimeUnit
 
 import com.reportgrid.analytics.AggregatorImplicits._
@@ -30,7 +32,9 @@ import com.reportgrid.api.blueeyes._
 import scala.collection.immutable.SortedMap
 import scalaz.Scalaz._
 
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue])
+case class YggdrasilConfig(host: String, port: Option[Int], path: String)
+
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: YggdrasilConfig)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString with ReportGridInstrumentation {
   import AggregationEngine._
@@ -39,6 +43,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
   def mongoFactory(configMap: ConfigMap): Mongo
 
   def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
+
+  val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
 
   val analyticsService = service("analytics", "0.01") {
     requestLogging { 
@@ -57,11 +63,18 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
           val auditClient = auditClientFactory(config.configMap("audit"))
 
+          val yggConfigMap = config.configMap("yggdrasil")
+          val yggdrasilConfig = YggdrasilConfig(
+            yggConfigMap.getString("host", "api.reportgrid.com"),
+            yggConfigMap.getInt("port"),
+            yggConfigMap.getString("path", "/yggdrasil/v0")
+          )
+
           for {
             tokenManager      <- TokenManager(database, tokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, database)
           } yield {
-            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient)
+            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggdrasilConfig)
           }
         } ->
         request { (state: AnalyticsState) =>
@@ -130,6 +143,17 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           }
 
           val audit = auditor[JValue, JValue](auditClient, clock, tokenOf)
+          
+          def yggdrasilRewrite[T](req: HttpRequest[T]): HttpRequest[T] = {
+            val prefixPath = req.parameters.get('prefixPath).getOrElse("")
+            req.copy(
+              uri = req.uri.copy(
+                host = Some(yggdrasil.host), 
+                port = yggdrasil.port, 
+                path = Some(yggdrasil.path + "/vfs/" + prefixPath)
+              )
+            ) 
+          }
 
           jsonp {
             /* The virtual file system, which is used for storing data,
@@ -140,30 +164,32 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 /* Post data to the virtual file system.
                  */
                 audit("track") {
-                  post { request: HttpRequest[JValue] =>
-                    tokenOf(request).map { token =>
-                      val path = fullPathOf(token, request)
+                  forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
+                    post { request: HttpRequest[JValue] =>
+                      tokenOf(request).map { token =>
+                        val path = fullPathOf(token, request)
 
-                      request.content.foreach { content =>
-                        val timestamp: Instant = (content \ "timestamp") match {
-                          case JNothing => clock.instant()
-                          case jvalue   => jvalue.deserialize[Instant]
+                        request.content.foreach { content =>
+                          val timestamp: Instant = (content \ "timestamp") match {
+                            case JNothing => clock.instant()
+                            case jvalue   => jvalue.deserialize[Instant]
+                          }
+
+                          val events: JObject = (content \ "events") match {
+                            case jobject: JObject => jobject
+                            case _ => sys.error("Expecting to find .events field containing object to aggregate")
+                          }
+
+                          val count: Int = (content \ "count") match {
+                            case JNothing => 1
+                            case jvalue   => jvalue.deserialize[Int]
+                          }
+
+                          aggregationEngine.aggregate(token, path, timestamp, events, count)
                         }
 
-                        val events: JObject = (content \ "events") match {
-                          case jobject: JObject => jobject
-                          case _ => sys.error("Expecting to find .events field containing object to aggregate")
-                        }
-
-                        val count: Int = (content \ "count") match {
-                          case JNothing => 1
-                          case jvalue   => jvalue.deserialize[Int]
-                        }
-
-                        aggregationEngine.aggregate(token, path, timestamp, events, count)
+                        HttpResponse[JValue](content = None)
                       }
-
-                      HttpResponse[JValue](content = None)
                     }
                   }
                 } ~
