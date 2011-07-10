@@ -173,14 +173,11 @@ trait SignatureGens {
     override def apply(v: Variable) = TypeSig ++ sig(v.name)
   }
 
-  implicit object HasChildSignatureGen extends SignatureGen[HasChild] {
-    val TypeSig = sig("HasChild") 
-    override def apply(v: HasChild) = TypeSig ++ sig(v.child)
-  }
-
-  implicit object HasValueSignatureGen extends SignatureGen[HasValue] {
-    val TypeSig = sig("HasValue") 
-    override def apply(v: HasValue) = TypeSig ++ sig(v.value)
+  implicit object PredicateSignatureGen extends SignatureGen[Predicate] {
+    override def apply(v: Predicate) = v match {
+      case HasChild(child) => sig("HasChild") ++ sig(child)
+      case HasValue(value) => sig("HasValue") ++ sig(value)
+    }
   }
 }
 

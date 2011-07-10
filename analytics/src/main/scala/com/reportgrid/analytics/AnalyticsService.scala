@@ -259,7 +259,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                                 aggregationEngine.getVariableSeries(token, path, variable, periodicity, Some(startTime), Some(endTime))
                                 .map(groupTimeSeries(seriesGrouping(request)))
-                                .map(_.fold(_.toJValue, _.serialize).ok)
+                                .map(_.fold(_.map(_.count).toJValue, _.map(_.count).serialize).ok)
 
                               case _ => throw HttpException(HttpStatusCodes.BadRequest, "GET with Range only accepts unit of 'time'")
                             }
@@ -271,7 +271,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             val variable    = variableOf(request)
                             val periodicity = periodicityOf(request)
 
-                            aggregationEngine.getVariableSeries(token, path, variable, periodicity).map(_.serialize.ok)
+                            aggregationEngine.getVariableSeries(token, path, variable, periodicity)
+                            .map(_.map(_.count).serialize.ok)
                           }
                         }
                       }

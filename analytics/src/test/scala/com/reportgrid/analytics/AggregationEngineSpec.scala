@@ -245,7 +245,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (subset @ (eventName, path), count) =>
           engine.getVariableSeries(
             Token.Test, "/test", Variable(JPath(eventName) \ path), granularity, Some(minDate), Some(maxDate)
-          ) map (_.total) must whenDelivered {
+          ) map (_.map(_.count).total) must whenDelivered {
             beEqualTo(count.toLong)
           }
       }

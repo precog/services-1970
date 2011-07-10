@@ -90,6 +90,8 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
     )
   }
 
+  def map[U: AbelianGroup](f: T => U): TimeSeries[U] = TimeSeries(periodicity, series.mapValues(f))
+
   def aggregates = {
     @tailrec def superAggregates(periodicity: Periodicity, acc: List[TimeSeries[T]]): List[TimeSeries[T]] = {
       periodicity.nextOption match {
@@ -189,6 +191,10 @@ class DeltaSet[A, D, V](val zero: A, val data: Map[D, V])(implicit sact: SAct[A,
   def + (that: DeltaSet[A, D, V]) = new DeltaSet(zero, data <+> that.data)
 
   def + (entry: (A, V)): DeltaSet[A, D, V] = new DeltaSet(zero, data + (d.difference(_: A, zero)).first.apply(entry))
+
+  def map[X: AbelianGroup](f: V => X): DeltaSet[A, D, X] = {
+    new DeltaSet(zero, data.mapValues(f))
+  }
 
   def total: V = data.values.asMA.sum
 }

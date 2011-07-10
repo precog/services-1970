@@ -14,28 +14,28 @@ import Scalaz._
  * A report counts observations of a particular type.
  * An observation is a value of type Set[(Variable, HasValue | HasChild)]
  */
-case class Report[S <: Predicate, T: Semigroup](observationCounts: Map[Observation[S], T]) {
+case class Report[P <: Predicate, T: Semigroup](observationCounts: Map[Observation[P], T]) {
   /** Creates a new report containing all the data in this report, plus all the
    * data in that report.
    */
-  def + (that: Report[S, T]): Report[S, T] = Report[S, T](this.observationCounts <+> that.observationCounts)
+  def + (that: Report[P, T]): Report[P, T] = Report[P, T](that.observationCounts <+> this.observationCounts)
 
   /** Maps the report based on the type of count.
    */
-  def map[TT: Semigroup](f: T => TT): Report[S, TT] = Report(observationCounts.mapValues(f))
+  def map[TT: Semigroup](f: T => TT): Report[P, TT] = Report(observationCounts.mapValues(f))
 
   /** Groups the report by order of observation.
    */
-  def groupByOrder: Map[Int, Report[S, T]] = observationCounts.groupBy(_._1.size).mapValues(Report(_))
+  def groupByOrder: Map[Int, Report[P, T]] = observationCounts.groupBy(_._1.size).mapValues(Report(_))
 
   /** Creates a new report derived from this one containing only observations
    * of the specified order.
    */
-  def order(n: Int): Report[S, T] = Report(observationCounts.filter(_._1.size == n))
+  def order(n: Int): Report[P, T] = Report(observationCounts.filter(_._1.size == n))
 }
 
 object Report {
-  def empty[S <: Predicate, T: Semigroup]: Report[S, T] = Report[S, T](Map.empty)
+  def empty[P <: Predicate, T: Semigroup]: Report[P, T] = Report[P, T](Map.empty)
 
   /** Creates a report of values.
    */
@@ -53,8 +53,8 @@ object Report {
     }
   
     (
-      Report(sublists(finite, order).map(subset => (subset.toSet, count))(collection.breakOut)),
-      Report(infinite.map(v => (Set(v), count))(collection.breakOut))
+      Report[HasValue, T](sublists(finite, order).map(subset => (subset.toSet, count))(collection.breakOut)),
+      Report[HasValue, T](infinite.map(v => (Set(v), count))(collection.breakOut))
     )
   }
 
@@ -63,18 +63,25 @@ object Report {
    * not contain much additional information.
    */
   def ofChildren[T: Semigroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[HasChild, T] = {
-    val empty = Set.empty[(Variable, HasChild)]
-
-    val flattened = event.foldDownWithPath(empty) { (set, jpath, jvalue) =>
+    val flattened = event.foldDownWithPath(Set.empty[(Variable, HasChild)]) { (set, jpath, jvalue) =>
       val parent = jpath.parent
+      parent.map(parent => set + (Variable(parent) -> HasChild(jpath.nodes.last))).getOrElse(set)
+    }
 
-      parent.map { parent =>
-        val child  = jpath.nodes.last
+    Report(Map(sublists(flattened.toList, order).map { subset => (subset.toSet, count) }: _*))
+  }
 
-        set + (Variable(parent) -> HasChild(child))
-      }.getOrElse(set)
-    }.toList
+  def ofInnerNodes[T: Semigroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[HasChild, T] = {
+    val flattened = event.foldDownWithPath(Set.empty[(Variable, HasChild)]) { (set, jpath, jvalue) =>
+      jvalue match {
+        case JNothing | JNull | JBool(_) | JInt(_) | JDouble(_) | JString(_) => set
+          // exclude the path when the jvalue indicates a leaf node
+        case _ =>
+          val parent = jpath.parent
+          parent.map(parent => set + (Variable(parent) -> HasChild(jpath.nodes.last))).getOrElse(set)
+      }
+    }
 
-    Report(Map(sublists(flattened, order).map { subset => (subset.toSet, count) }: _*))
+    Report(Map(sublists(flattened.toList, order).map { subset => (subset.toSet, count) }: _*))
   }
 }

@@ -58,14 +58,6 @@ object MongoSupport extends JodaSerializationImplicits {
 
   implicit def DoubleUpdater(jpath: JPath, value: Double): MongoUpdate = jpath inc value
 
-  def timeSeriesUpdater[T](jpath: JPath, value: TimeSeries[T]) (implicit updater: (JPath, T) => MongoUpdate) = {
-    value.series.foldLeft[MongoUpdate](MongoUpdateNothing) {
-      case (fullUpdate, (time, count)) =>
-        fullUpdate |+| updater(jpath \ time.getMillis.toString, count)
-    }
-  }
-
-
   implicit val PeriodicityExtractor = new Extractor[Periodicity] {
     def extract(value: JValue): Periodicity = Periodicity(value.deserialize[String])
   }
@@ -118,6 +110,15 @@ object MongoSupport extends JodaSerializationImplicits {
       JField("data", value.data.serialize)
     ))
   }
+
+  implicit val ValueStatsExtractor: Extractor[ValueStats] = new Extractor[ValueStats] {
+    def extract(value: JValue): ValueStats = ValueStats(
+      (value \ "count").deserialize[Long],
+      (value \? "sum").map(_.deserialize[Double]),
+      (value \? "sumsq").map(_.deserialize[Double])
+    )
+  }
+
 
   /** Serializes HasChild Predicate into a JValue.
    */

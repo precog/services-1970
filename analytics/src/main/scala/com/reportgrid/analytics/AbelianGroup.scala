@@ -65,6 +65,8 @@ trait AggregatorImplicits {
       }
     }
   }
+
+  implicit val valueStatsGroup = ValueStats.group
 }
 
 object AggregatorImplicits extends AggregatorImplicits
