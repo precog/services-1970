@@ -21,6 +21,7 @@ import blueeyes.concurrent.Future
 import net.lag.configgy.{Configgy, Config, ConfigMap}
 import net.lag.logging.Logger
 
+import org.joda.time.Instant
 import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
@@ -237,7 +238,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
           obj.flattenWithPath.foldLeft(map) {
             case (map, (path, _)) =>
               val key = (eventName, path)
-              map + (key -> (map.get(key).getOrElse(0) + 1))
+              map + (key -> (map.getOrElse(key, 0) + 1))
           }
       }
 
@@ -247,6 +248,47 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
             Token.Test, "/test", Variable(JPath(eventName) \ path), granularity, Some(minDate), Some(maxDate)
           ) map (_.map(_.count).total) must whenDelivered {
             beEqualTo(count.toLong)
+          }
+      }
+    }
+
+    "retrieve a time series of statistics over values of a variable" in {
+      val granularity = Hour
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+
+      val expectedMeans = events.foldLeft(Map.empty[String, Map[Instant, (Int, Double)]]) {
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
+          obj.flattenWithPath.foldLeft(map) {
+            case (map, (path, value)) if path.nodes.last == JPathField("recipientCount") =>
+              val instant = granularity.floor(time)
+              map + (
+                eventName -> (
+                  map.get(eventName) match {
+                    case None => Map(instant -> (1, value.deserialize[Int]))
+                    case Some(totals) => 
+                      totals.get(instant) match {
+                        case None => totals + (instant -> (1, value.deserialize[Double]))
+                        case Some((count, sum)) =>
+                          totals + (instant -> (count + 1, value.deserialize[Double] + sum))
+                      }
+                  }
+                )
+              )
+              
+            case (map, _) => map
+          }
+      } mapValues {
+        _.mapValues {
+          case (k, v) => v / k
+        }
+      }
+
+      expectedMeans.foreach {
+        case (eventName, means) =>
+          engine.getVariableSeries(
+            Token.Test, "/test", Variable(JPath(eventName) \ "recipientCount"), granularity, Some(minDate), Some(maxDate)
+          ) must whenDelivered {
+            verify(_.series.mapValues(_.mean).filter(!_._2.isEmpty).mapValues(_.get) == means)
           }
       }
     }
