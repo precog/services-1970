@@ -40,7 +40,7 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
 
   override def auditClientFactory(config: ConfigMap) = new ReportGridTrackingClient[JValue] {
     override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = jsonImplementation.EmptyObject, rollup: Boolean = false, timestamp: Option[Date] = None, count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
-      println("Tracked " + path + "; " + name + " - " + properties)
+      //println("Tracked " + path + "; " + name + " - " + properties)
     }
   }
 
@@ -73,10 +73,10 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
       val expected = expectedMeans(events, Hour, "recipientCount")
 
-      (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted/series/hour")) must whenDelivered {
+      (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")) must whenDelivered {
         verify {
           case HttpResponse(status, _, Some(result), _) => 
-            result.deserialize[TimeSeries[Double]].series must_== expected("tweeted")
+            result.deserialize[TimeSeries[Option[Double]]].series.filter(!_._2.isEmpty).mapValues(_.get) must_== expected("tweeted")
         }
       } 
     }

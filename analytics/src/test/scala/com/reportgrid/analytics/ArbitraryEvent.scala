@@ -64,7 +64,23 @@ trait ArbitraryEvent extends ArbitraryTime {
     (sortedEvents.filter(t => t.timestamp >= startTime && t.timestamp < endTime), startTime, endTime)
   }
 
+  def expectedCounts(events: List[Event], granularity: Periodicity, property: String) = {
+    expectedSums(events, granularity, property) mapValues {
+      _.mapValues {
+        case (k, v) => v 
+      }
+    }
+  }
+
   def expectedMeans(events: List[Event], granularity: Periodicity, property: String) = {
+    expectedSums(events, granularity, property) mapValues {
+      _.mapValues {
+        case (k, v) => v / k
+      }
+    }
+  }
+
+  def expectedSums(events: List[Event], granularity: Periodicity, property: String) = {
     events.foldLeft(Map.empty[String, Map[Instant, (Int, Double)]]) {
       case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
         obj.flattenWithPath.foldLeft(map) {
@@ -86,11 +102,7 @@ trait ArbitraryEvent extends ArbitraryTime {
             
           case (map, _) => map
         }
-    } mapValues {
-      _.mapValues {
-        case (k, v) => v / k
-      }
-    }
+    }   
   }
 }
 

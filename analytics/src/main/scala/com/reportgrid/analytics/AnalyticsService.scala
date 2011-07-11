@@ -1,6 +1,6 @@
 package com.reportgrid.analytics
 
-import blueeyes.{BlueEyesServiceBuilder, BlueEyesServer}
+import blueeyes._
 import blueeyes.concurrent.Future
 import blueeyes.core.data.{Chunk, ByteChunk, BijectionsChunkJson, BijectionsChunkString}
 import blueeyes.core.http._
@@ -215,11 +215,13 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         $ {
                           querySeries(tokenOf, _.count, aggregationEngine)
                         } ~ 
-                        path("means/") {
-                          querySeries(tokenOf, _.mean, aggregationEngine)
-                        } ~ 
-                        path("standardDeviations/") {
-                          querySeries(tokenOf, _.standardDeviation, aggregationEngine) 
+                        path("/") {
+                          path("means") {
+                            querySeries(tokenOf, _.mean, aggregationEngine)
+                          } ~ 
+                          path("standardDeviations") {
+                            querySeries(tokenOf, _.standardDeviation, aggregationEngine) 
+                          } 
                         }
                       }
                     }
