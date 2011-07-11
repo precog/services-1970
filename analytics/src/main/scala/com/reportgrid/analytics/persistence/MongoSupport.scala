@@ -50,14 +50,6 @@ object MongoSupport extends JodaSerializationImplicits {
     def extract(v: JValue): JPath = JPath(v.deserialize[String])
   }
 
-  implicit def IntUpdater(jpath: JPath, value: Int): MongoUpdate = jpath inc value
-
-  implicit def LongUpdater(jpath: JPath, value: Long): MongoUpdate = jpath inc value
-
-  implicit def FloatUpdater(jpath: JPath, value: Float): MongoUpdate = jpath inc value
-
-  implicit def DoubleUpdater(jpath: JPath, value: Double): MongoUpdate = jpath inc value
-
   implicit val PeriodicityExtractor = new Extractor[Periodicity] {
     def extract(value: JValue): Periodicity = Periodicity(value.deserialize[String])
   }
@@ -85,14 +77,14 @@ object MongoSupport extends JodaSerializationImplicits {
   implicit def TimeSeriesDecomposer[T](implicit decomposer: Decomposer[T]) = new Decomposer[TimeSeries[T]] {
     def decompose(value: TimeSeries[T]): JValue = JObject(List(
       JField("periodicity", JString(value.periodicity.name)),
-      JField("series", JObject(value.series.map { case (time, count) => JField(time.getMillis.toString, count.serialize) }.toList))
+      JField("data", JObject(value.series.map { case (time, count) => JField(time.getMillis.toString, count.serialize) }.toList))
     ))
   }
 
   implicit def TimeSeriesExtractor[T](implicit aggregator: AbelianGroup[T], extractor: Extractor[T]) = new Extractor[TimeSeries[T]] {
     def extract(value: JValue): TimeSeries[T] = {
       val periodicity = (value \ "periodicity").deserialize[Periodicity]
-      value \ "counts" match {
+      value \ "data" match {
         case JObject(fields) =>
           fields.foldLeft(TimeSeries.empty[T](periodicity)) { 
             case (series, JField(timeString, value)) =>

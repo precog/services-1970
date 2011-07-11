@@ -10,10 +10,11 @@ import blueeyes.core.service.engines.HttpClientXLightWeb
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.json.{JPath, JsonParser, JPathField}
+import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
-import blueeyes.util.{Clock, ClockSystem}
+import blueeyes.util.{Clock, ClockSystem, PartialFunctionCombinators}
 
 import net.lag.configgy.{Configgy, ConfigMap}
 
@@ -46,7 +47,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
   val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
 
-  val analyticsService = service("analytics", "0.01") {
+  val analyticsService = service("analytics", "0.02") {
     requestLogging { 
     logging { logger =>
       healthMonitor { monitor => context =>
@@ -64,7 +65,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           val auditClient = auditClientFactory(config.configMap("audit"))
 
           val yggConfigMap = config.configMap("yggdrasil")
-          val yggdrasilConfig = YggdrasilConfig(
+          val yggConfig = YggdrasilConfig(
             yggConfigMap.getString("host", "api.reportgrid.com"),
             yggConfigMap.getInt("port"),
             yggConfigMap.getString("path", "/yggdrasil/v0")
@@ -74,7 +75,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             tokenManager      <- TokenManager(database, tokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, database)
           } yield {
-            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggdrasilConfig)
+            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggConfig)
           }
         } ->
         request { (state: AnalyticsState) =>
@@ -107,39 +108,6 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   }
                 }
             }
-          }
-
-          def fullPathOf(token: Token, request: HttpRequest[_]): Path = {
-            val prefixPath = request.parameters.get('prefixPath) match {
-              case None | Some(null) => ""
-              case Some(s) => s
-            }
-
-            token.path + "/" + prefixPath
-          }
-
-          def variableOf(request: HttpRequest[_]): Variable = Variable(JPath(request.parameters.get('variable).getOrElse("")))
-
-          def valueOf(request: HttpRequest[_]): JValue = {
-            import java.net.URLDecoder
-
-            val value = request.parameters('value) // URLDecoder.decode(request.parameters('value), "UTF-8")
-
-            try JsonParser.parse(value)
-            catch {
-              case _ => JString(value)
-            }
-          }
-
-          def periodicityOf(request: HttpRequest[_]): Periodicity = {
-            try Periodicity(request.parameters('periodicity))
-            catch {
-              case _ => throw HttpException(HttpStatusCodes.BadRequest, "Unknown or unspecified periodicity")
-            }
-          }
-
-          def seriesGrouping(request: HttpRequest[_]): Option[Periodicity] = {
-            request.parameters.get('groupBy).flatMap(Periodicity.byName)
           }
 
           val audit = auditor[JValue, JValue](auditClient, clock, tokenOf)
@@ -244,36 +212,14 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   path("series/") {
                     audit("variable series") {
                       path('periodicity) {
-                        getRange { (ranges, unit) => (request: HttpRequest[JValue]) =>
-                          tokenOf(request).flatMap { token =>
-                            val path        = fullPathOf(token, request)
-                            val variable    = variableOf(request)
-                            val periodicity = periodicityOf(request)
-
-                            unit.toLowerCase match {
-                              case "time" =>
-                                val (start, end) = ranges.head
-
-                                val startTime = new Instant(start)
-                                val endTime   = new Instant(end)
-
-                                aggregationEngine.getVariableSeries(token, path, variable, periodicity, Some(startTime), Some(endTime))
-                                .map(groupTimeSeries(seriesGrouping(request)))
-                                .map(_.fold(_.map(_.count).toJValue, _.map(_.count).serialize).ok)
-
-                              case _ => throw HttpException(HttpStatusCodes.BadRequest, "GET with Range only accepts unit of 'time'")
-                            }
-                          }
-                        } ~
-                        get { request: HttpRequest[JValue] =>
-                          tokenOf(request).flatMap { token =>
-                            val path        = fullPathOf(token, request)
-                            val variable    = variableOf(request)
-                            val periodicity = periodicityOf(request)
-
-                            aggregationEngine.getVariableSeries(token, path, variable, periodicity)
-                            .map(_.map(_.count).serialize.ok)
-                          }
+                        $ {
+                          querySeries(tokenOf, _.count, aggregationEngine)
+                        } ~ 
+                        path("means/") {
+                          querySeries(tokenOf, _.mean, aggregationEngine)
+                        } ~ 
+                        path("standardDeviations/") {
+                          querySeries(tokenOf, _.standardDeviation, aggregationEngine) 
                         }
                       }
                     }
@@ -424,7 +370,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                                       aggregationEngine.searchSeries(token, path, observation, periodicity, Some(new Instant(start)), Some(new Instant(end)))
                                       .map(groupTimeSeries(seriesGrouping(request)))
-                                      .map(_.fold(_.toJValue, _.serialize).ok)
+                                      .map(_.fold(_.serialize, _.serialize).ok)
 
                                     case _ => throw HttpException(HttpStatusCodes.BadRequest, "GET with Range only accepts unit of 'time'")
                                   }
@@ -498,7 +444,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         case Series(periodicity) => 
                           aggregationEngine.searchSeries(token, from, where, periodicity, start, end)
                           .map(groupTimeSeries(grouping))
-                          .map(_.fold(_.toJValue, _.serialize).ok)
+                          .map(_.fold(_.serialize, _.serialize).ok)
                       }
                     } getOrElse {
                       Future.sync(HttpResponse[JValue](content = None))
@@ -541,7 +487,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                       case Series(p) =>
                         aggregationEngine.intersectSeries(token, from, properties, p, start, end)
-                        .map(_.map((groupTimeSeries(grouping)(_: TimeSeriesType).fold(_.toJValue, _.serialize)).second)(collection.breakOut))
+                        .map(_.map((groupTimeSeries(grouping)(_: TimeSeriesType).fold(_.serialize, _.serialize)).second)(collection.breakOut))
                         .map(serializeIntersectionResult[JValue](_, a => a).ok)
                     }
                   }
@@ -606,7 +552,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
   }
 }
 
-object AnalyticsService {
+object AnalyticsService extends HttpRequestHandlerCombinators with PartialFunctionCombinators {
   import AggregationEngine._
   def serializeIntersectionResult[T](result: Iterable[(List[JValue], T)], f: T => JValue) = {
     result.foldLeft[JValue](JObject(Nil)) {
@@ -617,6 +563,73 @@ object AnalyticsService {
 
   def groupTimeSeries[R, T](periodicity: Option[Periodicity]) = (timeSeries: TimeSeries[T]) => {
     periodicity flatMap (timeSeries.groupBy) toRight timeSeries
+  }
+
+  def fullPathOf(token: Token, request: HttpRequest[_]): Path = {
+    val prefixPath = request.parameters.get('prefixPath) match {
+      case None | Some(null) => ""
+      case Some(s) => s
+    }
+
+    token.path + "/" + prefixPath
+  }
+
+  def variableOf(request: HttpRequest[_]): Variable = Variable(JPath(request.parameters.get('variable).getOrElse("")))
+
+  def valueOf(request: HttpRequest[_]): JValue = {
+    import java.net.URLDecoder
+
+    val value = request.parameters('value) // URLDecoder.decode(request.parameters('value), "UTF-8")
+
+    try JsonParser.parse(value)
+    catch {
+      case _ => JString(value)
+    }
+  }
+
+  def periodicityOf(request: HttpRequest[_]): Periodicity = {
+    try Periodicity(request.parameters('periodicity))
+    catch {
+      case _ => throw HttpException(HttpStatusCodes.BadRequest, "Unknown or unspecified periodicity")
+    }
+  }
+
+  def seriesGrouping(request: HttpRequest[_]): Option[Periodicity] = {
+    request.parameters.get('groupBy).flatMap(Periodicity.byName)
+  }
+
+  def querySeries[T: Decomposer : AbelianGroup](tokenOf: HttpRequest[_] => Future[Token], f: ValueStats => T, aggregationEngine: AggregationEngine) = {
+    getRange { (ranges, unit) => (request: HttpRequest[JValue]) =>
+      tokenOf(request).flatMap { token =>
+        val path        = fullPathOf(token, request)
+        val variable    = variableOf(request)
+        val periodicity = periodicityOf(request)
+
+        unit.toLowerCase match {
+          case "time" =>
+            val (start, end) = ranges.head
+
+            val startTime = new Instant(start)
+            val endTime   = new Instant(end)
+
+            aggregationEngine.getVariableSeries(token, path, variable, periodicity, Some(startTime), Some(endTime))
+            .map(groupTimeSeries(seriesGrouping(request)))
+            .map(_.fold(_.map(f).serialize, _.map(f).serialize).ok)
+
+          case _ => throw HttpException(HttpStatusCodes.BadRequest, "GET with Range only accepts unit of 'time'")
+        }
+      }
+    } ~
+    get { request: HttpRequest[JValue] =>
+      tokenOf(request).flatMap { token =>
+        val path        = fullPathOf(token, request)
+        val variable    = variableOf(request)
+        val periodicity = periodicityOf(request)
+
+        aggregationEngine.getVariableSeries(token, path, variable, periodicity)
+        .map(_.map(f).serialize.ok)
+      }
+    }
   }
 }
 

@@ -1,11 +1,15 @@
 package com.reportgrid.analytics
 
+import blueeyes.util._
+import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.xschema.DefaultSerialization._
 
 import org.joda.time.Instant
 import org.scalacheck.{Gen, Arbitrary}
 import Gen._
+
+import scala.math.Ordered._
 
 trait ArbitraryEvent extends ArbitraryTime {
   val Locations = for (i <- 0 to 10) yield "location" + i
@@ -51,6 +55,43 @@ trait ArbitraryEvent extends ArbitraryTime {
     ),
     time
   )
+
+  def timeSlice(l: List[Event], granularity: Periodicity) = {
+    val sortedEvents = l.sortBy(_.timestamp)
+    val sliceLength = sortedEvents.size / 2
+    val startTime = granularity.floor(sortedEvents.drop(sliceLength / 2).head.timestamp)
+    val endTime = granularity.ceil(sortedEvents.drop(sliceLength + (sliceLength / 2)).head.timestamp)
+    (sortedEvents.filter(t => t.timestamp >= startTime && t.timestamp < endTime), startTime, endTime)
+  }
+
+  def expectedMeans(events: List[Event], granularity: Periodicity, property: String) = {
+    events.foldLeft(Map.empty[String, Map[Instant, (Int, Double)]]) {
+      case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
+        obj.flattenWithPath.foldLeft(map) {
+          case (map, (path, value)) if path.nodes.last == JPathField(property) =>
+            val instant = granularity.floor(time)
+            map + (
+              eventName -> (
+                map.get(eventName) match {
+                  case None => Map(instant -> (1, value.deserialize[Int]))
+                  case Some(totals) => 
+                    totals.get(instant) match {
+                      case None => totals + (instant -> (1, value.deserialize[Double]))
+                      case Some((count, sum)) =>
+                        totals + (instant -> (count + 1, value.deserialize[Double] + sum))
+                    }
+                }
+              )
+            )
+            
+          case (map, _) => map
+        }
+    } mapValues {
+      _.mapValues {
+        case (k, v) => v / k
+      }
+    }
+  }
 }
 
 object ArbitraryEvent extends ArbitraryEvent

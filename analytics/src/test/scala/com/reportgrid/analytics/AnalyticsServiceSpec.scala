@@ -28,6 +28,8 @@ import org.scalacheck._
 import rosetta.json.blueeyes._
 
 import Gen._
+import Periodicity._
+import persistence.MongoSupport._
 
 class AnalyticsServiceSpec extends BlueEyesServiceSpecification with PendingUntilFixed with ScalaCheck 
 with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
@@ -63,6 +65,18 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       (jsonTestService.get[JValue]("/vfs/test/.tweeted/count")) must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+        }
+      } 
+    }
+
+    "return variable series means" in {
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
+      val expected = expectedMeans(events, Hour, "recipientCount")
+
+      (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted/series/hour")) must whenDelivered {
+        verify {
+          case HttpResponse(status, _, Some(result), _) => 
+            result.deserialize[TimeSeries[Double]].series must_== expected("tweeted")
         }
       } 
     }

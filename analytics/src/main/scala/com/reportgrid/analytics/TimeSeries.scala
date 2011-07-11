@@ -132,15 +132,6 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
 
   def total: T = series.values.asMA.sum
 
-  def toJValue(implicit d: Decomposer[T]): JValue = JObject(List(
-    JField(
-      periodicity.name, 
-      JArray(series.toList.sortWith(_._1 < _._1).map { 
-        case (time, count) => JArray(JInt(time.getMillis) :: count.serialize :: Nil)
-      })
-    )
-  ))
-
   private def addToMap(p: Periodicity, m: Map[Instant, T], entry: (Instant, T)) = {
     val countTime = p.floor(entry._1)
     m + (countTime -> (m.getOrElse(countTime, aggregator.zero) |+| entry._2))

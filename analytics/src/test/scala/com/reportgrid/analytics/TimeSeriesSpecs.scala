@@ -46,31 +46,31 @@ class TimeSeriesSpec extends Specification with ArbitraryTime with ScalaCheck {
     }
   }
 
-  "TimeSeries.toJValue" should {
-    "create a JObject with no duplicated timestamps" in {
-      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: Instant, time2: Instant, periodicity: Periodicity) => 
-        (periodicity != Second) ==> {
-          val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
-          
-          val allDates = periodicity.period(start).datesTo(end).toSet
-          val someDates = allDates.filter(_ => scala.util.Random.nextBoolean)
-          val testSeries = someDates.foldLeft(TimeSeries.empty[Int](periodicity) + ((start, 0)) + ((end, 0))) {
-            (series, date) => series + ((date, scala.util.Random.nextInt))
-          }
-
-          (someDates.size < allDates.size && allDates.size > 0) ==> {
-            val serializedTimes = testSeries.fillGaps(Some(start), Some(end)).toJValue match {
-              case JObject(List(JField(periodicity.name, JArray(tuples)))) => tuples.map {
-                case JArray(values) => values(0)
-              }
-            }
-
-            serializedTimes.toSet.size == serializedTimes.size
-          }
-        }
-      } must pass
-    }
-  }
+//  "TimeSeries.toJValue" should {
+//    "create a JObject with no duplicated timestamps" in {
+//      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: Instant, time2: Instant, periodicity: Periodicity) => 
+//        (periodicity != Second) ==> {
+//          val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
+//          
+//          val allDates = periodicity.period(start).datesTo(end).toSet
+//          val someDates = allDates.filter(_ => scala.util.Random.nextBoolean)
+//          val testSeries = someDates.foldLeft(TimeSeries.empty[Int](periodicity) + ((start, 0)) + ((end, 0))) {
+//            (series, date) => series + ((date, scala.util.Random.nextInt))
+//          }
+//
+//          (someDates.size < allDates.size && allDates.size > 0) ==> {
+//            val serializedTimes = testSeries.fillGaps(Some(start), Some(end)).toJValue match {
+//              case JObject(List(JField(periodicity.name, JArray(tuples)))) => tuples.map {
+//                case JArray(values) => values(0)
+//              }
+//            }
+//
+//            serializedTimes.toSet.size == serializedTimes.size
+//          }
+//        }
+//      } must pass
+//    }
+//  }
 }
 
 class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with ScalaCheck {
