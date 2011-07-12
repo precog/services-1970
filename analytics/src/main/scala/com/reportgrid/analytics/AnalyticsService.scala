@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
 import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 import com.reportgrid.blueeyes.ReportGridInstrumentation
-import com.reportgrid.api.ReportGridConfig
+import com.reportgrid.api.Server
 import com.reportgrid.api.ReportGridTrackingClient
 import com.reportgrid.api.blueeyes._
 import scala.collection.immutable.SortedMap
@@ -45,7 +45,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
   def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
 
-  val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
+  //val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
 
   val analyticsService = service("analytics", "0.02") {
     requestLogging { 
@@ -132,7 +132,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 /* Post data to the virtual file system.
                  */
                 audit("track") {
-                  forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
+                  //forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
                     post { request: HttpRequest[JValue] =>
                       tokenOf(request).map { token =>
                         val path = fullPathOf(token, request)
@@ -159,7 +159,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         HttpResponse[JValue](content = None)
                       }
                     }
-                  }
+                  //}
                 } ~
                 audit("explore paths") {
                   get { request: HttpRequest[JValue] =>
@@ -213,14 +213,14 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     audit("variable series") {
                       path('periodicity) {
                         $ {
-                          querySeries(tokenOf, _.count, aggregationEngine)
+                          queryVariableSeries(tokenOf, _.count, aggregationEngine)
                         } ~ 
                         path("/") {
                           path("means") {
-                            querySeries(tokenOf, _.mean, aggregationEngine)
+                            queryVariableSeries(tokenOf, _.mean, aggregationEngine)
                           } ~ 
                           path("standardDeviations") {
-                            querySeries(tokenOf, _.standardDeviation, aggregationEngine) 
+                            queryVariableSeries(tokenOf, _.standardDeviation, aggregationEngine) 
                           } 
                         }
                       }
@@ -600,7 +600,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     request.parameters.get('groupBy).flatMap(Periodicity.byName)
   }
 
-  def querySeries[T: Decomposer : AbelianGroup](tokenOf: HttpRequest[_] => Future[Token], f: ValueStats => T, aggregationEngine: AggregationEngine) = {
+  def queryVariableSeries[T: Decomposer : AbelianGroup](tokenOf: HttpRequest[_] => Future[Token], f: ValueStats => T, aggregationEngine: AggregationEngine) = {
     getRange { (ranges, unit) => (request: HttpRequest[JValue]) =>
       tokenOf(request).flatMap { token =>
         val path        = fullPathOf(token, request)
@@ -643,8 +643,8 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
   def auditClientFactory(config: ConfigMap) = {
     val auditToken = config.getString("token", Token.Test.tokenId)
     val environment = config.getString("environment", "production") match {
-      case "production" => ReportGridConfig.Production
-      case _            => ReportGridConfig.Local
+      case "production" => Server.Production
+      case _            => Server.Local
     }
 
     ReportGrid(auditToken, environment)
@@ -656,5 +656,5 @@ object TestAnalyticsServer extends BlueEyesServer with AnalyticsService {
     new blueeyes.persistence.mongo.mock.MockMongo()
   }
 
-  def auditClientFactory(config: ConfigMap) = ReportGrid(Token.Test.tokenId, ReportGridConfig.Local)
+  def auditClientFactory(config: ConfigMap) = ReportGrid(Token.Test.tokenId, Server.Local)
 }

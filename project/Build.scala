@@ -6,7 +6,7 @@ import AltDependency._
 
 object ServicesSettings {
   val buildOrganization = "com.reportgrid"
-  val buildVersion = "0.2"
+  val buildVersion = "1.0"
   val buildScalaVersion = "2.9.0-1"
   
   val serviceSettings = Defaults.defaultSettings ++ Seq (
@@ -60,7 +60,7 @@ object ServicesBuild extends Build {
 
     val benchmarkSettings = serviceSettings ++ Seq(
       libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile",
-      mainClass := Some("com.reportgrid.benchmark.AnalyticsBenchmark")
+      mainClass := Some("com.reportgrid.benchmark.AnalyticsTool")
     )
 
     val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))

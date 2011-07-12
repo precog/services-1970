@@ -9,6 +9,7 @@ import blueeyes.json.JsonDSL._
 import blueeyes.util.CommandLineArguments
 import blueeyes.util.Clock
 import blueeyes.util.ClockSystem
+import rosetta.json.blueeyes._
 
 import com.reportgrid.analytics.{Token, RunningStats}
 import com.reportgrid.api._
@@ -79,21 +80,13 @@ case object BenchmarkTask extends Task {
       case _ => System.out
     }
 
-    val testSystem = BenchmarkApi( 
-      new BlueEyesReportGridClient {
-        val tokenId = benchmarkToken
-        val config = ReportGridConfig(benchmarkUrl)
-        val httpClient = new HttpClientApache
-      },
+    val testSystem = BenchmarkApi(
+      new ReportGridClient[JValue](ReportGridConfig(benchmarkToken, Server(benchmarkUrl), new HttpClientApache)),
       config.getString("benchmarkPath", "/benchmark/" + startTime.toDate.getTime)
     )
 
     val resultsSystem = BenchmarkApi(
-      new BlueEyesReportGridClient {
-        val tokenId = resultsToken
-        val config = ReportGridConfig(resultsUrl)
-        val httpClient = new HttpClientApache
-      },
+      new ReportGridClient[JValue](ReportGridConfig(resultsToken, Server(resultsUrl), new HttpClientApache)),
       config.getString("resultsPath", "/benchmark-results")
     )
 
@@ -113,7 +106,7 @@ case object BenchmarkTask extends Task {
   }
 }
 
-case class BenchmarkApi(client: BlueEyesReportGridClient, path: String)
+case class BenchmarkApi(client: ReportGridClient[JValue], path: String)
 
 trait SamplingConfig {
   def clock: Clock
