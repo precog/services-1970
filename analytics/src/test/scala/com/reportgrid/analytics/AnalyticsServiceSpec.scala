@@ -38,8 +38,8 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
   //override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
   override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
 
-  override def auditClientFactory(config: ConfigMap) = new ReportGridTrackingClient[JValue] {
-    override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = jsonImplementation.EmptyObject, rollup: Boolean = false, timestamp: Option[Date] = None, count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
+  override def auditClientFactory(config: ConfigMap) = new ReportGridTrackingClient[JValue](JsonBlueEyes) {
+    override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = JsonBlueEyes.EmptyObject, rollup: Boolean = false, timestamp: Option[Date] = None, count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
       //println("Tracked " + path + "; " + name + " - " + properties)
     }
   }

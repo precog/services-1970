@@ -255,26 +255,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
                         granularity: Periodicity, start : Option[Instant] = None, end : Option[Instant] = None): 
                         Future[TimeSeries[ValueStats]] = {
 
-    val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
-
-    val interval = Interval(start, end, granularity)
-    val intervalFilters = interval.mapBatchPeriods(batchPeriodicity) {
-      variableSeriesKey(token, path, variable, _: Period, granularity)
-    }
-
-    Future {
-      intervalFilters.map(filter => database(selectOne(".data").from(variable_series.collection).where(filter))).toSeq: _*
-    } map {
-      _.flatten
-       .foldLeft(TimeSeries.empty[ValueStats](granularity)) {
-         (series, result) => ((result \ "data") -->? classOf[JObject]) map { jobj => 
-           series + interval.deserializeTimeSeries[ValueStats](jobj)
-         } getOrElse {
-           series
-         }
-       }
-       .fillGaps(start, end)
-    }
+    internalSearchSeries[ValueStats](token, path, granularity, start, end, variableSeriesKey(token, path, variable, _: Period, granularity), "data", variable_series.collection)
   }
 
   private def searchPeriod[T](start: Option[Instant], end: Option[Instant], f: (Periodicity, Option[Instant], Option[Instant]) => Future[T]): Future[List[T]] = {
@@ -303,22 +284,25 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
    */
   def searchSeries(token: Token, path: Path, observation: Observation[HasValue], 
                    granularity: Periodicity, start : Option[Instant] = None, end : Option[Instant] = None): 
-                   Future[TimeSeriesType] = {
+                   Future[TimeSeries[CountType]] = {
+
+    internalSearchSeries[CountType](token, path, granularity, start, end, valueSeriesKey(token, path, observation, _: Period, granularity), "counts", variable_value_series.collection)
+  }
+
+  def internalSearchSeries[T: AbelianGroup : Extractor](token: Token, path: Path, granularity: Periodicity, start : Option[Instant], end : Option[Instant],
+                                                        f: Period => MongoFilter, dataPath: String, collection: MongoCollection): Future[TimeSeries[T]] = {
 
     val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
-
     val interval = Interval(start, end, granularity)
-    val intervalFilters = interval.mapBatchPeriods(batchPeriodicity) {
-      valueSeriesKey(token, path, observation, _: Period, granularity)
-    }
+    val intervalFilters = interval.mapBatchPeriods(batchPeriodicity)(f)
 
     Future {
-      intervalFilters.map(filter => database(selectOne(".counts").from(variable_value_series.collection).where(filter))).toSeq: _*
+      intervalFilters.map(filter => database(selectOne("." + dataPath).from(collection).where(filter))).toSeq: _*
     } map {
       _.flatten
-       .foldLeft(TimeSeries.empty[CountType](granularity)) {
-         (series, result) => ((result \ "counts") -->? classOf[JObject]) map { jobj => 
-           series + interval.deserializeTimeSeries[CountType](jobj)
+       .foldLeft(TimeSeries.empty[T](granularity)) {
+         (series, result) => ((result \ dataPath) -->? classOf[JObject]) map { jobj => 
+           series + interval.deserializeTimeSeries[T](jobj)
          } getOrElse {
            series
          }
