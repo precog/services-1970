@@ -258,18 +258,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     internalSearchSeries[ValueStats](token, path, granularity, start, end, variableSeriesKey(token, path, variable, _: Period, granularity), "data", variable_series.collection)
   }
 
-  private def searchPeriod[T](start: Option[Instant], end: Option[Instant], f: (Periodicity, Option[Instant], Option[Instant]) => Future[T]): Future[List[T]] = {
-    Future {
-      (start <**> end) {
-        (start, end) => timeSeriesEncoding.queriableExpansion(start, end) map {
-          case (p, s, e) => f(p, Some(s), Some(e))
-        }
-      } getOrElse {
-        f(Periodicity.Eternity, None, None) :: Nil
-      }.toSeq: _*
-    }
-  }
-
   /** Retrieves a count of the specified observed state over the given time period */
   def searchCount(token: Token, path: Path, observation: Observation[HasValue],
                   start : Option[Instant] = None, end : Option[Instant] = None): Future[CountType] = {
@@ -287,28 +275,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
                    Future[TimeSeries[CountType]] = {
 
     internalSearchSeries[CountType](token, path, granularity, start, end, valueSeriesKey(token, path, observation, _: Period, granularity), "counts", variable_value_series.collection)
-  }
-
-  def internalSearchSeries[T: AbelianGroup : Extractor](token: Token, path: Path, granularity: Periodicity, start : Option[Instant], end : Option[Instant],
-                                                        f: Period => MongoFilter, dataPath: String, collection: MongoCollection): Future[TimeSeries[T]] = {
-
-    val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
-    val interval = Interval(start, end, granularity)
-    val intervalFilters = interval.mapBatchPeriods(batchPeriodicity)(f)
-
-    Future {
-      intervalFilters.map(filter => database(selectOne("." + dataPath).from(collection).where(filter))).toSeq: _*
-    } map {
-      _.flatten
-       .foldLeft(TimeSeries.empty[T](granularity)) {
-         (series, result) => ((result \ dataPath) -->? classOf[JObject]) map { jobj => 
-           series + interval.deserializeTimeSeries[T](jobj)
-         } getOrElse {
-           series
-         }
-       }
-       .fillGaps(start, end)
-    }
   }
 
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor],
@@ -329,6 +295,40 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
                       Future[IntersectionResult[TimeSeriesType]] = {
 
     intersectValueSeries(token, path, properties, granularity, start, end) 
+  }
+
+  private def searchPeriod[T](start: Option[Instant], end: Option[Instant], f: (Periodicity, Option[Instant], Option[Instant]) => Future[T]): Future[List[T]] = {
+    Future {
+      (start <**> end) {
+        (start, end) => timeSeriesEncoding.queriableExpansion(start, end) map {
+          case (p, s, e) => f(p, Some(s), Some(e))
+        }
+      } getOrElse {
+        f(Periodicity.Eternity, None, None) :: Nil
+      }.toSeq: _*
+    }
+  }
+
+  private def internalSearchSeries[T: AbelianGroup : Extractor](token: Token, path: Path, granularity: Periodicity, start : Option[Instant], end : Option[Instant],
+                                                        f: Period => MongoFilter, dataPath: String, collection: MongoCollection): Future[TimeSeries[T]] = {
+
+    val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
+    val interval = Interval(start, end, granularity)
+    val intervalFilters = interval.mapBatchPeriods(batchPeriodicity)(f)
+
+    Future {
+      intervalFilters.map(filter => database(selectOne("." + dataPath).from(collection).where(filter))).toSeq: _*
+    } map {
+      _.flatten
+       .foldLeft(TimeSeries.empty[T](granularity)) {
+         (series, result) => ((result \ dataPath) -->? classOf[JObject]) map { jobj => 
+           series + interval.deserializeTimeSeries[T](jobj)
+         } getOrElse {
+           series
+         }
+       }
+       .fillGaps(start, end)
+    }
   }
 
   private def intersectValueSeries(
