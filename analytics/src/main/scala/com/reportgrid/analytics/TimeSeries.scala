@@ -48,7 +48,7 @@ object TimeSeriesSpan {
 
 /** A time series stores an unlimited amount of time series data.
  */
-case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant, T])(implicit aggregator: AbelianGroup[T]) {
+case class TimeSeries[T] private (periodicity: Periodicity, series: SortedMap[Instant, T])(implicit aggregator: AbelianGroup[T]) {
   def deltaSet: Option[DeltaSet[Instant, ReadableDuration, T]] = {
     implicit val periodicitySpace: DeltaSpace[Instant, ReadableDuration] = new PeriodicitySpace(periodicity)
     implicit val instantSAct: SAct[Instant, ReadableDuration] = InstantSAct
@@ -60,7 +60,7 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
     (!series.isEmpty).option {
       implicit val deltaSpace: DeltaSpace[Int, Int] = CountingSpace
       new DeltaSet(0,
-        series.foldLeft(Map.empty[Int, T]) {
+        series.foldLeft(SortedMap.empty[Int, T]) {
           case (m, (instant, value)) =>
             periodicity.indexOf(instant, grouping) map { index => 
               m + (index -> m.get(index).map(_ |+| value).getOrElse(value))
@@ -90,7 +90,7 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
     )
   }
 
-  def map[U: AbelianGroup](f: T => U): TimeSeries[U] = TimeSeries(periodicity, series.mapValues(f))
+  def map[U: AbelianGroup](f: T => U): TimeSeries[U] = TimeSeries(periodicity, series.map(f.second[Instant]))
 
   def aggregates = {
     @tailrec def superAggregates(periodicity: Periodicity, acc: List[TimeSeries[T]]): List[TimeSeries[T]] = {
@@ -109,7 +109,7 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
     else Some(
       TimeSeries(
         newPeriodicity,
-        series.foldLeft(Map.empty[Instant, T]) {
+        series.foldLeft(SortedMap.empty[Instant, T]) {
           (series, entry) => addToMap(newPeriodicity, series, entry)
         }
       )
@@ -125,14 +125,14 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
   /** Combines the data in this time series with the data in that time series.
    */
   def + (that: TimeSeries[T]): TimeSeries[T] = {
-    TimeSeries(periodicity, series <+> that.series)
+    TimeSeries(periodicity, series |+| that.series)
   }
 
   def + (entry: (Instant, T)): TimeSeries[T] = TimeSeries(periodicity, addToMap(periodicity, series, entry))
 
   def total: T = series.values.asMA.sum
 
-  private def addToMap(p: Periodicity, m: Map[Instant, T], entry: (Instant, T)) = {
+  private def addToMap(p: Periodicity, m: SortedMap[Instant, T], entry: (Instant, T)) = {
     val countTime = p.floor(entry._1)
     m + (countTime -> (m.getOrElse(countTime, aggregator.zero) |+| entry._2))
   }
@@ -140,11 +140,11 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: Map[Instant,
 
 object TimeSeries {
   def empty[T: AbelianGroup](periodicity: Periodicity): TimeSeries[T] = {
-    new TimeSeries(periodicity, Map.empty[Instant, T])
+    new TimeSeries(periodicity, SortedMap.empty[Instant, T])
   }
 
   def point[T: AbelianGroup](periodicity: Periodicity, time: Instant, value: T) = {
-    new TimeSeries(periodicity, Map(periodicity.floor(time) -> value))
+    new TimeSeries(periodicity, SortedMap(periodicity.floor(time) -> value))
   }
 
   implicit def Semigroup[T: AbelianGroup] = semigroup[TimeSeries[T]](_ + _)
@@ -154,7 +154,8 @@ object TimeSeries {
  * A generalization of time series and other types that can be encoded using
  * delta compression. 
  */
-class DeltaSet[A, D, V](val zero: A, val data: Map[D, V])(implicit sact: SAct[A, D], d: DeltaSpace[A, D], ord: Ordering[A], group: AbelianGroup[V]) {
+class DeltaSet[A, D, V](val zero: A, val data: SortedMap[D, V])
+                       (implicit sact: SAct[A, D], d: DeltaSpace[A, D], aord: Ordering[A], dord: Ordering[D], group: AbelianGroup[V]) {
   lazy val series: SortedMap[A, V] = data.foldLeft(SortedMap.empty[A, V]) {
     case (m, (d, v)) => 
       val key = sact.append(zero, d)
@@ -176,25 +177,26 @@ class DeltaSet[A, D, V](val zero: A, val data: Map[D, V])(implicit sact: SAct[A,
       (data, delta) => data + (delta -> (data.getOrElse(delta, group.zero)))
     }
 
-    new DeltaSet(start.map(ord.min(_, zero)).getOrElse(zero), filled)
+    new DeltaSet(start.map(aord.min(_, zero)).getOrElse(zero), filled)
   }
 
-  def + (that: DeltaSet[A, D, V]) = new DeltaSet(zero, data <+> that.data)
+  def + (that: DeltaSet[A, D, V]) = new DeltaSet(zero, data |+| that.data)
 
   def + (entry: (A, V)): DeltaSet[A, D, V] = new DeltaSet(zero, data + (d.difference(_: A, zero)).first.apply(entry))
 
   def map[X: AbelianGroup](f: V => X): DeltaSet[A, D, X] = {
-    new DeltaSet(zero, data.mapValues(f))
+    new DeltaSet(zero, data.map(f.second[D]))
   }
 
   def total: V = data.values.asMA.sum
 }
 
 object DeltaSet {
-  def apply[A, D, V](series: Map[A, V])(implicit sact: SAct[A, D], d: DeltaSpace[A, D], ord: Ordering[A], group: AbelianGroup[V]): Option[DeltaSet[A, D, V]] = {
+  def apply[A, D, V](series: SortedMap[A, V])
+                    (implicit sact: SAct[A, D], d: DeltaSpace[A, D], aord: Ordering[A], dord: Ordering[D], group: AbelianGroup[V]): Option[DeltaSet[A, D, V]] = {
     (!series.isEmpty).option {
       val zero = series.keySet.min
-      new DeltaSet(zero, series.map((d.difference(zero, _: A)).first))
+      new DeltaSet(zero, series.map((d.difference(zero, _: A)).first[V]))
     }
   }
 }

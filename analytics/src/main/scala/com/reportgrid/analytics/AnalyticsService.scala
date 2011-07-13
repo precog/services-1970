@@ -12,6 +12,7 @@ import blueeyes.json.JsonDSL._
 import blueeyes.json.{JPath, JsonParser, JPathField}
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.util.{Clock, ClockSystem, PartialFunctionCombinators}
@@ -25,12 +26,12 @@ import java.net.URL
 import java.util.concurrent.TimeUnit
 
 import com.reportgrid.analytics.AggregatorImplicits._
-import com.reportgrid.analytics.persistence.MongoSupport._
 import com.reportgrid.blueeyes.ReportGridInstrumentation
 import com.reportgrid.api.Server
 import com.reportgrid.api.ReportGridTrackingClient
 import com.reportgrid.api.blueeyes._
 import scala.collection.immutable.SortedMap
+import scala.collection.immutable.IndexedSeq
 import scalaz.Scalaz._
 
 case class YggdrasilConfig(host: String, port: Option[Int], path: String)
@@ -40,6 +41,7 @@ case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: To
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString with ReportGridInstrumentation {
   import AggregationEngine._
   import AnalyticsService._
+  import AnalyticsServiceSerialization._
 
   def mongoFactory(configMap: ConfigMap): Mongo
 
@@ -485,12 +487,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     select match {
                       case Count => 
                         aggregationEngine.intersectCount(token, from, properties, start, end)
-                        .map(serializeIntersectionResult[CountType](_, _.serialize).ok)
+                        .map(serializeIntersectionResult[CountType]).map(_.ok)
 
                       case Series(p) =>
                         aggregationEngine.intersectSeries(token, from, properties, p, start, end)
                         .map(_.map((groupTimeSeries(grouping)(_: TimeSeriesType).fold(_.serialize, _.serialize)).second)(collection.breakOut))
-                        .map(serializeIntersectionResult[JValue](_, a => a).ok)
+                        .map(serializeIntersectionResult[JValue]).map(_.ok)
                     }
                   }
                 } 
@@ -555,13 +557,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 }
 
 object AnalyticsService extends HttpRequestHandlerCombinators with PartialFunctionCombinators {
+  import AnalyticsServiceSerialization._
   import AggregationEngine._
-  def serializeIntersectionResult[T](result: Iterable[(List[JValue], T)], f: T => JValue) = {
-    result.foldLeft[JValue](JObject(Nil)) {
-      case (result, (values, x)) => 
-        result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), f(x))
-    }
-  }
 
   def groupTimeSeries[R, T](periodicity: Option[Periodicity]) = (timeSeries: TimeSeries[T]) => {
     periodicity flatMap (timeSeries.groupBy) toRight timeSeries
@@ -635,26 +632,49 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   }
 }
 
-object AnalyticsServer extends BlueEyesServer with AnalyticsService {
-  def mongoFactory(configMap: ConfigMap): Mongo = {
-    new blueeyes.persistence.mongo.RealMongo(configMap)
-  }
+object AnalyticsServiceSerialization extends AnalyticsSerialization {
+  import AggregationEngine._
 
-  def auditClientFactory(config: ConfigMap) = {
-    val auditToken = config.getString("token", Token.Test.tokenId)
-    val environment = config.getString("environment", "production") match {
-      case "production" => Server.Production
-      case _            => Server.Local
+  // Decomposer is invariant, which means that this can't be reasonably implemented
+  // as a Decomposer and used both for intersection results and grouped intersection
+  // results.
+  def serializeIntersectionResult[T: Decomposer](result: Iterable[(List[JValue], T)]) = {
+    result.foldLeft[JValue](JObject(Nil)) {
+      case (result, (values, x)) => 
+        result.set(JPath(values.map(v => JPathField(renderNormalized(v)))), x.serialize)
     }
-
-    ReportGrid(auditToken, environment)
-  }
-}
-
-object TestAnalyticsServer extends BlueEyesServer with AnalyticsService {
-  def mongoFactory(config: ConfigMap) = {
-    new blueeyes.persistence.mongo.mock.MockMongo()
   }
 
-  def auditClientFactory(config: ConfigMap) = ReportGrid(Token.Test.tokenId, Server.Local)
+  implicit def SortedMapDecomposer[K: Decomposer, V: Decomposer]: Decomposer[SortedMap[K, V]] = new Decomposer[SortedMap[K, V]] {
+    override def decompose(m: SortedMap[K, V]): JValue = JArray(
+      m.map(t => JArray(List(t._1.serialize, t._2.serialize))).toList
+    )
+  }
+
+  implicit def TimeSeriesDecomposer[T: Decomposer]: Decomposer[TimeSeries[T]] = new Decomposer[TimeSeries[T]] {
+    override def decompose(t: TimeSeries[T]) = JObject(List(
+      JField("type", JString("timeseries")),
+      JField("periodicity", t.periodicity.serialize),
+      JField("data", t.series.serialize)
+    ))
+  }
+
+  implicit def DeltaSetDecomposer[A: Decomposer, D: Decomposer, V : Decomposer : AbelianGroup]: Decomposer[DeltaSet[A, D, V]] = new Decomposer[DeltaSet[A, D, V]] {
+    def decompose(value: DeltaSet[A, D, V]): JValue = JObject(List(
+      JField("zero", value.zero.serialize),
+      JField("data", value.data.serialize)
+    ))
+  }
+
+  implicit val StatisticsDecomposer: Decomposer[Statistics] = new Decomposer[Statistics] {
+    def decompose(v: Statistics): JValue = JObject(
+      JField("n",  v.n.serialize) ::
+      JField("min",  v.min.serialize) ::
+      JField("max",  v.max.serialize) ::
+      JField("mean", v.mean.serialize) ::
+      JField("variance", v.variance.serialize) ::
+      JField("standardDeviation", v.standardDeviation.serialize) ::
+      Nil
+    )
+  }
 }

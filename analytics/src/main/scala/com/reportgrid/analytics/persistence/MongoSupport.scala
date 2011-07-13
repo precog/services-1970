@@ -1,11 +1,12 @@
-package com.reportgrid.analytics.persistence
+package com.reportgrid.analytics
+package persistence
 
 import blueeyes.json.JsonAST._
 import blueeyes.json.{JPath, JPathNode, JPathField, JPathIndex, JPathImplicits}
 import blueeyes.json.JsonParser.{parse}
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
-import blueeyes.json.xschema.JodaSerializationImplicits
+import blueeyes.json.xschema.JodaSerializationImplicits._
 
 import blueeyes.persistence.mongo._
 
@@ -18,45 +19,13 @@ import scalaz.Scalaz._
 
 /** Support for persitence via MongoDB.
  */
-object MongoSupport extends JodaSerializationImplicits {
+object MongoSupport extends AnalyticsSerialization {
   val MongoEscaper = SpecialCharTranscoder.fromMap('/',
     Map(
       '.' -> '*',
       '$' -> 'S'
     )
   )
-
-  implicit val JPathNodeDecomposer = new Decomposer[JPathNode] {
-    def decompose(v: JPathNode): JValue = v.toString.serialize
-  }
-
-  implicit val JPathNodeExtractor = new Extractor[JPathNode] {
-    def extract(v: JValue): JPathNode = {
-      val string = v.deserialize[String]
-
-      JPath(string).nodes match {
-        case node :: Nil => node
-
-        case _ => sys.error("Too many or few nodes to extract JPath node from " + v)
-      }
-    }
-  }
-
-  implicit val JPathDecomposer: Decomposer[JPath] = new Decomposer[JPath] {
-    def decompose(v: JPath): JValue = v.toString.serialize
-  }
-
-  implicit val JPathExtractor: Extractor[JPath] = new Extractor[JPath] {
-    def extract(v: JValue): JPath = JPath(v.deserialize[String])
-  }
-
-  implicit val PeriodicityExtractor = new Extractor[Periodicity] {
-    def extract(value: JValue): Periodicity = Periodicity(value.deserialize[String])
-  }
-
-  implicit val PeriodicityDecomposer = new Decomposer[Periodicity] {
-    def decompose(periodicity: Periodicity): JValue = periodicity.name
-  }
 
   implicit val PeriodDecomposer = new Decomposer[Period] {
     def decompose(period: Period): JValue = JObject(
@@ -96,38 +65,12 @@ object MongoSupport extends JodaSerializationImplicits {
     }
   }
 
-  implicit def DeltaSetDecomposer[A: Decomposer, D: Decomposer, V : Decomposer : AbelianGroup]: Decomposer[DeltaSet[A, D, V]] = new Decomposer[DeltaSet[A, D, V]] {
-    def decompose(value: DeltaSet[A, D, V]): JValue = JObject(List(
-      JField("zero", value.zero.serialize),
-      JField("data", value.data.serialize)
-    ))
-  }
-
   implicit val ValueStatsExtractor: Extractor[ValueStats] = new Extractor[ValueStats] {
     def extract(value: JValue): ValueStats = ValueStats(
       (value \ "count").deserialize[Long],
       (value \? "sum").map(_.deserialize[Double]),
       (value \? "sumsq").map(_.deserialize[Double])
     )
-  }
-
-
-  /** Serializes HasChild Predicate into a JValue.
-   */
-  implicit val HasChildDecomposer = new Decomposer[HasChild] {
-    def decompose(v: HasChild): JValue = v.child.serialize
-  }
-
-  implicit val HasChildExtractor = new Extractor[HasChild] {
-    def extract(v: JValue): HasChild = HasChild(v.deserialize[JPathNode])
-  }
-
-  implicit val HasValueDecomposer = new Decomposer[HasValue] {
-    def decompose(v: HasValue): JValue = v.value
-  }
-
-  implicit val HasValueExtractor = new Extractor[HasValue] {
-    def extract(v: JValue): HasValue = HasValue(v)
   }
 
   implicit val VariableDecomposer = new Decomposer[Variable] {
@@ -202,96 +145,4 @@ object MongoSupport extends JodaSerializationImplicits {
   implicit def ReportExtractor[S <: Predicate, T](implicit aggregator: AbelianGroup[T], tExtractor: Extractor[T], sExtractor: Extractor[S]): Extractor[Report[S, T]] = new Extractor[Report[S, T]] {
     def extract(v: JValue): Report[S, T] = Report(v.deserialize[Map[Observation[S], T]])
   }
-
-  implicit val StatisticsDecomposer = new Decomposer[Statistics] {
-    def decompose(v: Statistics): JValue = JObject(
-      JField("n",  v.n.serialize) ::
-      JField("min",  v.min.serialize) ::
-      JField("max",  v.max.serialize) ::
-      JField("mean", v.mean.serialize) ::
-      JField("variance", v.variance.serialize) ::
-      JField("standardDeviation", v.standardDeviation.serialize) ::
-      Nil
-    )
-  }
-
-  implicit val StatisticsExtractor = new Extractor[Statistics] {
-    def extract(v: JValue): Statistics = Statistics(
-      n = (v \ "n").deserialize[Long],
-      min = (v \ "min").deserialize[Double],
-      max = (v \ "max").deserialize[Double],
-      mean = (v \ "mean").deserialize[Double],
-      variance = (v \ "variance").deserialize[Double],
-      standardDeviation = (v \ "standardDeviation").deserialize[Double]
-    )
-  }
-
-  implicit val LimitsExtractor = new Extractor[Limits] {
-    def extract(jvalue: JValue): Limits = Limits(
-      order = (jvalue \ "order").deserialize[Int],
-      limit = (jvalue \ "limit").deserialize[Int],
-      depth = (jvalue \ "depth").deserialize[Int]
-    )
-  }
-
-  implicit val LimitsDecomposer = new Decomposer[Limits] {
-    def decompose(limits: Limits): JValue = JObject(
-      JField("order", limits.order.serialize) ::
-      JField("limit", limits.limit.serialize) ::
-      JField("depth", limits.depth.serialize) ::
-      Nil
-    )
-  }
-
-  implicit val PathDecomposer = new Decomposer[Path] {
-    def decompose(v: Path): JValue = JString(v.toString)
-  }
-
-  implicit val PathExtractor = new Extractor[Path] {
-    def extract(v: JValue): Path = Path(v.deserialize[String])
-  }
-
-
-  implicit val PermissionsExtractor = new Extractor[Permissions] {
-    def extract(jvalue: JValue): Permissions = Permissions(
-      read  = (jvalue \ "read").deserialize[Boolean],
-      write = (jvalue \ "write").deserialize[Boolean],
-      share = (jvalue \ "share").deserialize[Boolean]
-    )
-  }
-
-  implicit val PermissionsDecomposer = new Decomposer[Permissions] {
-    def decompose(permissions: Permissions): JValue = JObject(
-      JField("read",    permissions.read.serialize)  ::
-      JField("write",   permissions.write.serialize) ::
-      JField("share",   permissions.share.serialize) ::
-      Nil
-    )
-  }
-
-  implicit val TokenExtractor = new Extractor[Token] {
-    def extract(jvalue: JValue): Token = Token(
-      tokenId         = (jvalue \ "tokenId").deserialize[String],
-      parentTokenId   = (jvalue \ "parentTokenId").deserialize[Option[String]],
-      accountTokenId  = (jvalue \ "accountTokenId").deserialize[String],
-      path            = (jvalue \ "path").deserialize[Path],
-      permissions     = (jvalue \ "permissions").deserialize[Permissions],
-      expires         = (jvalue \ "expires").deserialize[DateTime],
-      limits          = (jvalue \ "limits").deserialize[Limits]
-    )
-  }
-
-  implicit val TokenDecomposer = new Decomposer[Token] {
-    def decompose(token: Token): JValue = JObject(
-      JField("tokenId",         token.tokenId.serialize)  ::
-      JField("parentTokenId",   token.parentTokenId.serialize) ::
-      JField("accountTokenId",  token.accountTokenId.serialize) ::
-      JField("path",            token.path.serialize) ::
-      JField("permissions",     token.permissions.serialize) ::
-      JField("expires",         token.expires.serialize) ::
-      JField("limits",          token.limits.serialize) ::
-      Nil
-    )
-  }
-
 }
