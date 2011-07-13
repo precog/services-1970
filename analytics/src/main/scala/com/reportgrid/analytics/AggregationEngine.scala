@@ -22,7 +22,6 @@ import net.lag.logging.Logger
 
 import org.joda.time.Instant
 
-
 import scala.collection.SortedMap
 import scalaz.{Ordering => _, _}
 import Scalaz._

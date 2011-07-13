@@ -6,7 +6,7 @@ import AltDependency._
 
 object ServicesSettings {
   val buildOrganization = "com.reportgrid"
-  val buildVersion = "1.0"
+  val buildVersion = "0.3"
   val buildScalaVersion = "2.9.0-1"
   
   val serviceSettings = Defaults.defaultSettings ++ Seq (
