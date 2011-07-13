@@ -148,7 +148,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
         path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)
 
-        val (finite, infinite) = Report.ofValues(
+        val (finiteReport, infiniteReport) = Report.ofValues(
           event = event,
           count = seriesCount,
           order = token.limits.order,
@@ -156,13 +156,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
           limit = token.limits.limit
         )
 
-        val finiteOrder1 = finite.order(1)
+        val finiteOrder1 = finiteReport.order(1)
 
-        variable_value_series putAll updateTimeSeries(token, path, finite).patches
-        variable_value_series putAll updateTimeSeries(token, path, infinite).patches
+        val (vvSeriesPatches, vvInfinitePatches) = updateTimeSeries(token, path, finiteReport, infiniteReport)
+        variable_value_series putAll vvSeriesPatches.patches
 
         variable_values          putAll updateFiniteValues(token, path, finiteOrder1, count).patches
-        variable_values_infinite putAll updateInfiniteValues(token, path, infinite, count).patches
+        variable_values_infinite putAll vvInfinitePatches.patches
 
         val childCountReport = Report.ofChildren(
           event = event,
@@ -182,7 +182,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
           limit = token.limits.limit
         )
 
-        variable_series putAll updateVariableSeries(token, path, childSeriesReport, finiteOrder1 + infinite).patches
+        variable_series putAll updateVariableSeries(token, path, childSeriesReport, finiteOrder1 + infiniteReport).patches
     }
   }
 
@@ -413,9 +413,12 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }    
   }
 
+  private def infiniteSeriesKey[P <: Predicate : SignatureGen](token: Token, path: Path, observation: Observation[P]) = {
+    JPath("." + seriesId) === hashSignature(token.sig ++ path.sig ++ observation.sig)
+  }
 
   private def valueSeriesKey[P <: Predicate : SignatureGen](token: Token, path: Path, observation: Observation[P],
-                                                             period: Period, granularity: Periodicity) = {
+                                                             period: Period, granularity: Periodicity): MongoFieldFilter = {
     JPath("." + seriesId) === hashSignature(
       token.sig ++ path.sig ++ 
       period.sig ++ granularity.sig ++
@@ -517,17 +520,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }
   }
 
-  private def updateInfiniteValues[P <: Predicate : Decomposer, T](token: Token, path: Path, report: Report[P, T], count: CountType): MongoPatches = {
-    report.observationCounts.foldLeft(MongoPatches.empty) { 
-      case (patches, (observation, _)) => observation.foldLeft(patches) {
-        case (patches, (variable, predicate)) =>
-          val valuesUpdate = JPath(".count") inc count
-
-          patches + ((valuesKeyFilter(token, path, variable) & (".value" === predicate.serialize)) -> valuesUpdate)
-      }
-    }
-  }
-
   /** Creates patches to record variable observations.
    */
   private def updateChildren[P <: Predicate : Decomposer, T](token: Token, path: Path, report: Report[P, CountType]): MongoPatches = {
@@ -562,16 +554,37 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }  
   }
 
-  private def updateTimeSeries[P <: Predicate : Decomposer : SignatureGen](token: Token, path: Path, report: Report[P, TimeSeries[CountType]]): MongoPatches = {
-    buildSeriesAggregates(report).foldLeft(MongoPatches.empty) {
-      case (patches, ((period, _, observation), TimeSeries(granularity, counts))) => 
-        val seriesKey = valueSeriesKey(token, path, observation, period, granularity)
+  private def updateTimeSeries(token: Token, path: Path, finiteReport: Report[HasValue, TimeSeries[CountType]], infiniteReport: Report[HasValue, TimeSeries[CountType]]): (MongoPatches, MongoPatches) = {
+    buildSeriesAggregates(finiteReport).foldLeft((MongoPatches.empty, MongoPatches.empty)) {
+      case ((finitePatches, infinitePatches), ((period, _, observation), TimeSeries(granularity, counts))) => 
+        val finiteKey = valueSeriesKey(token, path, observation, period, granularity)
         val mongoUpdate = counts.foldLeft[MongoUpdate](MongoUpdateNothing) {
           case (fullUpdate, (time, count)) =>
             fullUpdate |+| ((JPath(".counts") \ time.getMillis.toString) inc count)
         }
 
-        patches + (seriesKey -> mongoUpdate)
+        Tuple2(
+          finitePatches + (finiteKey -> mongoUpdate),
+          //build infinite patches by adding the finite key id to the list of locations that the infinite value
+          //was observed in conjunction with.
+          infinitePatches ++ infiniteReport.observationCounts.foldLeft(MongoPatches.empty) {
+            case (patches, (observation, pointCounts)) => observation.foldLeft(patches) { 
+              //should only be one element in this set; this is the contract of the infinite component of Report.ofValues
+              case (patches, (variable, value)) =>
+                val infiniteKey = infiniteSeriesKey(token, path, observation) 
+                // The infinite counts timeseries should have a single entry, because it was derived from TimeSeries.point.
+                val infiniteCount = pointCounts.series.head.fold((_, count) => (JPath(".count") inc count))
+                patches + (
+                  infiniteKey -> (
+                    (".ids" push finiteKey.rhs) |+| 
+                    (MongoUpdateBuilder(".variable") set variable.serialize) |+| 
+                    (MongoUpdateBuilder(".value") set value.serialize) |+| 
+                    infiniteCount
+                  )
+                )
+            }
+          }
+        )
     }
   }
 

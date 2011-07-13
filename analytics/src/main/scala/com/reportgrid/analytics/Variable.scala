@@ -26,7 +26,7 @@ object ValueStats {
     override val zero = ValueStats(0, None, None)
     override def inverse(v: ValueStats) = ValueStats(-v.count, v.sum.map(-_), v.sumsq.map(-_))
     override def append(v1: ValueStats, v2: => ValueStats) = {
-      ValueStats(v1.count + v2.count, v1.sum <+> v2.sum, v1.sumsq <+> v2.sumsq)
+      ValueStats(v1.count + v2.count, v1.sum |+| v2.sum, v1.sumsq |+| v2.sumsq)
     }
   }
 }
