@@ -296,6 +296,26 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     intersectValueSeries(token, path, properties, granularity, start, end) 
   }
 
+  def findRelatedInfiniteValues(token: Token, path: Path, observation: Observation[HasValue], interval: Interval): 
+                                Future[List[(Variable, HasValue)]] = {
+
+    def find(p: Periodicity, start: Option[Instant], end: Option[Instant]) = Future {
+      intervalFilters(Interval(start, end, p), valueSeriesKey(token, path, observation, _, p)).map(_.rhs).map { key => 
+        database(
+          select(".variable", ".value")
+          .from(variable_values_infinite.collection)
+          .where(".ids" === key) //array comparison in Mongo uses equality for set inclusion. Go figure.
+        )
+      }.toSeq: _*
+    } 
+
+    searchPeriod(interval.start, interval.end, find _) map {
+      _.flatten.flatMap { 
+        _.map(result => ((result \ "variable").deserialize[Variable], (result \ "value").deserialize[HasValue]))
+      }
+    }
+  }
+
   private def searchPeriod[T](start: Option[Instant], end: Option[Instant], f: (Periodicity, Option[Instant], Option[Instant]) => Future[T]): Future[List[T]] = {
     Future {
       (start <**> end) {
@@ -308,15 +328,21 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }
   }
 
-  private def internalSearchSeries[T: AbelianGroup : Extractor](token: Token, path: Path, granularity: Periodicity, start : Option[Instant], end : Option[Instant],
-                                                        f: Period => MongoFilter, dataPath: String, collection: MongoCollection): Future[TimeSeries[T]] = {
+  private def intervalFilters[F <: MongoFilter](interval: Interval, f: Period => F): Iterable[F] = {
+    val batchPeriodicity = timeSeriesEncoding.grouping(interval.granularity)
+    interval.mapBatchPeriods(batchPeriodicity)(f)
+  }
 
-    val batchPeriodicity = timeSeriesEncoding.grouping(granularity)
+  private def internalSearchSeries[T: AbelianGroup : Extractor](
+      token: Token, path: Path, 
+      granularity: Periodicity, start : Option[Instant], end : Option[Instant],
+      f: Period => MongoFilter, dataPath: String, collection: MongoCollection): Future[TimeSeries[T]] = {
     val interval = Interval(start, end, granularity)
-    val intervalFilters = interval.mapBatchPeriods(batchPeriodicity)(f)
 
     Future {
-      intervalFilters.map(filter => database(selectOne("." + dataPath).from(collection).where(filter))).toSeq: _*
+      intervalFilters(interval, f)
+      .map(filter => database(selectOne("." + dataPath).from(collection).where(filter)))
+      .toSeq: _*
     } map {
       _.flatten
        .foldLeft(TimeSeries.empty[T](granularity)) {
@@ -624,7 +650,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         case (patches, ((period, _, observation), TimeSeries(granularity, counts))) => counts.foldLeft(patches) {
           case (patches, (time, count)) => observation.foldLeft(patches) {
             case (patches, (Variable(vpath), HasChild(child))) => 
-              // this resuse of valueSeriesKey seems a little problematic
               val key = variableSeriesKey(token, path, Variable(vpath \ child), period, granularity)
               patches + (key -> countUpdate(time, count))
 

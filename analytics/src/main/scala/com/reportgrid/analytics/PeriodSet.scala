@@ -45,4 +45,8 @@ case class Interval(start: Option[Instant], end: Option[Instant], granularity: P
   }
 }
 
+object Interval {
+  val Eternity = Interval(None, None, Periodicity.Eternity)
+}
+
 // vim: set ts=4 sw=4 et:
