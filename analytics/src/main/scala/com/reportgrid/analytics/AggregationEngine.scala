@@ -344,7 +344,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       .map(filter => database(selectOne("." + dataPath).from(collection).where(filter)))
       .toSeq: _*
     } map {
-      _.flatten
+      _.toList.flatten
        .foldLeft(TimeSeries.empty[T](granularity)) {
          (series, result) => ((result \ dataPath) -->? classOf[JObject]) map { jobj => 
            series + interval.deserializeTimeSeries[T](jobj)
@@ -416,15 +416,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   /** Retrieves a histogram of the values a variable acquires over its lifetime.
    */
   private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[HasValue, CountType]] = {
+    if (variable.name.endsInInfiniteValueSpace) {    
+      sys.error("Cannot obtain a histogram of a variable with a potentially infinite number of values.")
+    }
+
     type R = (HasValue, CountType)
     getVariableLength(token, path, variable).flatMap { 
       case 0 =>
-        val extractor = if (variable.name.endsInInfiniteValueSpace) {
-          extractInfiniteValues[R](valuesKeyFilter(token, path, variable), variable_values_infinite.collection) _
-        } else {
-          extractValues[R](valuesKeyFilter(token, path, variable), variable_values.collection) _
-        }
-
+        val extractor = extractValues[R](valuesKeyFilter(token, path, variable), variable_values.collection) _
         extractor((jvalue, count) => (jvalue.deserialize[HasValue], count)) map (_.toMap)
 
       case length =>
@@ -432,7 +431,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
           getHistogramInternal(token, path, Variable(variable.name \ JPathIndex(index)))
         }: _*).map { results =>
           results.foldLeft(Map.empty[HasValue, CountType]) {
-            case (all, cur) => all <+> cur 
+            case (all, cur) => all |+| cur
           }
         }
     }    
@@ -484,14 +483,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
             extractor(jvalue, count.deserialize[CountType])
         }
-    }
-  }
-
-  private def extractInfiniteValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[Iterable[T]] = {
-    database {
-      select(".value", ".count").from(collection).where(filter)
-    } map { 
-      _.map(result => extractor((result \ "value"), (result \ "count").deserialize[CountType]))
     }
   }
 

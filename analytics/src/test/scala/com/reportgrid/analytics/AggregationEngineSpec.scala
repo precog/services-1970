@@ -169,8 +169,11 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       values.foreach {
         case ((eventName, path), values) =>
-          engine.getValues(Token.Test, "/test", Variable(JPath(eventName) \ path)).map(_.map(_.value)) must whenDelivered {
-            haveSameElementsAs(values)
+          val jpath = JPath(eventName) \ path
+          if (!jpath.endsInInfiniteValueSpace) {
+            engine.getValues(Token.Test, "/test", Variable(jpath)).map(_.map(_.value)) must whenDelivered {
+              haveSameElementsAs(values)
+            }
           }
       }
     }
@@ -214,9 +217,10 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
           val variable = Variable(JPath(eventName) \ path) 
-
-          engine.searchCount(Token.Test, "/test", Obs.ofValue(variable, value)) must whenDelivered {
-            beEqualTo(count.toLong)
+          if (!variable.name.endsInInfiniteValueSpace) {
+            engine.searchCount(Token.Test, "/test", Obs.ofValue(variable, value)) must whenDelivered {
+              beEqualTo(count.toLong)
+            }
           }
       }
     }
@@ -265,14 +269,17 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
-          val observation = Obs.ofValue(Variable(JPath(eventName) \ path), value)
-          val results = engine.searchSeries(
-            Token.Test, "/test", observation, granularity, Some(minDate), Some(maxDate)
-          ) must whenDelivered {
-            verify {
-              results => 
-                (results.total must_== count.toLong) && 
-                (results.series must haveSize((granularity.period(minDate) to maxDate).size))
+          val variable = Variable(JPath(eventName) \ path)
+          if (!variable.name.endsInInfiniteValueSpace) {
+            val observation = Obs.ofValue(variable, value)
+            val results = engine.searchSeries(
+              Token.Test, "/test", observation, granularity, Some(minDate), Some(maxDate)
+            ) must whenDelivered {
+              verify {
+                results => 
+                  (results.total must_== count.toLong) && 
+                  (results.series must haveSize((granularity.period(minDate) to maxDate).size))
+              }
             }
           }
       }

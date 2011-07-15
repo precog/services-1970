@@ -56,24 +56,6 @@ trait AggregatorImplicits {
     def append(o1: Option[A], o2: => Option[A]) = o1.map(a1 => o2.map(_ |+| a1).getOrElse(a1)).orElse(o2)
   }
  
-//
-//  implicit def mapAggregator[K, V](implicit gv: AbelianGroup[V]): AbelianGroup[Map[K, V]] = new AbelianGroup[Map[K, V]] {
-//    val zero = Map[K, V]()
-//
-//    def inverse(v: Map[K, V]): Map[K, V] = v.mapValues(gv.inverse)
-//
-//    def append(t1: Map[K, V], t2: => Map[K, V]): Map[K, V] = {
-//      val keys = t1.keys ++ t2.keys
-//
-//      keys.foldLeft(Map[K, V]()) { (map, key) =>
-//        val value1 = t1.get(key).getOrElse(gv.zero)
-//        val value2 = t2.get(key).getOrElse(gv.zero)
-//
-//        map + (key -> gv.append(value1, value2))
-//      }
-//    }
-//  }
-
   implicit val valueStatsGroup = ValueStats.group
 }
 

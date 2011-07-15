@@ -11,7 +11,7 @@
 			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AnalyticsService.scala",
 			"settings":
 			{
-				"buffer_size": 21049,
+				"buffer_size": 29509,
 				"line_ending": "Unix"
 			}
 		},
@@ -27,7 +27,7 @@
 			"file": "/Users/knuttycombe/reportgrid/services/common/src/main/scala/com/reportgrid/analytics/Permissions.scala",
 			"settings":
 			{
-				"buffer_size": 1615,
+				"buffer_size": 878,
 				"line_ending": "Unix"
 			}
 		},
@@ -35,7 +35,7 @@
 			"file": "/Users/knuttycombe/reportgrid/services/common/src/main/scala/com/reportgrid/analytics/Token.scala",
 			"settings":
 			{
-				"buffer_size": 4279,
+				"buffer_size": 3361,
 				"line_ending": "Unix"
 			}
 		},
@@ -51,7 +51,7 @@
 			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/AnalyticsServiceSpec.scala",
 			"settings":
 			{
-				"buffer_size": 4290,
+				"buffer_size": 3332,
 				"line_ending": "Unix"
 			}
 		},
@@ -59,7 +59,7 @@
 			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/ArbitraryEvent.scala",
 			"settings":
 			{
-				"buffer_size": 1814,
+				"buffer_size": 3741,
 				"line_ending": "Unix"
 			}
 		},
@@ -67,7 +67,7 @@
 			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/VariableDescriptor.scala",
 			"settings":
 			{
-				"buffer_size": 2124,
+				"buffer_size": 2071,
 				"line_ending": "Unix"
 			}
 		},
@@ -75,7 +75,7 @@
 			"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/AggregationEngineSpec.scala",
 			"settings":
 			{
-				"buffer_size": 4053,
+				"buffer_size": 15023,
 				"line_ending": "Unix"
 			}
 		}
@@ -143,7 +143,7 @@
 					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/AnalyticsService.scala",
 					"settings":
 					{
-						"buffer_size": 21049,
+						"buffer_size": 29509,
 						"regions":
 						{
 						},
@@ -199,15 +199,15 @@
 					"file": "/Users/knuttycombe/reportgrid/services/common/src/main/scala/com/reportgrid/analytics/Permissions.scala",
 					"settings":
 					{
-						"buffer_size": 1615,
+						"buffer_size": 878,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								954,
-								954
+								0,
+								0
 							]
 						],
 						"settings":
@@ -227,15 +227,15 @@
 					"file": "/Users/knuttycombe/reportgrid/services/common/src/main/scala/com/reportgrid/analytics/Token.scala",
 					"settings":
 					{
-						"buffer_size": 4279,
+						"buffer_size": 3361,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								2732,
-								2732
+								0,
+								0
 							]
 						],
 						"settings":
@@ -283,15 +283,15 @@
 					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/AnalyticsServiceSpec.scala",
 					"settings":
 					{
-						"buffer_size": 4290,
+						"buffer_size": 3332,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								2652,
-								2652
+								0,
+								0
 							]
 						],
 						"settings":
@@ -311,15 +311,15 @@
 					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/ArbitraryEvent.scala",
 					"settings":
 					{
-						"buffer_size": 1814,
+						"buffer_size": 3741,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								712,
-								712
+								0,
+								0
 							]
 						],
 						"settings":
@@ -339,7 +339,7 @@
 					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/main/scala/com/reportgrid/analytics/VariableDescriptor.scala",
 					"settings":
 					{
-						"buffer_size": 2124,
+						"buffer_size": 2071,
 						"regions":
 						{
 						},
@@ -367,15 +367,15 @@
 					"file": "/Users/knuttycombe/reportgrid/services/analytics/src/test/scala/com/reportgrid/analytics/AggregationEngineSpec.scala",
 					"settings":
 					{
-						"buffer_size": 4053,
+						"buffer_size": 15023,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								2741,
-								2741
+								0,
+								0
 							]
 						],
 						"settings":
