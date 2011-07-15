@@ -229,7 +229,8 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
                 name       = eventNames(exponentialIndex(eventNames.size)),
                 properties = sample,
                 rollup     = false,
-                timestamp  = Some(conf.clock.now().toDate)
+                timestamp  = Some(conf.clock.now().toDate),
+                headers    = Map("User-Agent" -> "ReportGridBenchmark")
               )
 
               resultsActor ! TrackTime(System.nanoTime - start)

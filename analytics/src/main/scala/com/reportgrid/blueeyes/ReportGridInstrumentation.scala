@@ -18,7 +18,7 @@ import org.joda.time.Instant
 import scalaz.Scalaz._
 
 trait ReportGridInstrumentation {
-  val ReportGridUserAgent = "ReportGrid Tracking Agent / 1.0"
+  val ReportGridUserAgent = "ReportGrid Introspection Agent / 1.0"
 
   def bucketCounts(i: Long) = if (i / 25000 > 0) (i / 10000) * 10000
                               else if (i / 2500 > 0) (i / 1000) * 1000
@@ -50,7 +50,7 @@ trait ReportGridInstrumentation {
     override def isDefinedAt(req: HttpRequest[T]) = next.isDefinedAt(req)
   
     override def apply(req: HttpRequest[T]) = {
-      // if the request comes from this user agent, track it but do not recursively 
+      // if the request comes from the introspection agent, pass it through and ignore it.
       if (req.headers.header[`User-Agent`].exists(_.value == ReportGridUserAgent)) next(req)
       else clock.instant() |> { start => 
         next(req) deliverTo { resp => 

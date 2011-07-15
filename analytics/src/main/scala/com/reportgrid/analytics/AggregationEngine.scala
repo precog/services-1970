@@ -144,6 +144,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     jobject.fields.foreach {
       case field @ JField(eventName, _) => 
         val event = JObject(field :: Nil)
+        //println(renderNormalized(event))
 
         path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)
 
