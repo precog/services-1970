@@ -9,3 +9,5 @@ project-0.7.x/boot
 *.swp
 build.xml
 nbproject
+*.log
+tmp
