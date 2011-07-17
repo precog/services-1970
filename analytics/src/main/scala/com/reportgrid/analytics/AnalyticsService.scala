@@ -417,13 +417,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                       val from: Path = token.path + "/" + (content \ "from").deserialize[String]
 
-                      val where = (content \ "where").children.collect {
-                        case JField(name, value) =>
-                          val variable  = Variable(JPath(name))
-                          val predicate = HasValue(value)
-
-                          (variable -> predicate)
-                      }.toSet
+                      val observation = content.deserialize[Observation[HasValue]]
 
                       val start = (content \ "start") match {
                         case JNothing | JNull => None
@@ -442,12 +436,20 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                       Selection(select) match {
                         case Count => 
-                          aggregationEngine.searchCount(token, from, where, start, end).map(_.serialize.ok)
+                          aggregationEngine.searchCount(token, from, observation, start, end).map(_.serialize.ok)
 
                         case Series(periodicity) => 
-                          aggregationEngine.searchSeries(token, from, where, periodicity, start, end)
+                          aggregationEngine.searchSeries(token, from, observation, periodicity, start, end)
                           .map(groupTimeSeries(grouping))
                           .map(_.fold(_.serialize, _.serialize).ok)
+
+                        case Related => 
+                          import HttpStatusCodes.BadRequest
+                          aggregationEngine.findRelatedInfiniteValues(
+                            token, from, observation, 
+                            start.getOrElse(throw new HttpException(BadRequest, "A start date must be specified to query for values related to an observation.")),
+                            end.getOrElse(throw new HttpException(BadRequest, "An end date must be specified to query for values related to an observation."))
+                          ).map(_.serialize.ok)
                       }
                     } getOrElse {
                       Future.sync(HttpResponse[JValue](content = None))
@@ -650,18 +652,20 @@ object AnalyticsServiceSerialization extends AnalyticsSerialization {
   }
 
   implicit def TimeSeriesDecomposer[T: Decomposer]: Decomposer[TimeSeries[T]] = new Decomposer[TimeSeries[T]] {
-    override def decompose(t: TimeSeries[T]) = JObject(List(
-      JField("type", JString("timeseries")),
-      JField("periodicity", t.periodicity.serialize),
-      JField("data", t.series.serialize)
-    ))
+    override def decompose(t: TimeSeries[T]) = JObject(
+      JField("type", JString("timeseries")) ::
+      JField("periodicity", t.periodicity.serialize) ::
+      JField("data", t.series.serialize) ::
+      Nil
+    )
   }
 
   implicit def DeltaSetDecomposer[A: Decomposer, D: Decomposer, V : Decomposer : AbelianGroup]: Decomposer[DeltaSet[A, D, V]] = new Decomposer[DeltaSet[A, D, V]] {
-    def decompose(value: DeltaSet[A, D, V]): JValue = JObject(List(
-      JField("zero", value.zero.serialize),
-      JField("data", value.data.serialize)
-    ))
+    def decompose(value: DeltaSet[A, D, V]): JValue = JObject(
+      JField("zero", value.zero.serialize) ::
+      JField("data", value.data.serialize) ::
+      Nil
+    )
   }
 
   implicit val StatisticsDecomposer: Decomposer[Statistics] = new Decomposer[Statistics] {
@@ -674,5 +678,25 @@ object AnalyticsServiceSerialization extends AnalyticsSerialization {
       JField("standardDeviation", v.standardDeviation.serialize) ::
       Nil
     )
+  }
+
+  implicit val VariableValueDecomposer: Decomposer[(Variable, HasValue)] = new Decomposer[(Variable, HasValue)] {
+    def decompose(v: (Variable, HasValue)): JValue = JObject(
+      JField("variable", v._1.serialize) :: 
+      JField("value", v._2.serialize) ::
+      Nil
+    )
+  }
+
+  implicit val ObservationExtractor: Extractor[Observation[HasValue]] = new Extractor[Observation[HasValue]] {
+    def extract(v: JValue): Observation[HasValue] = {
+      (v \ "where").children.collect {
+        case JField(name, value) =>
+          val variable  = Variable(JPath(name))
+          val predicate = HasValue(value)
+
+          (variable -> predicate)
+      }.toSet
+    }
   }
 }

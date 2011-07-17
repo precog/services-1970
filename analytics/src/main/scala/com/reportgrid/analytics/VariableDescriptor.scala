@@ -48,11 +48,13 @@ object VariableDescriptor {
 }
 
 sealed trait Selection
+case object Related extends Selection
 case object Count extends Selection
 case class Series(periodicity: Periodicity) extends Selection
 
 object Selection {
   def apply(select: String) = select match {
+    case "related" => Related
     case "count" => Count
     case _ => select.split("/").toList.map(_.toLowerCase) match {
       case "series" :: p :: Nil => Series(Periodicity(p))

@@ -73,22 +73,6 @@ object MongoSupport extends AnalyticsSerialization {
     )
   }
 
-  implicit val VariableDecomposer = new Decomposer[Variable] {
-    def decompose(v: Variable): JValue = v.name match {
-      case JPath.Identity => "id"
-
-      case jpath => jpath.serialize
-    }
-  }
-
-  implicit val VariableExtractor = new Extractor[Variable] {
-    def extract(v: JValue): Variable = v match {
-      case JString("id") => Variable(JPath.Identity)
-
-      case _ => Variable(v.deserialize[JPath])
-    }
-  }
-
   implicit def ObservationDecomposer[S <: Predicate](implicit pd: Decomposer[S]): Decomposer[Observation[S]] = new Decomposer[Observation[S]] {
     def decompose(v: Observation[S]): JValue = {
       JObject(

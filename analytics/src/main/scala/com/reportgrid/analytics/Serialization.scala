@@ -43,6 +43,20 @@ trait AnalyticsSerialization {
     def extract(value: JValue): Periodicity = Periodicity(value.deserialize[String])
   }
 
+  implicit val VariableDecomposer = new Decomposer[Variable] {
+    def decompose(v: Variable): JValue = v.name match {
+      case JPath.Identity => "id"
+      case jpath => jpath.serialize
+    }
+  }
+
+  implicit val VariableExtractor = new Extractor[Variable] {
+    def extract(v: JValue): Variable = v match {
+      case JString("id") => Variable(JPath.Identity)
+      case _ => Variable(v.deserialize[JPath])
+    }
+  }
+
   final implicit val HasChildDecomposer = new Decomposer[HasChild] {
     def decompose(v: HasChild): JValue = v.child.serialize
   }
