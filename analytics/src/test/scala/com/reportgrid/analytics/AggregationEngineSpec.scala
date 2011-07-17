@@ -123,6 +123,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   "Aggregation engine" should {
     shareVariables()
 
+    // using the benchmark token for testing because it has order 3
     val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get ->- {
       _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.timestamp, event.data, 1))
     }
@@ -132,7 +133,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case Event(JObject(JField(eventName, _) :: Nil), _) => "." + eventName
       }.toSet
 
-      engine.getPathChildren(Token.Test, "/test") must whenDelivered {
+      engine.getPathChildren(Token.Benchmark, "/test") must whenDelivered {
         haveTheSameElementsAs(children)
       }
     }
@@ -147,7 +148,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       eventCounts.foreach {
         case (eventName, count) =>
-          engine.getVariableCount(Token.Test, "/test", Variable("." + eventName)) must whenDelivered {
+          engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName)) must whenDelivered {
             beEqualTo(count)
           }
       }
@@ -171,7 +172,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case ((eventName, path), values) =>
           val jpath = JPath(eventName) \ path
           if (!jpath.endsInInfiniteValueSpace) {
-            engine.getValues(Token.Test, "/test", Variable(jpath)).map(_.map(_.value)) must whenDelivered {
+            engine.getValues(Token.Benchmark, "/test", Variable(jpath)).map(_.map(_.value)) must whenDelivered {
               haveSameElementsAs(values)
             }
           }
@@ -188,7 +189,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       arrayValues.foreach {
         case ((eventName, path), values) =>
-          engine.getValues(Token.Test, "/test", Variable(JPath(eventName) \ path)).map(_.map(_.value)) must whenDelivered {
+          engine.getValues(Token.Benchmark, "/test", Variable(JPath(eventName) \ path)).map(_.map(_.value)) must whenDelivered {
             haveSameElementsAs(values)
           }
       }
@@ -206,7 +207,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
 
 
-      engine.getHistogramTop(Token.Test, "/test", Variable(".tweeted.retweet"), 10).map(_.map(histogramResult)) must whenDelivered {
+      engine.getHistogramTop(Token.Benchmark, "/test", Variable(".tweeted.retweet"), 10).map(_.map(histogramResult)) must whenDelivered {
         haveTheSameElementsAs(retweetCounts)
       }
     }
@@ -218,7 +219,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (subset @ (eventName, path, value), count) =>
           val variable = Variable(JPath(eventName) \ path) 
           if (!variable.name.endsInInfiniteValueSpace) {
-            engine.searchCount(Token.Test, "/test", Obs.ofValue(variable, value)) must whenDelivered {
+            engine.searchCount(Token.Benchmark, "/test", Obs.ofValue(variable, value)) must whenDelivered {
               beEqualTo(count.toLong)
             }
           }
@@ -241,7 +242,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       expectedTotals.foreach {
         case (subset @ (eventName, path), count) =>
           engine.getVariableSeries(
-            Token.Test, "/test", Variable(JPath(eventName) \ path), granularity, Some(minDate), Some(maxDate)
+            Token.Benchmark, "/test", Variable(JPath(eventName) \ path), granularity, Some(minDate), Some(maxDate)
           ) map (_.map(_.count).total) must whenDelivered {
             beEqualTo(count.toLong)
           }
@@ -255,7 +256,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       expectedMeans(events, granularity, "recipientCount").foreach {
         case (eventName, means) =>
           engine.getVariableSeries(
-            Token.Test, "/test", Variable(JPath(eventName) \ "recipientCount"), granularity, Some(minDate), Some(maxDate)
+            Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), granularity, Some(minDate), Some(maxDate)
           ) must whenDelivered {
             verify(_.series.mapValues(_.mean).filter(!_._2.isEmpty).mapValues(_.get) == means)
           }
@@ -273,7 +274,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
           if (!variable.name.endsInInfiniteValueSpace) {
             val observation = Obs.ofValue(variable, value)
             val results = engine.searchSeries(
-              Token.Test, "/test", observation, granularity, Some(minDate), Some(maxDate)
+              Token.Benchmark, "/test", observation, granularity, Some(minDate), Some(maxDate)
             ) must whenDelivered {
               verify {
                 results => 
@@ -300,7 +301,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (values, count) =>
           val observation = variables.zip(values.map(v => HasValue(v))).toSet
 
-          engine.searchCount(Token.Test, "/test", observation) must whenDelivered (beEqualTo(count))
+          engine.searchCount(Token.Benchmark, "/test", observation) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -324,7 +325,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (values, count) =>
           val observation = variables.zip(values.map(v => HasValue(v))).toSet
 
-          engine.searchCount(Token.Test, "/test", observation, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(count))
+          engine.searchCount(Token.Benchmark, "/test", observation, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -341,7 +342,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      engine.intersectCount(Token.Test, "/test", descriptors) must whenDelivered (beEqualTo(expectedCounts)) 
+      engine.intersectCount(Token.Benchmark, "/test", descriptors) must whenDelivered (beEqualTo(expectedCounts)) 
     }
 
     "retrieve intersection counts for a slice of time" in {      
@@ -361,7 +362,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      engine.intersectCount(Token.Test, "/test", descriptors, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
+      engine.intersectCount(Token.Benchmark, "/test", descriptors, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
     }
 
     "retrieve intersection series for a slice of time" in {      
@@ -390,6 +391,35 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
           (results.values.map(_.periodicity).toSet must haveSize(1)) &&
           (results.mapValues(_.total).filter(_._2 != 0) must haveTheSameElementsAs(expectedCounts))
         }
+      }
+    }
+
+    "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+
+      val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), (Set[JValue], Set[Period])]) {
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
+          obj.flattenWithPath.foldLeft(map) {
+            case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
+              val key = (eventName, jpath, value)
+              map + (key -> (map.getOrElse(key, (Set.empty[JValue], Set.empty[Period])).mapElements(_ + (obj \ "~tweet"), _ + granularity.period(time))))
+
+            case (map, _) => map
+          }
+      }
+
+      expectedValues.foreach {
+        case ((eventName, jpath, jvalue), (infiniteValues, periods)) => 
+          engine.findRelatedInfiniteValues(
+            Token.Benchmark, "/test", 
+            Obs.ofValue(Variable(JPath(eventName) \ jpath), jvalue),
+            minDate, maxDate
+          ) map {
+            _.map(_._2.value).toSet
+          } must whenDelivered {
+            beEqualTo(infiniteValues)
+          }
       }
     }
 

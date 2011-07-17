@@ -58,7 +58,7 @@ object Token {
   lazy val Benchmark = Token(
     tokenId        = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
     parentTokenId  = Some(Root.tokenId),
-    accountTokenId = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D",
+    accountTokenId = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
     path           = "test-account-benchmark",
     permissions    = Permissions(true, true, true),
     expires        = Never,

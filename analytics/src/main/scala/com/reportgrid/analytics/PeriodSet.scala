@@ -8,11 +8,11 @@ import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
 
 sealed trait PeriodSet {
-  def mapBatchPeriods[T](batchPeriodicity: Periodicity)(f: Period => T): Iterable[T] 
+  def mapBatchPeriods[T](batchPeriodicity: Periodicity, f: Period => T): Iterable[T] 
 
   def deserializeTimeSeries[T : Extractor : AbelianGroup](jobj: JObject): TimeSeries[T]
 
-  protected def mapBatchPeriods[T](min: Option[Instant], max: Option[Instant], granularity: Periodicity, batchPeriodicity: Periodicity)(f: Period => T): Iterable[T] = {
+  protected def mapBatchPeriods[T](min: Option[Instant], max: Option[Instant], granularity: Periodicity, batchPeriodicity: Periodicity, f: Period => T): Iterable[T] = {
     (min.map(batchPeriodicity.period), max.map(batchPeriodicity.period)) match {
       case (Some(start), Some(end)) => 
         if      (start == end)           f(start) :: Nil
@@ -29,8 +29,8 @@ sealed trait PeriodSet {
 }
 
 case class Interval(start: Option[Instant], end: Option[Instant], granularity: Periodicity) extends PeriodSet {
-  def mapBatchPeriods[T](batchPeriodicity: Periodicity)(f: Period => T): Iterable[T] = {
-    mapBatchPeriods(start, end, granularity, batchPeriodicity)(f)
+  def mapBatchPeriods[T](batchPeriodicity: Periodicity, f: Period => T): Iterable[T] = {
+    mapBatchPeriods(start, end, granularity, batchPeriodicity, f)
   }
 
   def deserializeTimeSeries[T : Extractor : AbelianGroup](obj: JObject): TimeSeries[T] = {
