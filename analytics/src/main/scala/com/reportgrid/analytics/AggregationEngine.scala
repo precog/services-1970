@@ -573,8 +573,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       case ((finitePatches, infinitePatches), ((storagePeriod, _, finiteObservation), TimeSeries(granularity, counts))) => 
 
         // build the update for the finite values time series, and append to the infinite patches set.
-        val (finiteUpdate, nextInfinitePatches) = counts.foldLeft((MongoUpdate.Empty, infinitePatches)) {
-          case ((finiteUpdate, infinitePatches), (time, count)) => 
+        val (finiteUpdate, referenceKeys) = counts.foldLeft((MongoUpdate.Empty, List.empty[MongoFieldFilter])) {
+          case ((finiteUpdate, referenceKeys), (time, count)) => 
             // When we query for associated infinite values, we will use the queriable expansion (heap shaped) 
             // of the specified time series so here we need to construct a value series key that records when 
             // the observation was made, not where it is being stored. We will then construct an identical key 
@@ -582,38 +582,29 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
             // minimal set of infinite value documents.
             val referenceKey = valueSeriesKey(token, path, finiteObservation, granularity.period(time), granularity)
 
-            Tuple2(
-              finiteUpdate |+| ((countsPath \ time.getMillis.toString) inc count),
-              //build infinite patches by adding the finite key id to the list of locations that the infinite value
-              //was observed in conjunction with.
-              infinitePatches ++ infiniteReport.observationCounts.foldLeft(MongoPatches.empty) {
-                case (patches, (infiniteObservation, pointCounts)) => 
-                  //should only be one element in this set; this is the contract of the infinite component of Report.ofValues
-                  assert(infiniteObservation.size == 1)
-
-                  // The infinite counts timeseries should have a single entry because it was derived from TimeSeries.point
-                  assert(pointCounts.series.size == 1)
-
-                  val observationKey = infiniteSeriesKey(token, path, infiniteObservation) 
-
-                  patches + (
-                    observationKey -> {
-                      infiniteObservation.head match {
-                        case (variable, value) =>
-                          (".ids" push referenceKey.rhs) |+| 
-                          (MongoUpdateBuilder(".variable") set variable.serialize) |+| 
-                          (MongoUpdateBuilder(".value") set value.serialize) |+| 
-                          pointCounts.series.head.fold((_, count) => (JPath(".count") inc count))
-                      }
-                    }
-                  )
-              }
-            )
+            (finiteUpdate |+| ((countsPath \ time.getMillis.toString) inc count), referenceKey :: referenceKeys)
         }
         
         Tuple2(
           finitePatches + (valueSeriesKey(token, path, finiteObservation, storagePeriod, granularity) -> finiteUpdate),
-          nextInfinitePatches
+          //build infinite patches by adding the finite key id to the list of locations that the infinite value
+          //was observed in conjunction with.
+          infiniteReport.observationCounts.foldLeft(infinitePatches) {
+            case (patches, (infiniteObservation, pointCounts)) => 
+              val observationKey = infiniteSeriesKey(token, path, infiniteObservation) 
+
+              patches + (
+                observationKey -> {
+                  infiniteObservation.head match {
+                    case (variable, value) =>
+                      (MongoUpdateBuilder(".ids") pushAll (referenceKeys.map(_.rhs): _*)) |+| 
+                      (MongoUpdateBuilder(".variable") set variable.serialize) |+| 
+                      (MongoUpdateBuilder(".value") set value.serialize) |+| 
+                      pointCounts.series.head.fold((_, count) => (JPath(".count") inc count))
+                  }
+                }
+              )
+          }
         )
     }
   }
