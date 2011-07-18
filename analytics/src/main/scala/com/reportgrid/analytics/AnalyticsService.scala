@@ -662,6 +662,7 @@ object AnalyticsServiceSerialization extends AnalyticsSerialization {
 
   implicit def DeltaSetDecomposer[A: Decomposer, D: Decomposer, V : Decomposer : AbelianGroup]: Decomposer[DeltaSet[A, D, V]] = new Decomposer[DeltaSet[A, D, V]] {
     def decompose(value: DeltaSet[A, D, V]): JValue = JObject(
+      JField("type", JString("deltas")) ::
       JField("zero", value.zero.serialize) ::
       JField("data", value.data.serialize) ::
       Nil

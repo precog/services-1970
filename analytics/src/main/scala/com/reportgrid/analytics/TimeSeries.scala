@@ -155,10 +155,10 @@ object TimeSeries {
  * delta compression. 
  */
 class DeltaSet[A, D, V](val zero: A, val data: SortedMap[D, V])
-                       (implicit sact: SAct[A, D], d: DeltaSpace[A, D], aord: Ordering[A], dord: Ordering[D], group: AbelianGroup[V]) {
+                       (implicit sact: SAct[A, D], val deltaSpace: DeltaSpace[A, D], aord: Ordering[A], dord: Ordering[D], group: AbelianGroup[V]) {
   lazy val series: SortedMap[A, V] = data.foldLeft(SortedMap.empty[A, V]) {
-    case (m, (d, v)) => 
-      val key = sact.append(zero, d)
+    case (m, (deltaSpace, v)) => 
+      val key = sact.append(zero, deltaSpace)
       m + (key -> (m.getOrElse(key, group.zero) |+| v))
   }
 
@@ -167,7 +167,7 @@ class DeltaSet[A, D, V](val zero: A, val data: SortedMap[D, V])
       import Stream._
       def _streamFrom(from: A): Stream[D] = {
         if (from >= to) empty[D]
-        else cons(d.difference(origin, from), _streamFrom(sact.append(from, d(from))))
+        else cons(deltaSpace.difference(origin, from), _streamFrom(sact.append(from, deltaSpace(from))))
       }
 
       _streamFrom(origin)
@@ -182,7 +182,7 @@ class DeltaSet[A, D, V](val zero: A, val data: SortedMap[D, V])
 
   def + (that: DeltaSet[A, D, V]) = new DeltaSet(zero, data |+| that.data)
 
-  def + (entry: (A, V)): DeltaSet[A, D, V] = new DeltaSet(zero, data + (d.difference(_: A, zero)).first.apply(entry))
+  def + (entry: (A, V)): DeltaSet[A, D, V] = new DeltaSet(zero, data + (deltaSpace.difference(_: A, zero)).first.apply(entry))
 
   def map[X: AbelianGroup](f: V => X): DeltaSet[A, D, X] = {
     new DeltaSet(zero, data.map(f.second[D]))
