@@ -80,13 +80,16 @@ trait YggdrasilService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             }
           }
         }
+      } ~ 
+      orFail { request: HttpRequest[ByteChunk] =>
+        println("Could not handle request " + request)
+        (HttpStatusCodes.NotFound, "No handler matched the request " + request)
       }
     } ->
     shutdown { state => Future.sync(()) }
   }
 }
 
-object Yggdrasil extends YggdrasilService {
-}
+object Yggdrasil extends BlueEyesServer with YggdrasilService 
 
 // vim: set ts=4 sw=4 et:

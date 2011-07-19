@@ -47,7 +47,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
   def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
 
-  //val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
+  val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
 
   val analyticsService = service("analytics", "0.02") {
     logging { logger =>
@@ -69,7 +69,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           val yggConfig = YggdrasilConfig(
             yggConfigMap.getString("host", "api.reportgrid.com"),
             yggConfigMap.getInt("port"),
-            yggConfigMap.getString("path", "/yggdrasil/v0")
+            yggConfigMap.getString("path", "/services/yggdrasil/v0")
           )
 
           for {
@@ -120,7 +120,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 host = Some(yggdrasil.host), 
                 port = yggdrasil.port, 
                 path = Some(yggdrasil.path + "/vfs/" + prefixPath)
-              )
+              ),
+              parameters = req.parameters - 'prefixPath
             ) 
           }
 
@@ -133,7 +134,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 /* Post data to the virtual file system.
                  */
                 audit("track") {
-                  //forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
+                  forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
                     post { request: HttpRequest[JValue] =>
                       tokenOf(request).map { token =>
                         val path = fullPathOf(token, request)
@@ -160,7 +161,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         HttpResponse[JValue](content = None)
                       }
                     }
-                  //}
+                  }
                 } ~
                 audit("explore paths") {
                   get { request: HttpRequest[JValue] =>
