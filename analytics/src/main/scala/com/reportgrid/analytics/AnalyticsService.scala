@@ -529,10 +529,21 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 path('descendantTokenId) {
                   get { request: HttpRequest[JValue] =>
                     tokenOf(request).flatMap { token =>
-                      tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
-                        _.map { _.relativeTo(token).serialize }
-                      } map { descendantToken =>
-                        HttpResponse[JValue](content = descendantToken)
+                      if (token.tokenId == request.parameters('descendantTokenId)) {
+                        token.parentTokenId.map { parTokenId =>
+                          tokenManager.lookup(parTokenId).map { parent => 
+                            val sanitized = parent.map(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
+                            HttpResponse[JValue](content = sanitized.map(_.serialize))
+                          }
+                        } getOrElse {
+                          Future.sync(HttpResponse[JValue](status = HttpStatusCodes.Forbidden))
+                        }
+                      } else {
+                        tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
+                          _.map { _.relativeTo(token).serialize }
+                        } map { descendantToken =>
+                          HttpResponse[JValue](content = descendantToken)
+                        }
                       }
                     }
                   } ~
