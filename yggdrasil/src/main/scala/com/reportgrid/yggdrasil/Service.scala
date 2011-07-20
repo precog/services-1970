@@ -12,26 +12,25 @@ import blueeyes.util.{Clock, ClockSystem}
 
 import java.util.UUID
 
-import org.apache.cassandra.thrift.ConsistencyLevel
-
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.hbase.HBaseConfiguration
+import org.apache.hadoop.hbase.client._
+import org.apache.hadoop.hbase.util.Bytes
 import org.joda.time.Instant
-import org.scale7.cassandra.pelops._
-import org.scale7.cassandra.pelops.pool._
 
-case class YggdrasilState(poolName: String, columnFamily: String, clock: Clock)
+case class YggdrasilState(configuration: Configuration, clock: Clock)
 
 trait YggdrasilService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString {
+  val hTable = "yggdrasil"
+  val columnFamily = Bytes.toBytes("events")
+  val countColumn = Bytes.toBytes("count")
+
   val yggdrasil = service("yggdrasil", "0.01") { context =>
     startup { 
       import context.config
-      val poolName = "yggdrasilPool"
-      val keyspace = "yggdrasil"
-      val colFamily = "events"
-      val cassandraConfig = config.configMap("cassandra")
-      val cluster = new Cluster(cassandraConfig.getList("hosts").mkString(","), cassandraConfig.getInt("port", 9160))
-      Pelops.addPool(poolName, cluster, keyspace)
+      val hbaseConfig = HBaseConfiguration.create
 
-      Future.sync(YggdrasilState(poolName, colFamily, ClockSystem.realtimeClock))
+      Future.sync(YggdrasilState(hbaseConfig, ClockSystem.realtimeClock))
     } -> 
     request { (state: YggdrasilState) => 
       import state._
@@ -56,22 +55,25 @@ trait YggdrasilService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     case jvalue   => jvalue.deserialize[Int]
                   }
 
-                  //create a sortable, globally unique key - the UUID is just a salt
-                  val rowKey = tokenId + ":" + timestamp.getMillis + ":" + prefixPath + "#" + UUID.randomUUID.toString
-
-                  events.fields.foreach {
-                    case JField(eventName, event) => 
-                      val mutator = Pelops.createMutator(poolName)
-                      mutator.writeSubColumns(
-                        columnFamily, rowKey, eventName, 
-                        mutator.newColumnList(
-                          events.flattenWithPath.map {
-                            case (jpath, jvalue) => mutator.newColumn(jpath.path, renderNormalized(jvalue))
-                          }: _*
-                        )
-                      );
-
-                      mutator.execute(ConsistencyLevel.ONE);
+                  val table = new HTable(configuration, hTable)
+                  try {
+                    events.fields.foreach {
+                      case JField(eventName, event) => 
+                        //create a sortable, globally unique key - the UUID is just a salt
+                        val rowKey = tokenId + ":" + prefixPath + "/" + eventName + ":" + timestamp.getMillis + "#" + UUID.randomUUID.toString
+                        val put  = new Put(Bytes.toBytes(rowKey))
+                        put.add(columnFamily, countColumn, Bytes.toBytes(count))
+                        event.flattenWithPath.foreach {
+                          case (jpath, jvalue) => put.add(
+                            columnFamily, 
+                            Bytes.toBytes(jpath.path), 
+                            Bytes.toBytes(renderNormalized(jvalue))
+                          )
+                        }
+                        table.put(put)
+                    }
+                  } finally {
+                    table.close
                   }
                 }
 
@@ -82,7 +84,6 @@ trait YggdrasilService extends BlueEyesServiceBuilder with BijectionsChunkJson w
         }
       } ~ 
       orFail { request: HttpRequest[ByteChunk] =>
-        println("Could not handle request " + request)
         (HttpStatusCodes.NotFound, "No handler matched the request " + request)
       }
     } ->

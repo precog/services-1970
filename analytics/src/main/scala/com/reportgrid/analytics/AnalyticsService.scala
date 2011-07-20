@@ -113,16 +113,19 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
           val audit = auditor[JValue, JValue](auditClient, clock, tokenOf)
           
-          def yggdrasilRewrite[T](req: HttpRequest[T]): HttpRequest[T] = {
-            val prefixPath = req.parameters.get('prefixPath).getOrElse("")
-            req.copy(
-              uri = req.uri.copy(
-                host = Some(yggdrasil.host), 
-                port = yggdrasil.port, 
-                path = Some(yggdrasil.path + "/vfs/" + prefixPath)
-              ),
-              parameters = req.parameters - 'prefixPath
-            ) 
+          def yggdrasilRewrite[T](req: HttpRequest[T]): Option[HttpRequest[T]] = {
+            import HttpHeaders._
+            (!req.headers.header[`User-Agent`].exists(_.value == ReportGridUserAgent)).option {
+              val prefixPath = req.parameters.get('prefixPath).getOrElse("")
+              req.copy(
+                uri = req.uri.copy(
+                  host = Some(yggdrasil.host), 
+                  port = yggdrasil.port, 
+                  path = Some(yggdrasil.path + "/vfs/" + prefixPath)
+                ),
+                parameters = req.parameters - 'prefixPath
+              ) 
+            }
           }
 
           jsonp {

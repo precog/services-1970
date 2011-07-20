@@ -45,11 +45,15 @@ object ServicesBuild extends Build {
 
     val yggdrasilSettings = serviceSettings ++ oneJarSettings ++ Seq(
       resolvers ++= Seq(
-        "riptano" at "http://mvn.riptano.com/content/repositories/public",
-        "Scale7 Maven Repo" at "https://github.com/s7/mvnrepo/raw/master"
+        //"riptano" at "http://mvn.riptano.com/content/repositories/public",
+        //"Scale7 Maven Repo" at "https://github.com/s7/mvnrepo/raw/master"
+        "Cloudera"       at "https://repository.cloudera.com/content/groups/cloudera-repos",
+        "Java.net"       at "http://download.java.net/maven/2/",
+        "HBase Thrift"   at "http://people.apache.org/~rawson/repo"
       ),
       libraryDependencies ++= Seq(
-        "org.scale7" % "scale7-pelops" % "1.2-0.8.x-SNAPSHOT",
+        //"org.scale7" % "scale7-pelops" % "1.2-0.8.x-SNAPSHOT",
+        "org.apache.hbase"        % "hbase"        % "0.90.1-cdh3u0",
         "org.slf4j"               % "slf4j-api"    % "1.6.1", 
         "joda-time"               % "joda-time"    % "1.6.2",
         "org.scalaz"              %% "scalaz-core" % "6.0.1"
