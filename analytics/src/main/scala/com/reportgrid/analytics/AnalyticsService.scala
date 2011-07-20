@@ -544,7 +544,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         }
                       } else {
                         tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
-                          _.map { _.relativeTo(token).serialize }
+                          _.map { _.relativeTo(token).copy(accountTokenId = "").serialize }
                         } map { descendantToken =>
                           HttpResponse[JValue](content = descendantToken)
                         }
