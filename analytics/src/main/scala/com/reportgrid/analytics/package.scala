@@ -60,5 +60,10 @@ package object analytics extends AggregatorImplicits {
       case JPathField(name) => name startsWith "~"
       case _ => false
     }
+
+    def endsInTagSpace = jpath.nodes.exists {
+      case JPathField(name) => name startsWith "#"
+      case _ => false
+    }
   }
 }

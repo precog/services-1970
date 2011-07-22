@@ -103,6 +103,7 @@ trait AnalyticsSerialization {
       JField("read",    permissions.read.serialize)  ::
       JField("write",   permissions.write.serialize) ::
       JField("share",   permissions.share.serialize) ::
+      JField("explore",   permissions.explore.serialize) ::
       Nil
     )
   }
@@ -111,7 +112,8 @@ trait AnalyticsSerialization {
     def extract(jvalue: JValue): Permissions = Permissions(
       read  = (jvalue \ "read").deserialize[Boolean],
       write = (jvalue \ "write").deserialize[Boolean],
-      share = (jvalue \ "share").deserialize[Boolean]
+      share = (jvalue \ "share").deserialize[Boolean],
+      explore = (jvalue \ "explore").deserialize[Boolean]
     )
   }
 

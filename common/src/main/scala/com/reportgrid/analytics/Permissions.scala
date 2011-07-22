@@ -5,22 +5,23 @@ package com.reportgrid.analytics
  * Share permission allows a token to create new tokens with the same
  * or weaker level of permission.
  */
-case class Permissions(read: Boolean, write: Boolean, share: Boolean) {
+case class Permissions(read: Boolean, write: Boolean, share: Boolean, explore: Boolean) {
   /** Issues new permissions derived from this one. The new permissions 
    * cannot be broader than these permissions.
    */
-  def issue(read: Boolean, write: Boolean, share: Boolean): Permissions = Permissions(
+  def issue(read: Boolean, write: Boolean, share: Boolean, explore: Boolean): Permissions = Permissions(
     read  = this.read  && read,
     write = this.write && write,
-    share = this.share && share
+    share = this.share && share,
+    explore = this.explore && explore
   )
   
   /** Limits these permissions to the specified permissions. 
    */
-  def limitTo(that: Permissions) = that.issue(read, write, share)
+  def limitTo(that: Permissions) = that.issue(read, write, share, explore)
 }
 
 object Permissions {
-  val All = Permissions(true, true, true)
+  val All = Permissions(true, true, true, true)
 }
 
