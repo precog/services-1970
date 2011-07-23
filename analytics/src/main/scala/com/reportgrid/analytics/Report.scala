@@ -7,6 +7,7 @@ import blueeyes.json.{JPath, JPathIndex, JPathField}
 import com.reportgrid.analytics._
 import com.reportgrid.util.MapUtil._
 
+import scala.collection.immutable.IndexedSeq
 import scalaz.{Ordering => _, _}
 import Scalaz._
 
@@ -40,12 +41,6 @@ object Report {
   /** Creates a report of values.
    */
   def ofValues[T: Semigroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): (Report[HasValue, T], Report[HasValue, T]) = {
-    // TODO: Change to the following when we move to scala 2.9.0
-    // val data = event.flattenWithPath.take(limit)
-    // Report(
-    //   (for (i <- 1 until order; subset <- data.combinations(i)) yield (subset.toSet, count)).toMap
-    // )
-
     val (infinite, finite) = event.flattenWithPath.take(limit).map {
       case (jpath, jvalue) => (Variable(jpath), HasValue(jvalue))
     } partition {
@@ -68,7 +63,7 @@ object Report {
       parent.map(parent => set + (Variable(parent) -> HasChild(jpath.nodes.last))).getOrElse(set)
     }
 
-    Report(Map(sublists(flattened.toList, order).map { subset => (subset.toSet, count) }: _*))
+    Report(Map(sublists(flattened.toList, order).map(subset => (subset.toSet, count)): _*))
   }
 
   def ofInnerNodes[T: Semigroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[HasChild, T] = {
@@ -82,6 +77,10 @@ object Report {
       }
     }
 
-    Report(Map(sublists(flattened.toList, order).map { subset => (subset.toSet, count) }: _*))
+    Report(Map(sublists(flattened.toList, order).map(subset => (subset.toSet, count)): _*))
   }
+
+  /** Finds sublists of the specified list up to the specified order.
+   */
+  private def sublists[T](l: Seq[T], order: Int) = (1 to order).flatMap(l.combinations(_: Int)) 
 }

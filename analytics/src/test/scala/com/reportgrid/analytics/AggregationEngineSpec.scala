@@ -96,9 +96,41 @@ trait LocalMongo {
   """.format(dbName)
 }
 
+object Console {
+  import FutureUtils._
+  def apply(file: java.io.File): Console = {
+    apply((new Config()) ->- (_.loadFile(file.getPath)))
+  }
+
+  def apply(config: ConfigMap): Console = {
+    val mongoConfig = config.configMap("services.analytics.v0.mongo")
+    val mongo = new RealMongo(mongoConfig)
+    val database = mongo.database(mongoConfig("database"))
+    Console(
+      AggregationEngine.forConsole(config, Logger.get, database),
+      get(TokenManager(database, "tokens"))
+    )
+  }
+}
+
+case class Console(engine: AggregationEngine, tokenManager: TokenManager)
+
+object FutureUtils {
+  def get[A](f: Future[A]): A = {
+    val latch = new java.util.concurrent.CountDownLatch(1)
+
+    f.deliverTo(_ => latch.countDown())
+
+    latch.await()
+
+    f.value.get
+  }
+}
+
 class AggregationEngineSpec extends Specification with PendingUntilFixed 
 with ArbitraryEvent with FutureMatchers with LocalMongo {
   import AggregationEngine._
+  import FutureUtils._
 
   val config = (new Config()) ->- (_.load(mongoConfigFileData))
 
@@ -447,15 +479,5 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     //    }
     //  }
     //}
-  }
-
-  private def get[A](f: Future[A]): A = {
-    val latch = new java.util.concurrent.CountDownLatch(1)
-
-    f.deliverTo(_ => latch.countDown())
-
-    latch.await()
-
-    f.value.get
   }
 }

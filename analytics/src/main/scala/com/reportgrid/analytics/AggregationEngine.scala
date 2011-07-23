@@ -737,6 +737,10 @@ object AggregationEngine {
     createIndices(database).map(_ => new AggregationEngine(config, logger, database))
   }
 
+  def forConsole(config: ConfigMap, logger: Logger, database: Database) = {
+    new AggregationEngine(config, logger, database)
+  }
+
   def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[HasValue, T])]): scala.math.Ordering[List[JValue]] = {
     new scala.math.Ordering[List[JValue]] {
       override def compare(l1: List[JValue], l2: List[JValue]) = {
