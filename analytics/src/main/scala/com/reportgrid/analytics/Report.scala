@@ -48,7 +48,7 @@ object Report {
     }
   
     (
-      Report[HasValue, T](sublists(finite, order).map(subset => (subset.toSet, count))(collection.breakOut)),
+      power(finite, order, count),
       Report[HasValue, T](infinite.map(v => (Set(v), count))(collection.breakOut))
     )
   }
@@ -63,7 +63,7 @@ object Report {
       parent.map(parent => set + (Variable(parent) -> HasChild(jpath.nodes.last))).getOrElse(set)
     }
 
-    Report(Map(sublists(flattened.toList, order).map(subset => (subset.toSet, count)): _*))
+    power(flattened, order, count)
   }
 
   def ofInnerNodes[T: Semigroup](event: JValue, count: T, order: Int, depth: Int, limit: Int): Report[HasChild, T] = {
@@ -77,10 +77,10 @@ object Report {
       }
     }
 
-    Report(Map(sublists(flattened.toList, order).map(subset => (subset.toSet, count)): _*))
+    power(flattened, order, count)
   }
 
-  /** Finds sublists of the specified list up to the specified order.
-   */
-  private def sublists[T](l: Seq[T], order: Int) = (1 to order).flatMap(l.combinations(_: Int)) 
+  private def power[P <: Predicate, T: Semigroup](l: Iterable[(Variable, P)], order: Int, count: T) = {
+    Report[P, T]((1 to order).flatMap(l.toSeq.combinations).map(obs => (obs.toSet, count))(collection.breakOut))
+  }
 }
