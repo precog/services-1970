@@ -10,8 +10,6 @@ import blueeyes.json.xschema.DefaultSerialization._
 sealed trait PeriodSet {
   def mapBatchPeriods[T](batchPeriodicity: Periodicity, f: Period => T): Iterable[T] 
 
-  def deserializeTimeSeries[T : Extractor : AbelianGroup](jobj: JObject): TimeSeries[T]
-
   protected def mapBatchPeriods[T](min: Option[Instant], max: Option[Instant], granularity: Periodicity, batchPeriodicity: Periodicity, f: Period => T): Iterable[T] = {
     (min.map(batchPeriodicity.period), max.map(batchPeriodicity.period)) match {
       case (Some(start), Some(end)) => 
@@ -48,5 +46,12 @@ case class Interval(start: Option[Instant], end: Option[Instant], granularity: P
 object Interval {
   val Eternity = Interval(None, None, Periodicity.Eternity)
 }
+
+sealed trait TimeSpan
+object TimeSpan {
+  case class Finite(start: Instant, end: Instant) extends TimeSpan
+  case object Eternity extends TimeSpan
+}
+
 
 // vim: set ts=4 sw=4 et:

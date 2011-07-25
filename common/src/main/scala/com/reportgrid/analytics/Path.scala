@@ -1,7 +1,7 @@
 package com.reportgrid.analytics
 
-class Path private (private val path_ : String) {
-  val path = cleanPath(path_)
+class Path private (private val _path : String) {
+  val path = cleanPath(_path)
 
   lazy val elements = path.split("/")
 

@@ -6,10 +6,6 @@ import _root_.blueeyes.json.JPathField
 import _root_.blueeyes.json.Printer._
 
 package object analytics extends AggregatorImplicits {
-  type Observation[A <: Predicate] = Set[(Variable, A)]
-
-  type ObservationCounted[A <: Predicate, B] = (Observation[A], B)
-
   def cleanPath(string: String): String = "/" + string.split("/").map(_.trim).filter(_.length > 0).mkString("/")
 
   implicit def jpath2rich(jpath: JPath): RichJPath = new RichJPath(jpath)

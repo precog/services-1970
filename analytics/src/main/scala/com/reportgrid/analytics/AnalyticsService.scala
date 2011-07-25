@@ -158,7 +158,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             case jvalue   => jvalue.deserialize[Int]
                           }
 
-                          aggregationEngine.aggregate(token, path, timestamp, events, count)
+                          val tags = List(TimeHierarchy(timeSeriesEncoding, timestamp))
+
+                          aggregationEngine.aggregate(token, path, tags, events, count)
                         }
 
                         HttpResponse[JValue](content = None)
