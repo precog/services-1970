@@ -170,21 +170,21 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   def getHistogram(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = 
     getHistogramInternal(token, path, variable)
 
-  def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int): Future[List[(JValue, CountType)]] = 
-    getHistogramInternal(token, path, variable).map(_.toList.sortBy(- _._2).take(n))
+  def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int): Future[ResultSet[JValue, CountType]] = 
+    getHistogramInternal(token, path, variable).map(v => v.toList.sortBy(- _._2).take(n))
 
-  def getHistogramBottom(token: Token, path: Path, variable: Variable, n: Int): Future[List[(JValue, CountType)]] = 
-    getHistogramInternal(token, path, variable).map(_.toList.sortBy(_._2).take(n))
+  def getHistogramBottom(token: Token, path: Path, variable: Variable, n: Int): Future[ResultSet[JValue, CountType]] = 
+    getHistogramInternal(token, path, variable).map(v => v.toList.sortBy(_._2).take(n))
 
   /** Retrieves values of the specified variable.
    */
   def getValues(token: Token, path: Path, variable: Variable): Future[Iterable[JValue]] = 
     getHistogramInternal(token, path, variable).map(_.map(_._1))
 
-  def getValuesTop(token: Token, path: Path, variable: Variable, n: Int): Future[List[JValue]] = 
+  def getValuesTop(token: Token, path: Path, variable: Variable, n: Int): Future[Seq[JValue]] = 
     getHistogramTop(token, path, variable, n).map(_.map(_._1))
 
-  def getValuesBottom(token: Token, path: Path, variable: Variable, n: Int): Future[List[JValue]] = 
+  def getValuesBottom(token: Token, path: Path, variable: Variable, n: Int): Future[Seq[JValue]] = 
     getHistogramBottom(token, path, variable, n).map(_.map(_._1))
 
   /** Retrieves the length of array properties, or 0 if the property is not an array.
@@ -214,14 +214,16 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
   /** Retrieves a count of how many times the specified variable appeared in a path */
   def getVariableCount(token: Token, path: Path, variable: Variable): Future[CountType] = {
-    getVariableSeries(token, path, variable, IntervalTerm.Eternity(timeSeriesEncoding)).map(_.total.count)
+    getVariableSeries(token, path, variable, IntervalTerm.Eternity(timeSeriesEncoding)).map {
+      _.rmap(_.count).total
+    }
   }
 
   /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
-  def getVariableSeries(token: Token, path: Path, variable: Variable, intervalTerm: IntervalTerm): Future[TimeSeries[ValueStats]] = {
+  def getVariableSeries(token: Token, path: Path, variable: Variable, intervalTerm: IntervalTerm): Future[ResultSet[JObject, ValueStats]] = {
 
     internalSearchSeries[ValueStats](
-      token, path, Set(intervalTerm), 
+      token, path, List(intervalTerm), 
       variableSeriesKey(token, path, _, variable), 
       DataPath, variable_series.collection)
   }
@@ -236,10 +238,10 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   /** Retrieves a time series of counts of the specified observed state
    *  over the given time period.
    */
-  def searchSeries(token: Token, path: Path, valueTerms: Set[ValueTerm], interval: IntervalTerm): Future[TimeSeries[CountType]] = {
+  def searchSeries(token: Token, path: Path, valueTerms: Set[ValueTerm], intervalTerm: IntervalTerm): Future[ResultSet[JObject, CountType]] = {
 
     internalSearchSeries[CountType](
-      token, path, Set(interval), 
+      token, path, List(intervalTerm), 
       valueSeriesKey(token, path, _, JointObservation(valueTerms.map(_.hasValue))), 
       CountsPath, variable_value_series.collection)
   }
@@ -256,7 +258,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }
   }
 
-  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], intervalTerm: IntervalTerm): Future[IntersectionResult[TimeSeriesType]] = {
+  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], intervalTerm: IntervalTerm): 
+                      Future[IntersectionResult[ResultSet[JObject, CountType]]] = {
 
     intersectValueSeries(token, path, properties, intervalTerm)
   }
@@ -290,14 +293,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   private def internalSearchSeries[T: AbelianGroup : Extractor](
-      token: Token, path: Path, tagTerms: Set[TagTerm],
-      filter: Sig => MongoFilter, dataPath: JPath, collection: MongoCollection) = {//todo : Future[TimeSeries[T]] = {
+      token: Token, path: Path, tagTerms: Seq[TagTerm],
+      filter: Sig => MongoFilter, dataPath: JPath, collection: MongoCollection): Future[ResultSet[JObject, T]] = {
 
-    val toQuery = tagTerms.toSeq.map(_.storageKeys.toSeq).sequence.map {
+    val toQuery = tagTerms.map(_.storageKeys).sequence.map {
       v => Tuple2(
         v.map(_._1).toSet.sig,
         v.map(_._2).sequence.map { //oh shit
-          v => (v.map(_._1).toSet.sig, v.map(_._2))
+          v => (v.map(_._1).toSet.sig, JObject(v.map(_._2).toList))
         }
       )
     }
@@ -305,17 +308,19 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     Future (
       toQuery.map {
         case (docKey, dataKeys) => database(selectOne(dataPath).from(collection).where(filter(docKey))).map {
-          result => dataKeys.flatMap {
-            case (key, value) => result.map((_: JObject) \ dataPath \ key.hashSignature)
+          results => dataKeys.flatMap {
+            case (keySig, keyData) => results.map(jobj => keyData -> (jobj(dataPath) \ keySig.hashSignature).deserialize[T])
           }
         }
       }.toSeq: _*
-    ) 
+    ) map {
+      _.flatten
+    }
   }
 
   private def intersectValueSeries(
       token: Token, path: Path, variableDescriptors: List[VariableDescriptor], intervalTerm: IntervalTerm):
-      Future[IntersectionResult[TimeSeriesType]] = { 
+      Future[IntersectionResult[ResultSet[JObject, CountType]]] = { 
 
     val variables = variableDescriptors.map(_.variable)
 
@@ -356,7 +361,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
           }
         }.toSeq: _*
       } map {
-        _.foldLeft(SortedMap.empty[List[JValue], TimeSeriesType]) {
+        _.foldLeft(SortedMap.empty[List[JValue], ResultSet[JObject, CountType]]) {
           case (results, (k, v)) => 
             results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
         }
@@ -611,8 +616,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
 object AggregationEngine {
   type CountType             = Long
-  type TimeSeriesType        = TimeSeries[CountType]
+  type ResultSet[K <: JValue, V] = Seq[(K, V)]
   type IntersectionResult[T] = SortedMap[List[JValue], T]
+
+  implicit def rsRich[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]): RichResultSet[K, V] = new RichResultSet(resultSet)
+  class RichResultSet[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]) {
+    def total: V = resultSet.map(_._2).asMA.sum
+    def rmap[X](f: V => X): ResultSet[K, X] = resultSet.map(f.second)
+  }
 
   private val seriesId = "id"
   private val valuesId = "id"

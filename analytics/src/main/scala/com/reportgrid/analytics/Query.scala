@@ -1,9 +1,15 @@
 package com.reportgrid.analytics
 
 import blueeyes.util._
+import blueeyes.json.JsonAST._
+import blueeyes.json.xschema.JodaSerializationImplicits._
+import blueeyes.json.xschema.DefaultSerialization._
+
 import org.joda.time.Instant
 import scalaz.Scalaz._
+
 import SignatureGen._
+import AnalyticsServiceSerialization._
 
 sealed trait DataTerm
 case class ValueTerm(hasValue: HasValue) extends DataTerm
@@ -24,7 +30,7 @@ sealed trait TagTerm {
    * type queries, this map will return a point (i.e. a single key with a value 
    * that has a single member)
    */
-  def storageKeys: Seq[(Sig, Seq[(Sig, StorageKeysType#DataKey)])]
+  def storageKeys: Seq[(Sig, Seq[(Sig, JField)])]
 }
 
 case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodicity, span: TimeSpan) extends TagTerm {
@@ -53,8 +59,9 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   val tagName = "timestamp"
 
   // see AggregationEngine.dataKeySigs._1
-  def storageKeys: Seq[(Sig, Stream[(Sig, Instant)])] = {
-    for (docPeriod <- docStoragePeriods) yield (docPeriod.sig -> (dataKeyInstants(docPeriod).map(i => i.sig -> i)))
+  def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = {
+    for (docPeriod <- docStoragePeriods) 
+    yield (docPeriod.sig -> (dataKeyInstants(docPeriod).map(i => (i.sig, JField(tagName, i.serialize)))))
   }
 
   // see AggregationEngine.dataKeySigs._2
@@ -71,7 +78,8 @@ object IntervalTerm {
 
 case class HierarchyLocationTerm(tagName: String, location: Hierarchy.Location) extends TagTerm {
   type StorageKeysType = HierarchyKeys
-  def storageKeys: Seq[(Sig, List[(Sig, Path)])] = 
-    location.path.parent.map(_.sig -> List(location.path.sig -> location.path)).toSeq
+  def storageKeys: Seq[(Sig, List[(Sig, JField)])] = {
+    location.path.parent.map(_.sig -> List((location.path.sig, JField(tagName, location.path.path.serialize)))).toSeq
+  }
 }
 
