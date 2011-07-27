@@ -40,14 +40,6 @@ trait AggregatorImplicits {
     def append(t1: Double, t2: => Double): Double = t1 + t2
   }
 
-  implicit def ReportAggregator[T](implicit aggT: AbelianGroup[T]] = new AbelianGroup[Report[T]] {
-    val zero = Report.empty[T]
-
-    def inverse(v: Report[T]): Report[T] = Report(v.observationCounts.mapValues(aggT.inverse))
-
-    def append(v1: Report[T], v2: => Report[T]) = v1 + v2
-  }
-
   implicit def optionGroup[A](implicit ga: AbelianGroup[A]): AbelianGroup[Option[A]] = new AbelianGroup[Option[A]] {
     val zero: Option[A] = None
     def inverse(o: Option[A]) = o.map(ga.inverse)

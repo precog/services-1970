@@ -1,5 +1,7 @@
 package com.reportgrid.analytics
 
+import scalaz.Scalaz._
+
 case class ValueStats(count: Long, sum: Option[Double], sumsq: Option[Double]) {
   lazy val mean = sum.map(_ / count)
   lazy val variance = for (sum <- sum; sumsq <- sumsq) yield IncrementalStatistics.variance(count, sum, sumsq)

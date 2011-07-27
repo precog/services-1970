@@ -31,9 +31,9 @@ object TokenManager {
     val TestTokenJ: JObject      = Token.Test.serialize.asInstanceOf[JObject]
     val BenchmarkTokenJ: JObject = Token.Benchmark.serialize.asInstanceOf[JObject]
 
-    val rootTokenFuture  = database[JNothing.type](upsert(tokensCollection).set(RootTokenJ)).toUnit
-    val testTokenFuture  = database[JNothing.type](upsert(tokensCollection).set(TestTokenJ)).toUnit
-    val benchTokenFuture = database[JNothing.type](upsert(tokensCollection).set(BenchmarkTokenJ)).toUnit
+    val rootTokenFuture  = database(upsert(tokensCollection).set(RootTokenJ))
+    val testTokenFuture  = database(upsert(tokensCollection).set(TestTokenJ))
+    val benchTokenFuture = database(upsert(tokensCollection).set(BenchmarkTokenJ))
 
     (rootTokenFuture zip testTokenFuture zip benchTokenFuture) map {
       tokens => new TokenManager(database, tokensCollection)
@@ -99,7 +99,7 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
       }
 
       val tokenJ = newToken.serialize.asInstanceOf[JObject]
-      database[JNothing.type](insert(tokenJ).into(tokensCollection)) map (_ => newToken)
+      database(insert(tokenJ).into(tokensCollection)) map (_ => newToken)
     } else {
       Future.dead(new Exception("Token " + parent + " does not have permission to share"))
     }
@@ -108,22 +108,14 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
   /** Get details about a specified child token.
    */
   def getDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
-    listDescendants(parent).map { descendants =>
-      descendants.find(_.tokenId == descendantTokenId)
-    }
+    listDescendants(parent).map(_.find(_.tokenId == descendantTokenId))
   }
 
   /** Delete a specified child token.
    */
   def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
-    getDescendant(parent, descendantTokenId).deliverTo { descendant =>
-      descendant.foreach { descendantToken =>
-        database[JNothing.type] {
-          remove.from(tokensCollection).where {
-            "tokenId" === descendantTokenId
-          }
-        }
-      }
+    getDescendant(parent, descendantTokenId).deliverTo { 
+      _.foreach(_ => database(remove.from(tokensCollection).where("tokenId" === descendantTokenId)))
     }
   }
 }

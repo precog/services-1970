@@ -6,7 +6,9 @@ import blueeyes.json.Printer._
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
 
+import org.joda.time.Instant
 import scala.annotation.tailrec
+import scalaz.Semigroup
 import scalaz.Scalaz._
 
 case class Variable(name: JPath)
@@ -18,49 +20,62 @@ object Variable {
   }
 }
 
-sealed trait Observation {
-  def order: Int
-  def + (obs: Observartion*) = JointObservation.of(obs :+ this: _*)
-  def tags: Set[Tag] 
-  def predicates: Set[Predicate]
-}
+sealed abstract class Observation
+case class HasValue(variable: Variable, value: JValue) extends Observation
+case class HasChild(variable: Variable, child: JPathNode) extends Observation
 
-
-case class JointObservation private (obs: Set[Observation]) extends Observation {
-  lazy val order = obs.toSeq.map(_.order).sum
-  override def tags = obs.flatMap(_.tags)
-  override def predicates = obs.flatMap(_.predicates)
+case class JointObservation[+A <: Observation](obs: Set[A]) {
+  def order = obs.size
 }
 
 object JointObservation {
-  def of(obs: Observation*): JointObservation = {
-    def flat(obs: Observation, acc: Set[Observation]): Set[Observation] = obs match {
-      case JointObservation(complex) => complex.flatMap(flat(_, acc))
-      case simple => acc + simple
+  def apply[A <: Observation](a: A*): JointObservation[A] = JointObservation(a.toSet)
+}
+
+object JointObservations {
+  /** Creates a report of values.
+   */
+  def ofValues(event: JValue, order: Int, depth: Int, limit: Int): (Set[JointObservation[HasValue]], Set[HasValue]) = {
+    val (infinite, finite) = event.flattenWithPath.take(limit).map {
+      case (jpath, jvalue) => HasValue(Variable(jpath), jvalue)
+    } partition {
+      case HasValue(Variable(jpath), _) => jpath.endsInInfiniteValueSpace
+    }
+  
+    (combinationsTo(finite, order), infinite.toSet)
+  }
+
+  /** Creates a report of children. Although the "order" parameter is supported,
+   * it's recommended to always use a order = 1, because higher order counts do
+   * not contain much additional information.
+   */
+  def ofChildren(event: JValue, order: Int): Set[JointObservation[HasChild]] = {
+    val flattened = event.foldDownWithPath(List.empty[HasChild]) { (l, jpath, _) =>
+      jpath.parent.map(p => HasChild(Variable(p), jpath.nodes.last) :: l).getOrElse(l)
     }
 
-    JointObservation(obs.flatMap(flat(_, Set())))
+    combinationsTo(flattened, order)
+  }
+
+  def ofInnerNodes(event: JValue, order: Int): Set[JointObservation[HasChild]] = {
+    val flattened = event.foldDownWithPath(List.empty[HasChild]) { (l, jpath, jvalue) =>
+      jvalue match {
+        case JNothing | JNull | JBool(_) | JInt(_) | JDouble(_) | JString(_) => l
+          // exclude the path when the jvalue indicates a leaf node
+        case _ =>
+          jpath.parent.map(p => HasChild(Variable(p), jpath.nodes.last) :: l).getOrElse(l)
+      }
+    }
+
+    combinationsTo(flattened, order)
+  }
+
+  private def combinationsTo[A <: Observation](l: Seq[A], order: Int): Set[JointObservation[A]] = {
+    (for (i <- (1 to order); obs <- l.combinations(i)) yield JointObservation(obs.toSet))(collection.breakOut)
   }
 }
 
-sealed trait Predicate extends Observation
-case class HasValue(variable: Variable, value: JValue) extends Observation with Predicate {
-  override def tags = Set.empty[Tag]
-  override def predicates = Set(this)
-  val order = 1
-}
-
-case class HasChild(variable: Variable, value: JPathNode) extends Observation with Predicate {
-  override def tags = Set.empty[Tag]
-  override def predicates = Set(this)
-  val order = 1
-}
-
-case class Tag(name: String, value: TagValue) extends Observation {
-  override def tags = Set(this)
-  override def predicates = Set.empty[Predicate]
-  val order = 1
-}
+case class Tag(name: String, value: TagValue) 
 
 object Tag {
   import Hierarchy._
@@ -74,8 +89,8 @@ object Tag {
       case Tag(name, Hierarchy(values)) => JObject(
         JField("#" + name, JArray(
           values map {
-            case AnonLocation(value) => JString(value.mkString("/"))
-            case NamedLocation(name, value) => JObject(JField(name, JString(value.mkString("/"))) :: Nil) 
+            case AnonLocation(p) => JString(p.path)
+            case NamedLocation(name, p) => JObject(JField(name, JString(p.path)) :: Nil) 
           }
         )) :: Nil
       )
@@ -102,11 +117,11 @@ object Tag {
           Tag(
             tagName,
             if (rights.isEmpty) {
-              Hierarchy.of(lefts.map(t => NamedLocation(t._1, t._2.split("/").toList))).getOrElse {
+              Hierarchy.of(lefts.map(t => NamedLocation(t._1, Path(t._2)))).getOrElse {
                 sys.error("Tag value levels do not respect the refinement rule.")
               }
             } else {
-              Hierarchy.of(rights.map(v => AnonLocation(v.split("/").toList))).getOrElse(NameSet(rights.toSet))
+              Hierarchy.of(rights.map(v => AnonLocation(Path(v)))).getOrElse(NameSet(rights.toSet))
             }
           )
 
@@ -117,41 +132,35 @@ object Tag {
 }
 
 sealed trait TagValue {
-  type DocKey
-  type DataKey
-  case class StorageKey(docKey: DocKey, dataKey: DataKey)
-
-  def storageKeys: List[StorageKey]
+  type StorageKeysType <: StorageKeys
+  def storageKeys: List[StorageKeysType]
 }
 
 case class NameSet(values: Set[String]) extends TagValue {
-  type DocKey = String
-  type DataKey = String
-  def storageKeys = for (name <- values) yield StorageKey(name, name)
+  type StorageKeysType = NameSetKeys
+  override def storageKeys = for (name <- values.toList) yield NameSetKeys(name, name)
 }
 
 case class TimeReference(encoding: TimeSeriesEncoding, time: Instant) extends TagValue {
-  type DocKey = (Periodicity, Period)
-  type DataKey = Instant
-  def storageKeys = for ((k, v) <- encoding.grouped(time)) yield StorageKey(k, v)
+  type StorageKeysType = TimeRefKeys
+  override def storageKeys = for ((k, v) <- encoding.grouped(time)) yield TimeRefKeys(k, v)
 }
 
 case class Hierarchy private (locations: List[Hierarchy.Location]) extends TagValue {
-  type DocKey = Path
-  type DataKey = Path
-  def storageKeys = for (p <- locations) yield StorageKey(p.parent, p)
+  type StorageKeysType = HierarchyKeys
+  override def storageKeys = for (l <- locations; parent <- l.path.parent) yield HierarchyKeys(parent, l.path)
 }
 
 object Hierarchy {
-  sealed class Location(
-    def value: Path
+  sealed trait Location {
+    def path: Path
   }
 
-  case class AnonLocation(value: Path) extends Location
-  case class NamedLocation(name: String, value: Path) extends Location
+  case class AnonLocation(path: Path) extends Location
+  case class NamedLocation(name: String, path: Path) extends Location
 
   def of[T <: Location](locations: List[T]) = {
-    (respectsRefinementRule(locations.map(_.value))).option(Hierarchy(locations.sortBy(_.value.length)))
+    (respectsRefinementRule(locations.map(_.path))).option(Hierarchy(locations.sortBy(_.path.length)))
   }
 
   def respectsRefinementRule(values: List[Path]): Boolean = {
@@ -169,4 +178,25 @@ object Hierarchy {
   }
 }
 
+sealed trait StorageKeys {
+  type DocKey
+  type DataKey
+  def docKey: DocKey
+  def dataKey: DataKey
+}
+
+case class NameSetKeys(docKey: String, dataKey: String) extends StorageKeys {
+  type DocKey = String
+  type DataKey = String
+}
+
+case class TimeRefKeys(docKey: (Periodicity, Period), dataKey: Instant) extends StorageKeys {
+  type DocKey = (Periodicity, Period)
+  type DataKey = Instant
+}
+
+case class HierarchyKeys(docKey: Path, dataKey: Path) extends StorageKeys {
+  type DocKey = Path
+  type DataKey = Path
+}
 // vim: set ts=4 sw=4 et:
