@@ -338,6 +338,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       f: Period => MongoFilter, dataPath: JPath, collection: MongoCollection): Future[TimeSeries[T]] = {
 
     val interval = Interval(start, end, granularity)
+    
     Future {
       interval.mapBatchPeriods(timeSeriesEncoding.grouping(granularity), f)
       .map(filter => database(selectOne(dataPath).from(collection).where(filter)))
@@ -345,7 +346,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     } map {
       _.flatten
        .foldLeft(TimeSeries.empty[T](granularity)) {
-         (series, result) => (result(dataPath) -->? classOf[JObject]) map { jobj => 
+         (series, result) => 
+         (result(dataPath) -->? classOf[JObject]) map { jobj => 
            series + interval.deserializeTimeSeries[T](jobj)
          } getOrElse {
            series

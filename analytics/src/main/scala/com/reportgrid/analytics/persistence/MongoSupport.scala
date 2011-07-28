@@ -54,10 +54,10 @@ object MongoSupport extends AnalyticsSerialization {
     def extract(value: JValue): TimeSeries[T] = {
       val periodicity = (value \ "periodicity").deserialize[Periodicity]
       value \ "data" match {
-        case JObject(fields) =>
+        case JArray(fields) =>
           fields.foldLeft(TimeSeries.empty[T](periodicity)) { 
-            case (series, JField(timeString, value)) =>
-              series + (new Instant(timeString.toLong) -> value.deserialize[T])
+            case (series, JArray(List(time, value))) =>
+              series + (new Instant(time.deserialize[Instant]) -> value.deserialize[T])
           }
 
         case _ => sys.error("Expected object but found: " + value)
