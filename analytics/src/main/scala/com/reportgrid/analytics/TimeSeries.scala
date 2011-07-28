@@ -80,6 +80,7 @@ case class TimeSeries[T] private (periodicity: Periodicity, series: SortedMap[In
   def fillGaps(start: Option[Instant], end: Option[Instant]): TimeSeries[T] = {
     import blueeyes.util._
     val instants = if (periodicity == Eternity) Stream(Instants.Zero)
+                   else if (start.isEmpty || end.isEmpty || series.isEmpty) Stream.empty[Instant]
                    else periodicity.period(start.getOrElse(series.keys.min)) datesTo end.getOrElse(series.keys.max)
 
     TimeSeries(

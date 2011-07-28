@@ -36,11 +36,13 @@ case class Interval(start: Option[Instant], end: Option[Instant], granularity: P
   def deserializeTimeSeries[T : Extractor : AbelianGroup](obj: JObject): TimeSeries[T] = {
     val startFloor = start.map(granularity.floor)
     obj.fields.foldLeft(TimeSeries.empty[T](granularity)) {
-      case (series, JField(time, count)) => 
+      case (series, f @ JField(time, count)) => 
         val ltime = time.toLong 
-        if (startFloor.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) 
-           series + ((new Instant(ltime), count.deserialize[T]))
-        else series
+        if (startFloor.forall(_.getMillis <= ltime) && end.forall(_.getMillis > ltime)) {
+          series + ((new Instant(ltime), count.deserialize[T]))
+        } else {
+          series
+        }
     } 
   }
 }
