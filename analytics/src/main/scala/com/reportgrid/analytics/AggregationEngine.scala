@@ -148,7 +148,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         val childObservations = JointObservations.ofChildren(event, 1)
         variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches
 
-        val childSeriesReport = Report(tags, JointObservations.ofInnerNodes(event, 1) ++ finiteOrder1 ++ infiniteObs.map(JointObservation(_)))
+        val childSeriesReport = Report(tags, (JointObservations.ofInnerNodes(event, 1) ++ finiteOrder1 ++ infiniteObs.map(JointObservation(_))).map(_.of[Observation]))
         variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches
     }
   }
@@ -215,7 +215,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   /** Retrieves a count of how many times the specified variable appeared in a path */
   def getVariableCount(token: Token, path: Path, variable: Variable): Future[CountType] = {
     getVariableSeries(token, path, variable, IntervalTerm.Eternity(timeSeriesEncoding)).map {
-      _.rmap(_.count).total
+      _.mapValues(_.count).total
     }
   }
 
@@ -229,8 +229,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   /** Retrieves a count of the specified observed state over the given time period */
-  def searchCount(token: Token, path: Path, valueTerms: Set[ValueTerm], spanTerm: TimeSpanTerm): Future[CountType] = {
-    searchPeriod(spanTerm.span, searchSeries(token, path, valueTerms, _)) map {
+  def searchCount(token: Token, path: Path, valueTerms: Set[ValueTerm], timeSpan: TimeSpan): Future[CountType] = {
+    searchPeriod(timeSpan, searchSeries(token, path, valueTerms, _)) map {
       _.map(_.total).asMA.sum
     }
   }
@@ -246,9 +246,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       CountsPath, variable_value_series.collection)
   }
 
-  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], spanTerm: TimeSpanTerm): Future[IntersectionResult[CountType]] = {
+  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], timeSpan: TimeSpan): Future[IntersectionResult[CountType]] = {
 
-    searchPeriod(spanTerm.span, intersectSeries(token, path, properties, _)) map {
+    searchPeriod(timeSpan, intersectSeries(token, path, properties, _)) map {
       _.foldLeft(SortedMap.empty[List[JValue], CountType](ListJValueOrdering)) {
         case (total, partialResult) => partialResult.foldLeft(total) {
           case (total, (key, timeSeries)) => 
@@ -622,7 +622,7 @@ object AggregationEngine {
   implicit def rsRich[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]): RichResultSet[K, V] = new RichResultSet(resultSet)
   class RichResultSet[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]) {
     def total: V = resultSet.map(_._2).asMA.sum
-    def rmap[X](f: V => X): ResultSet[K, X] = resultSet.map(f.second)
+    def mapValues[X](f: V => X): ResultSet[K, X] = resultSet.map(f.second)
   }
 
   private val seriesId = "id"

@@ -15,9 +15,6 @@ sealed trait DataTerm
 case class ValueTerm(hasValue: HasValue) extends DataTerm
 case class ChildTerm(hasChild: HasChild) extends DataTerm
 
-sealed trait RangeTerm
-case class TimeSpanTerm(span: TimeSpan) extends RangeTerm
-
 sealed trait TagTerm {
   type StorageKeysType <: StorageKeys
 

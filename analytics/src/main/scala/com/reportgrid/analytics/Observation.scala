@@ -24,8 +24,10 @@ sealed abstract class Observation
 case class HasValue(variable: Variable, value: JValue) extends Observation
 case class HasChild(variable: Variable, child: JPathNode) extends Observation
 
-case class JointObservation[+A <: Observation](obs: Set[A]) {
+case class JointObservation[A <: Observation](obs: Set[A]) {
   def order = obs.size
+
+  def of[B >: A <: Observation] = JointObservation[B](obs.toSet[B])
 }
 
 object JointObservation {
