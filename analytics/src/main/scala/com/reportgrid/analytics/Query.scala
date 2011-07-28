@@ -11,10 +11,6 @@ import scalaz.Scalaz._
 import SignatureGen._
 import AnalyticsServiceSerialization._
 
-sealed trait DataTerm
-case class ValueTerm(hasValue: HasValue) extends DataTerm
-case class ChildTerm(hasChild: HasChild) extends DataTerm
-
 sealed trait TagTerm {
   type StorageKeysType <: StorageKeys
 

@@ -6,7 +6,6 @@ import org.specs._
 import org.scalacheck._
 import Prop._
 import SignatureGen._
-import Hashable._
 
 class SignatureSpec extends Specification with ScalaCheck with ArbitraryJValue{
   implicit val hashFunction = Sha1HashFunction 
@@ -15,7 +14,7 @@ class SignatureSpec extends Specification with ScalaCheck with ArbitraryJValue{
     "for a jvalue" >> {
       "be invariant for order of fields in contained jobjects" in {
         val prop = forAll((obj: JObject) => {
-          hashSignature(JObject(scala.util.Random.shuffle(obj.fields))) must_== hashSignature(obj)
+          JObject(scala.util.Random.shuffle(obj.fields)).sig.hashSignature must_== obj.sig.hashSignature
         })
         
         prop must pass
@@ -23,7 +22,7 @@ class SignatureSpec extends Specification with ScalaCheck with ArbitraryJValue{
 
       "mismatch on mismatched objects" in {
         val prop = forAll((v1: JValue, v2: JValue) => (v1 != v2) ==> {
-          hashSignature(v1) != hashSignature(v2)
+          v1.sig.hashSignature != v2.sig.hashSignature
         })
 
         prop must pass

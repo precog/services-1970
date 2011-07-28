@@ -229,8 +229,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   /** Retrieves a count of the specified observed state over the given time period */
-  def searchCount(token: Token, path: Path, valueTerms: Set[ValueTerm], timeSpan: TimeSpan): Future[CountType] = {
-    searchPeriod(timeSpan, searchSeries(token, path, valueTerms, _)) map {
+  def searchCount(token: Token, path: Path, observation: JointObservation[HasValue], timeSpan: TimeSpan): Future[CountType] = {
+    searchPeriod(timeSpan, searchSeries(token, path, observation, _)) map {
       _.map(_.total).asMA.sum
     }
   }
@@ -238,12 +238,13 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   /** Retrieves a time series of counts of the specified observed state
    *  over the given time period.
    */
-  def searchSeries(token: Token, path: Path, valueTerms: Set[ValueTerm], intervalTerm: IntervalTerm): Future[ResultSet[JObject, CountType]] = {
+  def searchSeries(token: Token, path: Path, observation: JointObservation[HasValue], intervalTerm: IntervalTerm): Future[ResultSet[JObject, CountType]] = {
 
     internalSearchSeries[CountType](
       token, path, List(intervalTerm), 
-      valueSeriesKey(token, path, _, JointObservation(valueTerms.map(_.hasValue))), 
-      CountsPath, variable_value_series.collection)
+      valueSeriesKey(token, path, _, observation), 
+      CountsPath, variable_value_series.collection
+    )
   }
 
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], timeSpan: TimeSpan): Future[IntersectionResult[CountType]] = {
@@ -264,10 +265,10 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     intersectValueSeries(token, path, properties, intervalTerm)
   }
 
-  def findRelatedInfiniteValues(token: Token, path: Path, valueTerms: Set[ValueTerm], span: TimeSpan.Finite): Future[List[HasValue]] = {
+  def findRelatedInfiniteValues(token: Token, path: Path, observation: JointObservation[HasValue], span: TimeSpan.Finite): Future[List[HasValue]] = {
     def find(intervalTerm: IntervalTerm) = Future {
       intervalTerm.infiniteValueKeys.map { timeKey =>
-        val refKey = valueSeriesKey(token, path, timeKey, JointObservation(valueTerms.map(_.hasValue))).rhs
+        val refKey = valueSeriesKey(token, path, timeKey, observation).rhs
         database(
           select(".variable", ".value")
           .from(variable_values_infinite.collection)
@@ -356,7 +357,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       Future {
         observations(variables).map { joint => 
           val obsMap: Map[Variable, JValue] = joint.obs.map(hv => hv.variable -> hv.value)(collection.breakOut)
-          searchSeries(token, path, joint.obs.map(ValueTerm(_)), intervalTerm).map { result => 
+          searchSeries(token, path, joint, intervalTerm).map { result => 
             (variables.flatMap(obsMap.get).toList -> result)
           }
         }.toSeq: _*

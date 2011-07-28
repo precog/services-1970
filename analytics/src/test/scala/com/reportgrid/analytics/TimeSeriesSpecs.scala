@@ -135,8 +135,8 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
 
         val expectedDuration = new Duration(start, end)
 
-        val actualDuration = encoding.queriableExpansion(start, end).foldLeft(new Duration(0, 0)) {
-          case (totalSize, (_, start, end)) => totalSize.plus(new Duration(start, end))
+        val actualDuration = encoding.queriableExpansion(TimeSpan(start, end)).foldLeft(new Duration(0, 0)) {
+          case (totalSize, (_, TimeSpan.Finite(start, end))) => totalSize.plus(new Duration(start, end))
         }
 
         actualDuration.getMillis mustEqual (expectedDuration.getMillis)

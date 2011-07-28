@@ -152,12 +152,14 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
   }
 
+  def timeTag(instant: Instant) = Set(Tag("timestamp", TimeReference(AggregationEngine.timeSeriesEncoding, instant)))
+
   "Aggregation engine" should {
     shareVariables()
 
     // using the benchmark token for testing because it has order 3
     val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get ->- {
-      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.timestamp, event.data, 1))
+      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", timeTag(event.timestamp), event.data, 1))
     }
 
     "retrieve path children" in {
@@ -204,7 +206,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case ((eventName, path), values) =>
           val jpath = JPath(eventName) \ path
           if (!jpath.endsInInfiniteValueSpace) {
-            engine.getValues(Token.Benchmark, "/test", Variable(jpath)).map(_.map(_.value)) must whenDelivered {
+            engine.getValues(Token.Benchmark, "/test", Variable(jpath)) must whenDelivered {
               haveSameElementsAs(values)
             }
           }
@@ -221,13 +223,11 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       arrayValues.foreach {
         case ((eventName, path), values) =>
-          engine.getValues(Token.Benchmark, "/test", Variable(JPath(eventName) \ path)).map(_.map(_.value)) must whenDelivered {
+          engine.getValues(Token.Benchmark, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
             haveSameElementsAs(values)
           }
       }
     }
-
-    def histogramResult(t: (HasValue, Long)) = (t._1.value, t._2)
 
     "retrieve the top results of a histogram" in {
       val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
@@ -238,8 +238,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-
-      engine.getHistogramTop(Token.Benchmark, "/test", Variable(".tweeted.retweet"), 10).map(_.map(histogramResult)) must whenDelivered {
+      engine.getHistogramTop(Token.Benchmark, "/test", Variable(".tweeted.retweet"), 10) must whenDelivered {
         haveTheSameElementsAs(retweetCounts)
       }
     }
@@ -251,7 +250,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (subset @ (eventName, path, value), count) =>
           val variable = Variable(JPath(eventName) \ path) 
           if (!variable.name.endsInInfiniteValueSpace) {
-            engine.searchCount(Token.Benchmark, "/test", Obs.ofValue(variable, value)) must whenDelivered {
+            engine.searchCount(Token.Benchmark, "/test", JointObservation(HasValue(variable, value)), TimeSpan.Eternity) must whenDelivered {
               beEqualTo(count.toLong)
             }
           }
@@ -261,6 +260,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     "retrieve a time series for occurrences of a variable" in {
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
 
       val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
         case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
@@ -273,9 +273,8 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       expectedTotals.foreach {
         case (subset @ (eventName, path), count) =>
-          engine.getVariableSeries(
-            Token.Benchmark, "/test", Variable(JPath(eventName) \ path), granularity, Some(minDate), Some(maxDate)
-          ) map (_.map(_.count).total) must whenDelivered {
+          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), intervalTerm).
+          map(_.total) must whenDelivered {
             beEqualTo(count.toLong)
           }
       }
@@ -284,13 +283,12 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     "retrieve a time series of statistics over values of a variable" in {
       val granularity = Hour
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
 
       expectedMeans(events, granularity, "recipientCount").foreach {
         case (eventName, means) =>
-          engine.getVariableSeries(
-            Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), granularity, Some(minDate), Some(maxDate)
-          ) must whenDelivered {
-            verify(_.series.mapValues(_.mean).filter(!_._2.isEmpty).mapValues(_.get) == means)
+          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), intervalTerm) must whenDelivered {
+            verify(_.flatMap(_._2.mean) == means)
           }
       }
     }
@@ -299,19 +297,19 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events)
+      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
 
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
           val variable = Variable(JPath(eventName) \ path)
           if (!variable.name.endsInInfiniteValueSpace) {
-            val observation = Obs.ofValue(variable, value)
-            val results = engine.searchSeries(
-              Token.Benchmark, "/test", observation, granularity, Some(minDate), Some(maxDate)
-            ) must whenDelivered {
+            val observation = JointObservation(HasValue(variable, value))
+
+            engine.searchSeries(Token.Benchmark, "/test", observation, intervalTerm) must whenDelivered {
               verify {
                 results => 
                   (results.total must_== count.toLong) && 
-                  (results.series must haveSize((granularity.period(minDate) to maxDate).size))
+                  (results must haveSize((granularity.period(minDate) to maxDate).size))
               }
             }
           }
@@ -331,9 +329,9 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       expectedCounts.map {
         case (values, count) =>
-          val observation = variables.zip(values.map(v => HasValue(v))).toSet
+          val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
-          engine.searchCount(Token.Benchmark, "/test", observation) must whenDelivered (beEqualTo(count))
+          engine.searchCount(Token.Benchmark, "/test", observation, TimeSpan.Eternity) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -355,9 +353,9 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       expectedCounts.map {
         case (values, count) =>
-          val observation = variables.zip(values.map(v => HasValue(v))).toSet
+          val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
-          engine.searchCount(Token.Benchmark, "/test", observation, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(count))
+          engine.searchCount(Token.Benchmark, "/test", observation, TimeSpan(minDate, maxDate)) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -374,7 +372,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      engine.intersectCount(Token.Benchmark, "/test", descriptors) must whenDelivered (beEqualTo(expectedCounts)) 
+      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan.Eternity) must whenDelivered (beEqualTo(expectedCounts)) 
     }
 
     "retrieve intersection counts for a slice of time" in {      
@@ -394,12 +392,13 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      engine.intersectCount(Token.Benchmark, "/test", descriptors, Some(minDate), Some(maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
+      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan(minDate, maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
     }
 
     "retrieve intersection series for a slice of time" in {      
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
       val expectedTotals = valueCounts(events)
 
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Variable(".tweeted.twitterClient") :: Nil
@@ -413,14 +412,13 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case (map, _) => map
       }
 
-      (engine.intersectSeries(Token.Benchmark, "/test", descriptors, granularity, Some(minDate), Some(maxDate))) must whenDelivered {
+      engine.intersectSeries(Token.Benchmark, "/test", descriptors, intervalTerm) must whenDelivered {
         verify { results => 
           // all returned results must have the same length of time series
-          val sizes = results.values.map(_.series.size).toList
+          val sizes = results.values.map(_.size).toList
 
-          (results.values.flatMap(_.series) must notBeEmpty) &&
+          (results.values must notBeEmpty) &&
           sizes.zip(sizes.tail).forall { case (a, b) => a must_== b } &&
-          (results.values.map(_.periodicity).toSet must haveSize(1)) &&
           (results.mapValues(_.total).filter(_._2 != 0) must haveTheSameElementsAs(expectedCounts))
         }
       }
@@ -445,10 +443,10 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
         case ((eventName, jpath, jvalue), (infiniteValues, periods)) => 
           engine.findRelatedInfiniteValues(
             Token.Benchmark, "/test", 
-            Obs.ofValue(Variable(JPath(eventName) \ jpath), jvalue),
-            minDate, maxDate
+            JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
+            TimeSpan(minDate, maxDate)
           ) map {
-            _.map(_._2.value).toSet
+            _.map(_.value).toSet
           } must whenDelivered {
             beEqualTo(infiniteValues)
           }

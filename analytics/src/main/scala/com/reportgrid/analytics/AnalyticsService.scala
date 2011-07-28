@@ -349,8 +349,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             get { request: HttpRequest[JValue] =>
                               tokenOf(request).flatMap { token =>
                                 val path     = fullPathOf(token, request)
-                                val observation = HasValue(variableOf(request), valueOf(request))
-                                aggregationEngine.searchCount(token, path, Set(ValueTerm(observation)), TimeSpan.Eternity).map(_.serialize.ok)
+                                val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
+                                aggregationEngine.searchCount(token, path, observation, TimeSpan.Eternity).map(_.serialize.ok)
                               }
                             }
                           }
@@ -371,14 +371,14 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                 tokenOf(request).flatMap { token =>
                                   val path        = fullPathOf(token, request)
                                   val periodicity = periodicityOf(request)
-                                  val observation = HasValue(variableOf(request), valueOf(request))
+                                  val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
 
                                   unit.toLowerCase match {
                                     case "time" =>
                                       val (start, end) = ranges.head.mapElements(new Instant(_), new Instant(_))
                                       val intervalTerm = IntervalTerm(timeSeriesEncoding, periodicity, TimeSpan(start, end))
 
-                                      aggregationEngine.searchSeries(token, path, Set(ValueTerm(observation)), intervalTerm).map(_.serialize.ok)
+                                      aggregationEngine.searchSeries(token, path, observation, intervalTerm).map(_.serialize.ok)
                                       //todo: make this work again
                                       // .map(groupTimeSeries(seriesGrouping(request)))
                                       // .map(_.fold(_.serialize, _.serialize).ok)
@@ -390,10 +390,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                               get { request: HttpRequest[JValue] =>
                                 tokenOf(request).flatMap { token =>
                                   val path        = fullPathOf(token, request)
-                                  val observation = HasValue(variableOf(request), valueOf(request))
+                                  val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
                                   val periodicity = periodicityOf(request)
 
-                                  aggregationEngine.searchSeries(token, path, Set(ValueTerm(observation)), IntervalTerm.Eternity(timeSeriesEncoding) )
+                                  aggregationEngine.searchSeries(token, path, observation, IntervalTerm.Eternity(timeSeriesEncoding) )
                                   .map(_.serialize.ok)
                                 }
                               }
@@ -425,7 +425,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                       val from: Path = token.path + "/" + (content \ "from").deserialize[String]
 
-                      val observation = content.deserialize[Set[HasValue]].map(ValueTerm(_))
+                      val observation = JointObservation(content.deserialize[Set[HasValue]])
 
                       val start = (content \ "start") match {
                         case JNothing | JNull => None
