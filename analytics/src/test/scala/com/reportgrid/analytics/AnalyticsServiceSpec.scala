@@ -22,16 +22,14 @@ import java.util.Date
 import net.lag.configgy.{Configgy, ConfigMap}
 
 import org.specs._
-import org.specs.specification.PendingUntilFixed
-import org.scalacheck._
+import org.scalacheck.Gen._
 
 import rosetta.json.blueeyes._
 
-import Gen._
 import Periodicity._
 import persistence.MongoSupport._
 
-class AnalyticsServiceSpec extends BlueEyesServiceSpecification with PendingUntilFixed with ScalaCheck 
+class AnalyticsServiceSpec extends BlueEyesServiceSpecification 
 with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
   override val configuration = "services{analytics{v0{" + mongoConfigFileData + "}}}"
 
@@ -75,8 +73,22 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
 
       (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")) must whenDelivered {
         verify {
-          case HttpResponse(status, _, Some(result), _) => 
-            result.deserialize[TimeSeries[Option[Double]]].series.filter(!_._2.isEmpty).mapValues(_.get) must_== expected("tweeted")
+          case HttpResponse(status, _, Some(contents), _) => 
+            contents.deserialize[TimeSeries[Option[Double]]].series.filter(!_._2.isEmpty).mapValues(_.get) must_== expected("tweeted")
+        }
+      } 
+    }
+
+    "return variable value series counts" in {
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
+      //val expected = expectedCounts(events, Hour, "gender")
+      //expected must notBeEmpty
+
+      (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.gender/values/\"male\"/series/hour")) must whenDelivered {
+        verify {
+          case HttpResponse(status, _, Some(contents), _) => 
+            val series = contents.deserialize[TimeSeries[Long]].series 
+            (series must notBeEmpty) //&& (series must_== expected)
         }
       } 
     }

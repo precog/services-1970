@@ -278,6 +278,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
             ) must whenDelivered {
               verify {
                 results => 
+                  (results.series must notBeEmpty) && 
                   (results.total must_== count.toLong) && 
                   (results.series must haveSize((granularity.period(minDate) to maxDate).size))
               }

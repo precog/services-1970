@@ -37,6 +37,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     retweet        <- oneOf(true, false)
     recipientCount <- choose(0, 3)
     startup        <- oneOf(Startups)
+    gender         <- genGender
     otherStartups  <- genOtherStartups
     twitterClient  <- oneOf(TwitterClients)
     tweet          <- identifier
@@ -45,6 +46,7 @@ trait ArbitraryEvent extends ArbitraryTime {
       JField(eventName, JObject(
         JField("location",       location.serialize) ::
         JField("retweet",        retweet.serialize) ::
+        JField("gender",         gender) ::
         JField("recipientCount", recipientCount.serialize) ::
         JField("startup",        startup.serialize) ::
         JField("otherStartups",  otherStartups.serialize) ::

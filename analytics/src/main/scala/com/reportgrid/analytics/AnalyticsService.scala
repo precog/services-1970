@@ -374,10 +374,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                   unit.toLowerCase match {
                                     case "time" =>
                                       val (start, end) = ranges.head
-
-                                      aggregationEngine.searchSeries(token, path, observation, periodicity, Some(new Instant(start)), Some(new Instant(end)))
-                                      .map(groupTimeSeries(seriesGrouping(request)))
-                                      .map(_.fold(_.serialize, _.serialize).ok)
+                                      aggregationEngine.searchSeries(token, path, observation, periodicity, Some(new Instant(start)), Some(new Instant(end))).map(_.serialize.ok)
+                                      //.map(groupTimeSeries(seriesGrouping(request)))
+                                      //.map(_.fold(_.serialize, _.serialize).ok)
 
                                     case _ => throw HttpException(HttpStatusCodes.BadRequest, "GET with Range only accepts unit of 'time'")
                                   }
