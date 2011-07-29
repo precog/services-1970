@@ -45,7 +45,7 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", Token.Test.tokenId)
 
-  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(10, 1000L.milliseconds)
+  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(20, 1000L.milliseconds)
 
   "Analytics Service" should {
     shareVariables()
@@ -74,7 +74,7 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")) must whenDelivered {
         verify {
           case HttpResponse(status, _, Some(contents), _) => 
-            contents.deserialize[TimeSeries[Option[Double]]].series.filter(!_._2.isEmpty).mapValues(_.get) must_== expected("tweeted")
+            contents.deserialize[TimeSeries[Option[Double]]].series.flatMap{ case (k, v) => v.filter(_ != 0).map(c => (k, c)) } must haveTheSameElementsAs(expected("tweeted"))
         }
       } 
     }
