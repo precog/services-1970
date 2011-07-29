@@ -223,7 +223,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   def getVariableSeries(token: Token, path: Path, variable: Variable, intervalTerm: IntervalTerm): Future[ResultSet[JObject, ValueStats]] = {
 
     internalSearchSeries[ValueStats](
-      token, path, List(intervalTerm), 
+      List(intervalTerm), 
       variableSeriesKey(token, path, _, variable), 
       DataPath, variable_series.collection)
   }
@@ -241,10 +241,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   def searchSeries(token: Token, path: Path, observation: JointObservation[HasValue], intervalTerm: IntervalTerm): Future[ResultSet[JObject, CountType]] = {
 
     internalSearchSeries[CountType](
-      token, path, List(intervalTerm), 
+      List(intervalTerm), 
       valueSeriesKey(token, path, _, observation), 
-      CountsPath, variable_value_series.collection
-    )
+      CountsPath, variable_value_series.collection)
   }
 
   def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], timeSpan: TimeSpan): Future[IntersectionResult[CountType]] = {
@@ -293,16 +292,12 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     Future(futureResults: _*)
   }
 
-  private def internalSearchSeries[T: AbelianGroup : Extractor](
-      token: Token, path: Path, tagTerms: Seq[TagTerm],
-      filter: Sig => MongoFilter, dataPath: JPath, collection: MongoCollection): Future[ResultSet[JObject, T]] = {
+  private def internalSearchSeries[T: AbelianGroup : Extractor](tagTerms: Seq[TagTerm], filter: Sig => MongoFilter, dataPath: JPath, collection: MongoCollection): Future[ResultSet[JObject, T]] = {
 
     val toQuery = tagTerms.map(_.storageKeys).sequence.map {
       v => Tuple2(
         v.map(_._1).toSet.sig,
-        v.map(_._2).sequence.map { //oh shit
-          v => (v.map(_._1).toSet.sig, JObject(v.map(_._2).toList))
-        }
+        v.map(_._2).sequence.map(v => (v.map(_._1).toSet.sig, JObject(v.map(_._2).toList)))
       )
     }
 
@@ -587,7 +582,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         }
       )
       
-      updates.flatten.foldLeft[MongoUpdate](MongoUpdateNothing)(_ |+| _)
+      updates.flatten.foldLeft(MongoUpdate.Empty)(_ |+| _)
     }
 
     report.storageKeysets.foldLeft(MongoPatches.empty) {
@@ -596,6 +591,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         
         joint.obs.foldLeft(patches) { 
           case (patches, HasChild(Variable(vpath), child)) => 
+            println(token, path, storageKeys, Variable(vpath \ child))
             val key = variableSeriesKey(token, path, docKeySig(storageKeys), Variable(vpath \ child))
             patches + (key -> countUpdate(dataKeySig))
 

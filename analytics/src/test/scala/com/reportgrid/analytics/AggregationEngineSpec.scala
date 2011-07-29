@@ -188,270 +188,270 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
     }
  
-    "retrieve values" in {
-      val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-          obj.flattenWithPath.foldLeft(map) {
-            case (map, (path, value)) => 
-              val key = (eventName, path)
-              val oldValues = map.getOrElse(key, Set.empty)
-
-              map + (key -> (oldValues + value))
-          }
-
-        case (map, _) => map
-      }
-
-      values.foreach {
-        case ((eventName, path), values) =>
-          val jpath = JPath(eventName) \ path
-          if (!jpath.endsInInfiniteValueSpace) {
-            engine.getValues(Token.Benchmark, "/test", Variable(jpath)) must whenDelivered {
-              haveSameElementsAs(values)
-            }
-          }
-      }
-    }
-
-    "retrieve all values of arrays" in {
-      val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-          map <+> ((obj.children.collect { case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet) }).toMap)
-
-        case (map, _) => map
-      }
-
-      arrayValues.foreach {
-        case ((eventName, path), values) =>
-          engine.getValues(Token.Benchmark, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
-            haveSameElementsAs(values)
-          }
-      }
-    }
-
-    "retrieve the top results of a histogram" in {
-      val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
-          val key = obj(".retweet")
-          map + (key -> map.get(key).map(_ + 1).getOrElse(1))
-
-        case (map, _) => map
-      }
-
-      engine.getHistogramTop(Token.Benchmark, "/test", Variable(".tweeted.retweet"), 10) must whenDelivered {
-        haveTheSameElementsAs(retweetCounts)
-      }
-    }
-
-    "retrieve totals" in {
-      val expectedTotals = valueCounts(sampleEvents)
-
-      expectedTotals.foreach {
-        case (subset @ (eventName, path, value), count) =>
-          val variable = Variable(JPath(eventName) \ path) 
-          if (!variable.name.endsInInfiniteValueSpace) {
-            engine.searchCount(Token.Benchmark, "/test", JointObservation(HasValue(variable, value)), TimeSpan.Eternity) must whenDelivered {
-              beEqualTo(count.toLong)
-            }
-          }
-      }
-    }
-
-    "retrieve a time series for occurrences of a variable" in {
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
-
-      val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-          obj.flattenWithPath.foldLeft(map) {
-            case (map, (path, _)) =>
-              val key = (eventName, path)
-              map + (key -> (map.getOrElse(key, 0) + 1))
-          }
-      }
-
-      expectedTotals.foreach {
-        case (subset @ (eventName, path), count) =>
-          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), intervalTerm).
-          map(_.total) must whenDelivered {
-            beEqualTo(count.toLong)
-          }
-      }
-    }
-
-    "retrieve a time series of statistics over values of a variable" in {
-      val granularity = Hour
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
-
-      expectedMeans(events, granularity, "recipientCount").foreach {
-        case (eventName, means) =>
-          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), intervalTerm) must whenDelivered {
-            verify(_.flatMap(_._2.mean) == means)
-          }
-      }
-    }
-
-    "retrieve a time series for occurrences of a value of a variable" in {      
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val expectedTotals = valueCounts(events)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
-
-      expectedTotals.foreach {
-        case (subset @ (eventName, path, value), count) =>
-          val variable = Variable(JPath(eventName) \ path)
-          if (!variable.name.endsInInfiniteValueSpace) {
-            val observation = JointObservation(HasValue(variable, value))
-
-            engine.searchSeries(Token.Benchmark, "/test", observation, intervalTerm) must whenDelivered {
-              verify {
-                results => 
-                  (results.total must_== count.toLong) && 
-                  (results must haveSize((granularity.period(minDate) to maxDate).size))
-              }
-            }
-          }
-      }
-    }
-
-    "count observations of a given value" in {
-      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
-
-      val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
-          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
-
-        case (map, _) => map
-      }
-
-      expectedCounts.map {
-        case (values, count) =>
-          val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
-
-          engine.searchCount(Token.Benchmark, "/test", observation, TimeSpan.Eternity) must whenDelivered (beEqualTo(count))
-      }
-    }
-
-    "count observations of a given value in a restricted time slice" in {
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-
-      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
-
-      var expectedPeriods = Set.empty[Period]
-      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), time)) =>
-          expectedPeriods += (granularity.period(time))
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
-          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
-
-        case (map, _) => map
-      }
-
-      expectedCounts.map {
-        case (values, count) =>
-          val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
-
-          engine.searchCount(Token.Benchmark, "/test", observation, TimeSpan(minDate, maxDate)) must whenDelivered (beEqualTo(count))
-      }
-    }
-
-    "retrieve intersection counts" in {      
-      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
-      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
-
-      val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
-
-          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
-
-        case (map, _) => map
-      }
-
-      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan.Eternity) must whenDelivered (beEqualTo(expectedCounts)) 
-    }
-
-    "retrieve intersection counts for a slice of time" in {      
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val expectedTotals = valueCounts(events)
-
-      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
-      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
-
-      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
-
-          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
-
-        case (map, _) => map
-      }
-
-      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan(minDate, maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
-    }
-
-    "retrieve intersection series for a slice of time" in {      
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
-      val expectedTotals = valueCounts(events)
-
-      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Variable(".tweeted.twitterClient") :: Nil
-      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
-
-      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
-          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
-
-        case (map, _) => map
-      }
-
-      engine.intersectSeries(Token.Benchmark, "/test", descriptors, intervalTerm) must whenDelivered {
-        verify { results => 
-          // all returned results must have the same length of time series
-          val sizes = results.values.map(_.size).toList
-
-          (results.values must notBeEmpty) &&
-          sizes.zip(sizes.tail).forall { case (a, b) => a must_== b } &&
-          (results.mapValues(_.total).filter(_._2 != 0) must haveTheSameElementsAs(expectedCounts))
-        }
-      }
-    }
-
-    "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-
-      val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), (Set[JValue], Set[Period])]) {
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
-          obj.flattenWithPath.foldLeft(map) {
-            case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
-              val key = (eventName, jpath, value)
-              map + (key -> (map.getOrElse(key, (Set.empty[JValue], Set.empty[Period])).mapElements(_ + (obj \ "~tweet"), _ + granularity.period(time))))
-
-            case (map, _) => map
-          }
-      }
-
-      expectedValues.foreach {
-        case ((eventName, jpath, jvalue), (infiniteValues, periods)) => 
-          engine.findRelatedInfiniteValues(
-            Token.Benchmark, "/test", 
-            JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
-            TimeSpan(minDate, maxDate)
-          ) map {
-            _.map(_.value).toSet
-          } must whenDelivered {
-            beEqualTo(infiniteValues)
-          }
-      }
-    }
+//    "retrieve values" in {
+//      val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
+//        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+//          obj.flattenWithPath.foldLeft(map) {
+//            case (map, (path, value)) => 
+//              val key = (eventName, path)
+//              val oldValues = map.getOrElse(key, Set.empty)
+//
+//              map + (key -> (oldValues + value))
+//          }
+//
+//        case (map, _) => map
+//      }
+//
+//      values.foreach {
+//        case ((eventName, path), values) =>
+//          val jpath = JPath(eventName) \ path
+//          if (!jpath.endsInInfiniteValueSpace) {
+//            engine.getValues(Token.Benchmark, "/test", Variable(jpath)) must whenDelivered {
+//              haveSameElementsAs(values)
+//            }
+//          }
+//      }
+//    }
+//
+//    "retrieve all values of arrays" in {
+//      val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
+//        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+//          map <+> ((obj.children.collect { case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet) }).toMap)
+//
+//        case (map, _) => map
+//      }
+//
+//      arrayValues.foreach {
+//        case ((eventName, path), values) =>
+//          engine.getValues(Token.Benchmark, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
+//            haveSameElementsAs(values)
+//          }
+//      }
+//    }
+//
+//    "retrieve the top results of a histogram" in {
+//      val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
+//        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
+//          val key = obj(".retweet")
+//          map + (key -> map.get(key).map(_ + 1).getOrElse(1))
+//
+//        case (map, _) => map
+//      }
+//
+//      engine.getHistogramTop(Token.Benchmark, "/test", Variable(".tweeted.retweet"), 10) must whenDelivered {
+//        haveTheSameElementsAs(retweetCounts)
+//      }
+//    }
+//
+//    "retrieve totals" in {
+//      val expectedTotals = valueCounts(sampleEvents)
+//
+//      expectedTotals.foreach {
+//        case (subset @ (eventName, path, value), count) =>
+//          val variable = Variable(JPath(eventName) \ path) 
+//          if (!variable.name.endsInInfiniteValueSpace) {
+//            engine.searchCount(Token.Benchmark, "/test", JointObservation(HasValue(variable, value)), TimeSpan.Eternity) must whenDelivered {
+//              beEqualTo(count.toLong)
+//            }
+//          }
+//      }
+//    }
+//
+//    "retrieve a time series for occurrences of a variable" in {
+//      val granularity = Minute
+//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+//      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+//
+//      val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
+//        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+//          obj.flattenWithPath.foldLeft(map) {
+//            case (map, (path, _)) =>
+//              val key = (eventName, path)
+//              map + (key -> (map.getOrElse(key, 0) + 1))
+//          }
+//      }
+//
+//      expectedTotals.foreach {
+//        case (subset @ (eventName, path), count) =>
+//          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), intervalTerm).
+//          map(_.total) must whenDelivered {
+//            beEqualTo(count.toLong)
+//          }
+//      }
+//    }
+//
+//    "retrieve a time series of statistics over values of a variable" in {
+//      val granularity = Hour
+//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+//      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+//
+//      expectedMeans(events, granularity, "recipientCount").foreach {
+//        case (eventName, means) =>
+//          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), intervalTerm) must whenDelivered {
+//            verify(_.flatMap(_._2.mean) == means)
+//          }
+//      }
+//    }
+//
+//    "retrieve a time series for occurrences of a value of a variable" in {      
+//      val granularity = Minute
+//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+//      val expectedTotals = valueCounts(events)
+//      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+//
+//      expectedTotals.foreach {
+//        case (subset @ (eventName, path, value), count) =>
+//          val variable = Variable(JPath(eventName) \ path)
+//          if (!variable.name.endsInInfiniteValueSpace) {
+//            val observation = JointObservation(HasValue(variable, value))
+//
+//            engine.searchSeries(Token.Benchmark, "/test", observation, intervalTerm) must whenDelivered {
+//              verify {
+//                results => 
+//                  (results.total must_== count.toLong) && 
+//                  (results must haveSize((granularity.period(minDate) to maxDate).size))
+//              }
+//            }
+//          }
+//      }
+//    }
+//
+//    "count observations of a given value" in {
+//      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+//
+//      val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
+//        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+//          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+//          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+//
+//        case (map, _) => map
+//      }
+//
+//      expectedCounts.map {
+//        case (values, count) =>
+//          val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
+//
+//          engine.searchCount(Token.Benchmark, "/test", observation, TimeSpan.Eternity) must whenDelivered (beEqualTo(count))
+//      }
+//    }
+//
+//    "count observations of a given value in a restricted time slice" in {
+//      val granularity = Minute
+//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+//
+//      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+//
+//      var expectedPeriods = Set.empty[Period]
+//      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
+//        case (map, Event(JObject(JField("tweeted", obj) :: Nil), time)) =>
+//          expectedPeriods += (granularity.period(time))
+//          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+//          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+//
+//        case (map, _) => map
+//      }
+//
+//      expectedCounts.map {
+//        case (values, count) =>
+//          val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
+//
+//          engine.searchCount(Token.Benchmark, "/test", observation, TimeSpan(minDate, maxDate)) must whenDelivered (beEqualTo(count))
+//      }
+//    }
+//
+//    "retrieve intersection counts" in {      
+//      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+//      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+//
+//      val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
+//        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+//          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+//
+//          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+//
+//        case (map, _) => map
+//      }
+//
+//      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan.Eternity) must whenDelivered (beEqualTo(expectedCounts)) 
+//    }
+//
+//    "retrieve intersection counts for a slice of time" in {      
+//      val granularity = Minute
+//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+//      val expectedTotals = valueCounts(events)
+//
+//      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
+//      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+//
+//      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
+//        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+//          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+//
+//          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+//
+//        case (map, _) => map
+//      }
+//
+//      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan(minDate, maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
+//    }
+//
+//    "retrieve intersection series for a slice of time" in {      
+//      val granularity = Minute
+//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+//      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+//      val expectedTotals = valueCounts(events)
+//
+//      val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Variable(".tweeted.twitterClient") :: Nil
+//      val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
+//
+//      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
+//        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+//          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+//          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+//
+//        case (map, _) => map
+//      }
+//
+//      engine.intersectSeries(Token.Benchmark, "/test", descriptors, intervalTerm) must whenDelivered {
+//        verify { results => 
+//          // all returned results must have the same length of time series
+//          val sizes = results.values.map(_.size).toList
+//
+//          (results.values must notBeEmpty) &&
+//          sizes.zip(sizes.tail).forall { case (a, b) => a must_== b } &&
+//          (results.mapValues(_.total).filter(_._2 != 0) must haveTheSameElementsAs(expectedCounts))
+//        }
+//      }
+//    }
+//
+//    "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
+//      val granularity = Minute
+//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+//
+//      val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), (Set[JValue], Set[Period])]) {
+//        case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
+//          obj.flattenWithPath.foldLeft(map) {
+//            case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
+//              val key = (eventName, jpath, value)
+//              map + (key -> (map.getOrElse(key, (Set.empty[JValue], Set.empty[Period])).mapElements(_ + (obj \ "~tweet"), _ + granularity.period(time))))
+//
+//            case (map, _) => map
+//          }
+//      }
+//
+//      expectedValues.foreach {
+//        case ((eventName, jpath, jvalue), (infiniteValues, periods)) => 
+//          engine.findRelatedInfiniteValues(
+//            Token.Benchmark, "/test", 
+//            JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
+//            TimeSpan(minDate, maxDate)
+//          ) map {
+//            _.map(_.value).toSet
+//          } must whenDelivered {
+//            beEqualTo(infiniteValues)
+//          }
+//      }
+//    }
 
     // this test is here because it's testing internals of the analytics service
     // which are not exposed though the analytics api
