@@ -7,7 +7,7 @@ import org.joda.time.{Instant, Duration}
 /** A globally unique identifier for a particular period in time (second,
  * minute, hour, day, week, month, year, or eternity).
  */
-class Period private (val periodicity: Periodicity, _start: Instant) extends Ordered[Period] {
+sealed class Period private (val periodicity: Periodicity, val start: Instant) extends Ordered[Period] {
   /** Compares this id and another based first on periodicity, and second on index.
    */
   def compare(that: Period) = (this.periodicity.compare(that.periodicity) :: this.start.getMillis.compare(that.start.getMillis) :: Nil).dropWhile(_ == 0).headOption.getOrElse(0)
@@ -20,9 +20,9 @@ class Period private (val periodicity: Periodicity, _start: Instant) extends Ord
 
   def withPeriodicity(p: Periodicity): Period = Period(p, start)
 
-  def start = periodicity.floor(_start)
+  lazy val end = periodicity.increment(start)
 
-  def end = periodicity.increment(start)
+  lazy val span = if (periodicity == Periodicity.Eternity) TimeSpan.Eternity else TimeSpan.Finite(start, end)
 
   /** The next period of this periodicity.
     */
@@ -65,9 +65,7 @@ object Period {
    * period.
    */
   def apply(periodicity: Periodicity, start: Instant): Period = {
-    val flooredStart = periodicity.floor(start)
-
-    new Period(periodicity, flooredStart)
+    new Period(periodicity, periodicity.floor(start))
   }
 
   def unapply(p: Period): Option[(Periodicity, Instant, Instant)] = Some((p.periodicity, p.start, p.end))

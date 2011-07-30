@@ -1,19 +1,6 @@
 package com.reportgrid.analytics
 
-import blueeyes.json.JPath
 import scalaz.Scalaz._
-
-case class Variable(name: JPath) {
-  def parent: Option[Variable] = name.parent.map { parent => copy(name = parent) }
-}
-
-object Variable {
-  implicit val orderingVariable: Ordering[Variable] = new Ordering[Variable] {
-    override def compare(v1: Variable, v2: Variable) = {
-      v1.name.toString.compare(v2.name.toString)
-    }
-  }
-}
 
 case class ValueStats(count: Long, sum: Option[Double], sumsq: Option[Double]) {
   lazy val mean = sum.map(_ / count)
@@ -32,3 +19,5 @@ object ValueStats {
 }
 
 case class ValueSet(count: Long, distribution: Map[String, Long])
+
+// vim: set ts=4 sw=4 et:

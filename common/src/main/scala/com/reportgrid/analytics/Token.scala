@@ -43,14 +43,14 @@ object Token {
 
   val Never = new DateTime(java.lang.Long.MAX_VALUE, DateTimeZone.UTC)
 
-  lazy val Root = Token("8E680858-329C-4F31-BEE3-2AD15FB67EED", None, "8E680858-329C-4F31-BEE3-2AD15FB67EED", "/", Permissions(true, true, true), Never, Limits.None)
+  lazy val Root = Token("8E680858-329C-4F31-BEE3-2AD15FB67EED", None, "8E680858-329C-4F31-BEE3-2AD15FB67EED", "/", Permissions(true, true, true, true), Never, Limits.None)
 
   lazy val Test = Token(
     tokenId        = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D",
     parentTokenId  = Some(Root.tokenId),
     accountTokenId = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D",
     path           = "test-account-root",
-    permissions    = Permissions(true, true, true),
+    permissions    = Permissions(true, true, true, true),
     expires        = Never,
     limits         = Limits(order = 2, depth = 3, limit = 20)
   )
@@ -60,7 +60,7 @@ object Token {
     parentTokenId  = Some(Root.tokenId),
     accountTokenId = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
     path           = "test-account-benchmark",
-    permissions    = Permissions(true, true, true),
+    permissions    = Permissions(true, true, true, true),
     expires        = Never,
     limits         = Limits(order = 3, depth = 5, limit = 20)
   )
@@ -73,7 +73,7 @@ object Token {
       parentTokenId  = Some(Root.tokenId),
       accountTokenId = newTokenId,
       path           = path,
-      permissions    = Permissions(true, true, true),
+      permissions    = Permissions(true, true, true, true),
       expires        = Never,
       limits         = limits.limitTo(Token.Root.limits)
     )

@@ -247,6 +247,10 @@ object TimeSeriesEncoding {
 }
 
 class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
+  def grouped(time: Instant): List[((Periodicity, Period), Instant)] = {
+    (for ((k, v) <- grouping) yield (k, v.period(time)) -> k.floor(time))(collection.breakOut)
+  }
+
   def expand(start: Instant, end: Instant): Stream[Period] = {
     import Stream._
 
@@ -298,19 +302,33 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
     expandBoth(start, end, Periodicity.Year)
   }
 
-  def queriableExpansion(start: Instant, end: Instant): Stream[(Periodicity, Instant, Instant)] = {
-    queriableExpansion(expand(start, end))
+  /**
+   * The queriable exapansion of a time span is the set of spans of maximal granularity
+   * that exactly cover the given span, given the grouping specified.
+   * For example, consider a span from 12:30:30T2011-05-10 to 14:00:00T2011-08-04.
+   * This span, given the default grouping, will have the shape: 
+   * Stream((minutes, t1, t2), (hours, ...), (days, ...), (months, ...), (days, ...), (hours, ...))
+   * The objective of this expansion is to make it possible to query the minimal set of documents.
+   */
+  def queriableExpansion(span: TimeSpan): Stream[(Periodicity, TimeSpan)] = span match {
+    case TimeSpan.Eternity => Stream((Periodicity.Eternity, TimeSpan.Eternity))
+    case TimeSpan.Finite(start, end) => queriableExpansion(expand(start, end))
   }
 
   def queriableExpansion(expansion: Stream[Period]) = {
-    def qe(expansion: Stream[Period], results: Stream[(Periodicity, Instant, Instant)]): Stream[(Periodicity, Instant, Instant)]  = {
+    def qe(expansion: Stream[Period], results: Stream[(Periodicity, TimeSpan)]): Stream[(Periodicity, TimeSpan)]  = {
       if (expansion.isEmpty) results
       else {
         val Period(periodicity, nstart, nend) = expansion.head
         results match {
-          case Stream.Empty => qe(expansion.tail, (periodicity, nstart, nend) #:: results)
-          case (`periodicity`, start, `nstart`) #:: rest => qe(expansion.tail, (periodicity, start, nend) #:: rest)
-          case currentHead #:: rest => currentHead #:: qe(expansion.tail, (periodicity, nstart, nend) #:: rest)
+          case Stream.Empty => 
+            qe(expansion.tail, (periodicity, TimeSpan(nstart, nend)) #:: results)
+
+          case (`periodicity`, TimeSpan.Finite(start, `nstart`)) #:: rest => 
+            qe(expansion.tail, (periodicity, TimeSpan(start, nend)) #:: rest)
+
+          case currentHead #:: rest => 
+            currentHead #:: qe(expansion.tail, (periodicity, TimeSpan(nstart, nend)) #:: rest)
         }
       }
     }

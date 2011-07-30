@@ -73,60 +73,60 @@ object MongoSupport extends AnalyticsSerialization {
     )
   }
 
-  implicit def ObservationDecomposer[S <: Predicate](implicit pd: Decomposer[S]): Decomposer[Observation[S]] = new Decomposer[Observation[S]] {
-    def decompose(v: Observation[S]): JValue = {
-      JObject(
-        v.toList.map { tuple =>
-          val (variable, predicate) = tuple
-
-          val name = if (variable.name == JPath.Identity) "id"
-                     else MongoEscaper.encode(variable.name.toString)
-
-          JField(name, predicate.serialize)
-        }
-      )
-    }
-  }
-
-  implicit def ObservationExtractor[S <: Predicate](implicit pe: Extractor[S]): Extractor[Observation[S]] = new Extractor[Observation[S]] {
-    def extract(v: JValue): Observation[S] = {
-      val fields = (v --> classOf[JObject]).fields
-
-      Set(fields.map { field =>
-        val variable  = if (field.name == "id") Variable(JPath.Identity) else Variable(JPath(MongoEscaper.decode(field.name)))
-        val predicate = field.value.deserialize[S]
-
-        (variable, predicate)
-      }: _*)
-    }
-  }
-
-  implicit def ObservationCountDecomposer[T, S <: Predicate](implicit td: Decomposer[T], pd: Decomposer[S]) = new Decomposer[(Observation[S], T)] {
-    def decompose(v: (Observation[S], T)): JValue = {
-      val (observation, count) = v
-
-      JObject(
-        JField("where", observation.serialize(ObservationDecomposer)) ::
-        JField("count", count.serialize) ::
-        Nil
-      )
-    }
-  }
-
-  implicit def ObservationCountExtractor[T, S <: Predicate](implicit te: Extractor[T], pe: Extractor[S]): Extractor[(Observation[S], T)] = new Extractor[(Observation[S], T)] {
-    def extract(v: JValue): (Observation[S], T) = {
-      val where = (v \ "where" --> classOf[JObject])
-      val count = (v \ "count").deserialize[T]
-
-      (where.deserialize[Observation[S]](ObservationExtractor), count)
-    }
-  }
-
-  implicit def ReportDecomposer[S <: Predicate, T](implicit tDecomposer: Decomposer[T], sDecomposer: Decomposer[S]): Decomposer[Report[S, T]] = new Decomposer[Report[S, T]] {
-    def decompose(v: Report[S, T]): JValue = v.observationCounts.serialize
-  }
-
-  implicit def ReportExtractor[S <: Predicate, T](implicit aggregator: AbelianGroup[T], tExtractor: Extractor[T], sExtractor: Extractor[S]): Extractor[Report[S, T]] = new Extractor[Report[S, T]] {
-    def extract(v: JValue): Report[S, T] = Report(v.deserialize[Map[Observation[S], T]])
-  }
+//  implicit def ObservationDecomposer[S <: Predicate](implicit pd: Decomposer[S]): Decomposer[Observation[S]] = new Decomposer[Observation[S]] {
+//    def decompose(v: Observation[S]): JValue = {
+//      JObject(
+//        v.toList.map { tuple =>
+//          val (variable, predicate) = tuple
+//
+//          val name = if (variable.name == JPath.Identity) "id"
+//                     else MongoEscaper.encode(variable.name.toString)
+//
+//          JField(name, predicate.serialize)
+//        }
+//      )
+//    }
+//  }
+//
+//  implicit def ObservationExtractor[S <: Predicate](implicit pe: Extractor[S]): Extractor[Observation[S]] = new Extractor[Observation[S]] {
+//    def extract(v: JValue): Observation[S] = {
+//      val fields = (v --> classOf[JObject]).fields
+//
+//      Set(fields.map { field =>
+//        val variable  = if (field.name == "id") Variable(JPath.Identity) else Variable(JPath(MongoEscaper.decode(field.name)))
+//        val predicate = field.value.deserialize[S]
+//
+//        (variable, predicate)
+//      }: _*)
+//    }
+//  }
+//
+//  implicit def ObservationCountDecomposer[T, S <: Predicate](implicit td: Decomposer[T], pd: Decomposer[S]) = new Decomposer[(Observation[S], T)] {
+//    def decompose(v: (Observation[S], T)): JValue = {
+//      val (observation, count) = v
+//
+//      JObject(
+//        JField("where", observation.serialize(ObservationDecomposer)) ::
+//        JField("count", count.serialize) ::
+//        Nil
+//      )
+//    }
+//  }
+//
+//  implicit def ObservationCountExtractor[T, S <: Predicate](implicit te: Extractor[T], pe: Extractor[S]): Extractor[(Observation[S], T)] = new Extractor[(Observation[S], T)] {
+//    def extract(v: JValue): (Observation[S], T) = {
+//      val where = (v \ "where" --> classOf[JObject])
+//      val count = (v \ "count").deserialize[T]
+//
+//      (where.deserialize[Observation[S]](ObservationExtractor), count)
+//    }
+//  }
+//
+//  implicit def ReportDecomposer[S <: Predicate, T](implicit tDecomposer: Decomposer[T], sDecomposer: Decomposer[S]): Decomposer[Report[S, T]] = new Decomposer[Report[S, T]] {
+//    def decompose(v: Report[S, T]): JValue = v.observationCounts.serialize
+//  }
+//
+//  implicit def ReportExtractor[S <: Predicate, T](implicit aggregator: AbelianGroup[T], tExtractor: Extractor[T], sExtractor: Extractor[S]): Extractor[Report[S, T]] = new Extractor[Report[S, T]] {
+//    def extract(v: JValue): Report[S, T] = Report(v.deserialize[Map[Observation[S], T]])
+//  }
 }

@@ -58,19 +58,31 @@ trait AnalyticsSerialization {
   }
 
   final implicit val HasChildDecomposer = new Decomposer[HasChild] {
-    def decompose(v: HasChild): JValue = v.child.serialize
+    def decompose(v: HasChild): JValue = JObject(
+      JField("variable", v.variable.serialize) :: 
+      JField("value", v.child.serialize) :: Nil
+    )
   }
 
   final implicit val HasChildExtractor = new Extractor[HasChild] {
-    def extract(v: JValue): HasChild = HasChild(v.deserialize[JPathNode])
+    def extract(v: JValue): HasChild = HasChild(
+      (v \ "variable").deserialize[Variable],
+      (v \ "value").deserialize[JPathNode]
+    )
   }
 
   final implicit val HasValueDecomposer = new Decomposer[HasValue] {
-    def decompose(v: HasValue): JValue = v.value
+    def decompose(v: HasValue): JValue = JObject(
+      JField("variable", v.variable.serialize) :: 
+      JField("value", v.value) :: Nil
+    )
   }
 
   final implicit val HasValueExtractor = new Extractor[HasValue] {
-    def extract(v: JValue): HasValue = HasValue(v)
+    def extract(v: JValue): HasValue = HasValue(
+      (v \ "variable").deserialize[Variable],
+      (v \ "value")
+    )
   }
 
   final implicit val LimitsDecomposer = new Decomposer[Limits] {
@@ -103,6 +115,7 @@ trait AnalyticsSerialization {
       JField("read",    permissions.read.serialize)  ::
       JField("write",   permissions.write.serialize) ::
       JField("share",   permissions.share.serialize) ::
+      JField("explore",   permissions.explore.serialize) ::
       Nil
     )
   }
@@ -111,7 +124,8 @@ trait AnalyticsSerialization {
     def extract(jvalue: JValue): Permissions = Permissions(
       read  = (jvalue \ "read").deserialize[Boolean],
       write = (jvalue \ "write").deserialize[Boolean],
-      share = (jvalue \ "share").deserialize[Boolean]
+      share = (jvalue \ "share").deserialize[Boolean],
+      explore = (jvalue \ "explore").deserialize[Boolean]
     )
   }
 

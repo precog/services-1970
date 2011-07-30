@@ -2,6 +2,7 @@ package com.reportgrid.analytics
 
 import scala.collection.immutable.NumericRange
 import org.joda.time.Instant
+import org.joda.time.DateTimeZone.UTC
 
 import scalaz.Scalaz._
 
@@ -71,14 +72,14 @@ object Periodicity {
   case object Second extends Periodicity {
     override final val byteValue = 0: Byte
 
-    def floor(time: Instant) = time.toDateTime.withMillisOfSecond(0).toInstant
+    def floor(time: Instant) = time.toDateTime(UTC).withMillisOfSecond(0).toInstant
 
-    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusSeconds(amount).toInstant
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusSeconds(amount).toInstant
 
     def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
-      case Minute => Some(time.toDateTime.getSecondOfMinute)
-      case Hour   => Some(time.toDateTime |> {t => t.getSecondOfMinute + (60 * t.getMinuteOfHour)})
-      case Day    => Some(time.toDateTime.getSecondOfDay)
+      case Minute => Some(time.toDateTime(UTC).getSecondOfMinute)
+      case Hour   => Some(time.toDateTime(UTC) |> {t => t.getSecondOfMinute + (60 * t.getMinuteOfHour)})
+      case Day    => Some(time.toDateTime(UTC).getSecondOfDay)
       case _ => None
     }
 
@@ -88,13 +89,13 @@ object Periodicity {
   case object Minute extends Periodicity {
     override final val byteValue = 1: Byte
 
-    def floor(time: Instant) = Second.floor(time).toDateTime.withSecondOfMinute(0).toInstant
+    def floor(time: Instant) = Second.floor(time).toDateTime(UTC).withSecondOfMinute(0).toInstant
 
-    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusMinutes(amount).toInstant
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusMinutes(amount).toInstant
 
     def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
-      case Hour => Some(time.toDateTime.getMinuteOfHour)
-      case Day  => Some(time.toDateTime.getMinuteOfDay)
+      case Hour => Some(time.toDateTime(UTC).getMinuteOfHour)
+      case Day  => Some(time.toDateTime(UTC).getMinuteOfDay)
       case _ => None
     }
 
@@ -104,15 +105,15 @@ object Periodicity {
   case object Hour extends Periodicity {
     override final val byteValue = 2: Byte
 
-    def floor(time: Instant) = Minute.floor(time).toDateTime.withMinuteOfHour(0).toInstant
+    def floor(time: Instant) = Minute.floor(time).toDateTime(UTC).withMinuteOfHour(0).toInstant
 
-    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusHours(amount).toInstant
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusHours(amount).toInstant
 
     def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
-      case Day   => Some(time.toDateTime.getHourOfDay)
-      case Week  => Some(time.toDateTime |> {t => t.getHourOfDay + (t.getDayOfWeek * 24)})
-      case Month => Some(time.toDateTime |> {t => t.getHourOfDay + (t.getDayOfMonth * 24)})
-      case Year  => Some(time.toDateTime |> {t => t.getHourOfDay + (t.getDayOfYear * 24)})
+      case Day   => Some(time.toDateTime(UTC).getHourOfDay)
+      case Week  => Some(time.toDateTime(UTC) |> {t => t.getHourOfDay + (t.getDayOfWeek * 24)})
+      case Month => Some(time.toDateTime(UTC) |> {t => t.getHourOfDay + (t.getDayOfMonth * 24)})
+      case Year  => Some(time.toDateTime(UTC) |> {t => t.getHourOfDay + (t.getDayOfYear * 24)})
       case _ => None
     }
 
@@ -122,14 +123,14 @@ object Periodicity {
   case object Day extends Periodicity {
     override final val byteValue = 3: Byte
 
-    def floor(time: Instant) = Hour.floor(time).toDateTime.withHourOfDay(0).toInstant
+    def floor(time: Instant) = Hour.floor(time).toDateTime(UTC).withHourOfDay(0).toInstant
 
-    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusDays(amount).toInstant
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusDays(amount).toInstant
 
     def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
-      case Week => Some(time.toDateTime.getDayOfWeek)
-      case Month => Some(time.toDateTime.getDayOfMonth)
-      case Year => Some(time.toDateTime.getDayOfYear)
+      case Week => Some(time.toDateTime(UTC).getDayOfWeek)
+      case Month => Some(time.toDateTime(UTC).getDayOfMonth)
+      case Year => Some(time.toDateTime(UTC).getDayOfYear)
       case _ => None
     }
 
@@ -139,12 +140,12 @@ object Periodicity {
   case object Week extends Periodicity {
     override final val byteValue = 4: Byte
 
-    def floor(time: Instant) = Day.floor(time).toDateTime.withDayOfWeek(1).toInstant
+    def floor(time: Instant) = Day.floor(time).toDateTime(UTC).withDayOfWeek(1).toInstant
 
-    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusWeeks(amount).toInstant
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusWeeks(amount).toInstant
 
     def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
-      case Year => Some(time.toDateTime.getWeekOfWeekyear)
+      case Year => Some(time.toDateTime(UTC).getWeekOfWeekyear)
       case _ => None
     }
 
@@ -154,12 +155,12 @@ object Periodicity {
   case object Month extends Periodicity {
     override final val byteValue = 5: Byte
 
-    def floor(time: Instant) = Day.floor(time).toDateTime.withDayOfMonth(1).toInstant
+    def floor(time: Instant) = Day.floor(time).toDateTime(UTC).withDayOfMonth(1).toInstant
 
-    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusMonths(amount).toInstant
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusMonths(amount).toInstant
 
     def indexOf(time: Instant, in: Periodicity): Option[Int] = in match {
-      case Year => Some(time.toDateTime.getMonthOfYear)
+      case Year => Some(time.toDateTime(UTC).getMonthOfYear)
       case _ => None
     }
 
@@ -169,9 +170,9 @@ object Periodicity {
   case object Year extends Periodicity {
     override final val byteValue = 6: Byte
 
-    def floor(time: Instant) = Month.floor(time).toDateTime.withMonthOfYear(1).toInstant
+    def floor(time: Instant) = Month.floor(time).toDateTime(UTC).withMonthOfYear(1).toInstant
 
-    def increment(time: Instant, amount: Int = 1) = time.toDateTime.plusYears(amount).toInstant
+    def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusYears(amount).toInstant
 
     def indexOf(time: Instant, in: Periodicity): Option[Int] = None
 
