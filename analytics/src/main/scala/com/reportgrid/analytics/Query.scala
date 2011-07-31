@@ -54,7 +54,7 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   // see AggregationEngine.dataKeySigs._1
   def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = {
     for (docPeriod <- docStoragePeriods) 
-    yield (docPeriod.sig -> (dataKeyInstants(docPeriod).map(i => (i.sig, JField(tagName, i.serialize)))))
+    yield ((resultGranularity, docPeriod).sig -> (dataKeyInstants(docPeriod).map(i => (i.sig, JField(tagName, i.serialize)))))
   }
 
   // see AggregationEngine.dataKeySigs._2

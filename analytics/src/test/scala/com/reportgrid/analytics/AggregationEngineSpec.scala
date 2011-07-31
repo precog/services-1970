@@ -141,7 +141,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(500).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
     case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
@@ -158,36 +158,36 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     shareVariables()
 
     // using the benchmark token for testing because it has order 3
-    val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get ->- {
+    val sampleEvents: List[Event] = containerOfN[List, Event](2, eventGen).sample.get ->- {
       _.foreach(event => engine.aggregate(Token.Benchmark, "/test", timeTag(event.timestamp), event.data, 1))
     }
 
-    "retrieve path children" in {
-      val children = sampleEvents.map {
-        case Event(JObject(JField(eventName, _) :: Nil), _) => "." + eventName
-      }.toSet
-
-      engine.getPathChildren(Token.Benchmark, "/test") must whenDelivered {
-        haveTheSameElementsAs(children)
-      }
-    }
- 
-    "count events" in {
-      def countEvents(eventName: String) = sampleEvents.count {
-        case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
-        case _ => false
-      }
-
-      val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
-
-      eventCounts.foreach {
-        case (eventName, count) =>
-          engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName)) must whenDelivered {
-            beEqualTo(count)
-          }
-      }
-    }
- 
+//    "retrieve path children" in {
+//      val children = sampleEvents.map {
+//        case Event(JObject(JField(eventName, _) :: Nil), _) => "." + eventName
+//      }.toSet
+//
+//      engine.getPathChildren(Token.Benchmark, "/test") must whenDelivered {
+//        haveTheSameElementsAs(children)
+//      }
+//    }
+// 
+//    "count events" in {
+//      def countEvents(eventName: String) = sampleEvents.count {
+//        case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
+//        case _ => false
+//      }
+//
+//      val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
+//
+//      eventCounts.foreach {
+//        case (eventName, count) =>
+//          engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName)) must whenDelivered {
+//            beEqualTo(count)
+//          }
+//      }
+//    }
+// 
 //    "retrieve values" in {
 //      val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
 //        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
@@ -212,7 +212,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 //          }
 //      }
 //    }
-//
+
 //    "retrieve all values of arrays" in {
 //      val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
 //        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
@@ -228,7 +228,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 //          }
 //      }
 //    }
-//
+
 //    "retrieve the top results of a histogram" in {
 //      val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
 //        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
@@ -257,28 +257,28 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 //      }
 //    }
 //
-//    "retrieve a time series for occurrences of a variable" in {
-//      val granularity = Minute
-//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-//      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
-//
-//      val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
-//        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-//          obj.flattenWithPath.foldLeft(map) {
-//            case (map, (path, _)) =>
-//              val key = (eventName, path)
-//              map + (key -> (map.getOrElse(key, 0) + 1))
-//          }
-//      }
-//
-//      expectedTotals.foreach {
-//        case (subset @ (eventName, path), count) =>
-//          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), intervalTerm).
-//          map(_.total) must whenDelivered {
-//            beEqualTo(count.toLong)
-//          }
-//      }
-//    }
+    "retrieve a time series for occurrences of a variable" in {
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+
+      val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+          obj.flattenWithPath.foldLeft(map) {
+            case (map, (path, _)) =>
+              val key = (eventName, path)
+              map + (key -> (map.getOrElse(key, 0) + 1))
+          }
+      }
+
+      expectedTotals.foreach {
+        case (subset @ (eventName, path), count) =>
+          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), intervalTerm).
+          map(_.total) must whenDelivered {
+            beEqualTo(count.toLong)
+          }
+      }
+    }
 //
 //    "retrieve a time series of statistics over values of a variable" in {
 //      val granularity = Hour

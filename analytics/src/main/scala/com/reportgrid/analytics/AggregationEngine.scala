@@ -156,7 +156,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   /** Retrieves children of the specified path &amp; variable.  */
   def getVariableChildren(token: Token, path: Path, variable: Variable): Future[List[HasChild]] = {
     extractValues(forTokenAndPath(token, path) & forVariable(variable), variable_children.collection) { (jvalue, _) =>
-      jvalue.deserialize[HasChild]
+      HasChild(variable, jvalue.deserialize[JPathNode])
     }
   }
 
@@ -591,7 +591,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         
         joint.obs.foldLeft(patches) { 
           case (patches, HasChild(Variable(vpath), child)) => 
-            println(token, path, storageKeys, Variable(vpath \ child))
             val key = variableSeriesKey(token, path, docKeySig(storageKeys), Variable(vpath \ child))
             patches + (key -> countUpdate(dataKeySig))
 
