@@ -136,7 +136,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
               $ {
                 /* Post data to the virtual file system.
                  */
-                audit("track") {
+                //audit("track") {
                   //forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
                     post { request: HttpRequest[JValue] =>
                       tokenOf(request).map { token =>
@@ -163,10 +163,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                         HttpResponse[JValue](content = None)
                       }
-                    }
+                    } ~
                   //}
-                } ~
-                audit("explore paths") {
+                //} ~
+                //audit("explore paths") {
                   get { request: HttpRequest[JValue] =>
                     tokenOf(request).flatMap { token =>
                       val path = fullPathOf(token, request)
@@ -174,11 +174,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       aggregationEngine.getPathChildren(token, path).map(_.serialize.ok)
                     }
                   }
-                }
+                //}
               } ~
               path("""(?<variable>\.[^\n/]+)""") {
                 $ {
-                  audit("explore variables") {
+                  //audit("explore variables") {
                     get { request: HttpRequest[JValue] =>
                       tokenOf(request).flatMap { token =>
                         val path     = fullPathOf(token, request)
@@ -187,11 +187,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         aggregationEngine.getVariableChildren(token, path, variable).map(_.serialize.ok)
                       }
                     }
-                  }
+                  //}
                 } ~
                 path("/") {
                   path("statistics") {
-                    audit("variable statistics") {
+                    //audit("variable statistics") {
                       get { request: HttpRequest[JValue] =>
                         tokenOf(request).flatMap { token =>
                           val path     = fullPathOf(token, request)
@@ -200,7 +200,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           aggregationEngine.getVariableStatistics(token, path, variable).map(_.serialize.ok)
                         }
                       }
-                    }
+                    //}
                   } ~
                   path("count") {
                     audit("variable occurrence count") {
@@ -215,7 +215,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }
                   } ~
                   path("series/") {
-                    audit("variable series") {
+                    //audit("variable series") {
                       path('periodicity) {
                         $ {
                           queryVariableSeries(tokenOf, _.count, aggregationEngine)
@@ -229,7 +229,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           } 
                         }
                       }
-                    }
+                    //}
                   } ~
                   path("histogram/") {
                     $ {
@@ -245,7 +245,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       }
                     } ~
                     path("top/'limit") {
-                      audit("variable histogram top") {
+                      //audit("variable histogram top") {
                         get { request: HttpRequest[JValue] =>
                           tokenOf(request).flatMap { token =>
                             val path     = fullPathOf(token, request)
@@ -255,7 +255,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             aggregationEngine.getHistogramTop(token, path, variable, limit).map(renderHistogram).map(_.ok)
                           }
                         }
-                      }
+                      //}
                     } ~
                     path("bottom/'limit") {
                       audit("variable histogram bottom") {
@@ -272,7 +272,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }
                   } ~
                   path("length") {
-                    audit("count of variable values") {
+                    //audit("count of variable values") {
                       get { request: HttpRequest[JValue] =>
                         tokenOf(request).flatMap { token =>
                           val path     = fullPathOf(token, request)
@@ -281,7 +281,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           aggregationEngine.getVariableLength(token, path, variable).map(_.serialize.ok)
                         }
                       }
-                    }
+                    //}
                   } ~
                   path("values/") {
                     $ {
@@ -297,7 +297,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       }
                     } ~
                     path("top/'limit") {
-                      audit("list of top variable values") {
+                      //audit("list of top variable values") {
                         get { request: HttpRequest[JValue] =>
                           tokenOf(request).flatMap { token =>
                             val path     = fullPathOf(token, request)
@@ -307,7 +307,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             aggregationEngine.getValuesTop(token, path, variable, limit).map(_.serialize.ok)
                           }
                         }
-                      }
+                      //}
                     } ~
                     path("bottom/'limit") {
                       audit("list of bottom variable values") {
@@ -324,7 +324,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     } ~
                     path('value) {
                       $ {
-                        audit("explore a variable value") {
+                        //audit("explore a variable value") {
                           get { request: HttpRequest[JValue] =>
                             tokenOf(request).map { token =>
                               val path     = fullPathOf(token, request)
@@ -339,7 +339,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                               ).ok[JValue]
                             }
                           }
-                        }
+                        //}
                       } ~
                       path("/") {
                         path("count") {
@@ -354,7 +354,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           }
                         } ~
                         path("series/") {
-                          audit("variable value series") {
+                          //audit("variable value series") {
                             get { request: HttpRequest[JValue] =>
                               tokenOf(request).map { token =>
                                 val path     = fullPathOf(token, request)
@@ -374,9 +374,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                   unit.toLowerCase match {
                                     case "time" =>
                                       val (start, end) = ranges.head
-                                      aggregationEngine.searchSeries(token, path, observation, periodicity, Some(new Instant(start)), Some(new Instant(end))).map(_.serialize.ok)
-                                      //.map(groupTimeSeries(seriesGrouping(request)))
-                                      //.map(_.fold(_.serialize, _.serialize).ok)
+                                      aggregationEngine.searchSeries(token, path, observation, periodicity, Some(new Instant(start)), Some(new Instant(end)))
+                                      .map(groupTimeSeries(seriesGrouping(request)))
+                                      .map(_.fold(_.serialize, _.serialize).ok)
 
                                     case _ => throw HttpException(HttpStatusCodes.BadRequest, "GET with Range only accepts unit of 'time'")
                                   }
@@ -393,7 +393,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                 }
                               }
                             }
-                          }
+                          //}
                         } ~
                         path("geo") {
                           get { request: HttpRequest[JValue] =>
@@ -462,7 +462,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
               }
             } ~
             path("/intersect") {
-              audit("intersection query") {
+              //audit("intersection query") {
                 post { request: HttpRequest[JValue] => 
                   tokenOf(request).flatMap { token => 
                     import VariableDescriptor._
@@ -500,10 +500,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }
                   }
                 } 
-              }
+              //}
             } ~ 
             path("/tokens/") {
-              audit("token") {
+              //audit("token") {
                 get { request: HttpRequest[JValue] =>
                   tokenOf(request) flatMap { token =>
                     tokenManager.listDescendants(token) map { descendants =>
@@ -558,7 +558,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }
                   }
                 }
-              }
+              //}
             }
           } 
         } ->

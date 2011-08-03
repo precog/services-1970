@@ -7,11 +7,12 @@ import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test._
 import blueeyes.util.metrics.Duration._
-import blueeyes.json.JsonDSL._
 
 import MimeTypes._
 
-import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
+import blueeyes.json._
+import blueeyes.json.JsonAST._
+import blueeyes.json.JsonDSL._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
 import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo}
@@ -81,14 +82,14 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
 
     "return variable value series counts" in {
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
-      //val expected = expectedCounts(events, Hour, "gender")
-      //expected must notBeEmpty
+      val expected = valueCounts(events)
+      expected must notBeEmpty
 
       (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.gender/values/\"male\"/series/hour")) must whenDelivered {
         verify {
           case HttpResponse(status, _, Some(contents), _) => 
             val series = contents.deserialize[TimeSeries[Long]].series 
-            (series must notBeEmpty) //&& (series must_== expected)
+            (series must notBeEmpty) && (series.values.sum must_== expected(("tweeted", JPath(".gender"), JString("male"))))
         }
       } 
     }

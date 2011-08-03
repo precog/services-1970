@@ -111,15 +111,6 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(60, toDuration(500).milliseconds)
 
-  def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
-    case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-      obj.flattenWithPath.foldLeft(map) {
-        case (map, (path, value)) =>
-          val key = (eventName, path, value)
-          map + (key -> (map.getOrElse(key, 0) + 1))
-      }
-  }
-
   "Aggregation engine" should {
     shareVariables()
 

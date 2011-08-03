@@ -106,6 +106,15 @@ trait ArbitraryEvent extends ArbitraryTime {
         }
     }   
   }
+
+  def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
+    case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+      obj.flattenWithPath.foldLeft(map) {
+        case (map, (path, value)) =>
+          val key = (eventName, path, value)
+          map + (key -> (map.getOrElse(key, 0) + 1))
+      }
+  }
 }
 
 object ArbitraryEvent extends ArbitraryEvent
