@@ -63,7 +63,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
           val tokensCollection = mongoConfig.getString("tokensCollection").getOrElse("tokens")
 
-          val auditClient = auditClientFactory(config.configMap("audit"))
+          //val auditClient = auditClientFactory(config.configMap("audit"))
 
           val yggConfigMap = config.configMap("yggdrasil")
           val yggConfig = YggdrasilConfig(
@@ -76,13 +76,14 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             tokenManager      <- TokenManager(database, tokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, database)
           } yield {
-            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggConfig)
+            //AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggConfig)
+            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, null, yggConfig)
           }
         } ->
         request { (state: AnalyticsState) =>
           import state._
 
-          def renderHistogram(histogram: Traversable[(HasValue, Long)]): JObject = {
+          def renderHistogram(histogram: Traversable[(HasValue, Long)]): JValue = {
             histogram.foldLeft(JObject.empty) {
               case (content, (hasValue, count)) =>
                 val name = JPathField(renderNormalized(hasValue.value))
@@ -111,7 +112,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             }
           }
 
-          val audit = auditor[JValue, JValue](auditClient, clock, tokenOf)
+          //val audit = auditor[JValue, JValue](auditClient, clock, tokenOf)
           
           def yggdrasilRewrite[T](req: HttpRequest[T]): Option[HttpRequest[T]] = {
             import HttpHeaders._
@@ -203,7 +204,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     //}
                   } ~
                   path("count") {
-                    audit("variable occurrence count") {
+                    //audit("variable occurrence count") {
                       get { request: HttpRequest[JValue] =>
                         tokenOf(request).flatMap { token =>
                           val path     = fullPathOf(token, request)
@@ -212,7 +213,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           aggregationEngine.getVariableCount(token, path, variable).map(_.serialize.ok)
                         }
                       }
-                    }
+                    //}
                   } ~
                   path("series/") {
                     //audit("variable series") {
@@ -233,7 +234,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   } ~
                   path("histogram/") {
                     $ {
-                      audit("variable histogram") {
+                      //audit("variable histogram") {
                         get { request: HttpRequest[JValue] =>
                           tokenOf(request).flatMap { token =>
                             val path     = fullPathOf(token, request)
@@ -242,7 +243,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             aggregationEngine.getHistogram(token, path, variable).map(renderHistogram).map(_.ok)
                           }
                         }
-                      }
+                      //}
                     } ~
                     path("top/'limit") {
                       //audit("variable histogram top") {
@@ -258,7 +259,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       //}
                     } ~
                     path("bottom/'limit") {
-                      audit("variable histogram bottom") {
+                      //audit("variable histogram bottom") {
                         get { request: HttpRequest[JValue] =>
                           tokenOf(request).flatMap { token =>
                             val path     = fullPathOf(token, request)
@@ -268,7 +269,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             aggregationEngine.getHistogramBottom(token, path, variable, limit).map(renderHistogram).map(_.ok)
                           }
                         }
-                      }
+                      //}
                     }
                   } ~
                   path("length") {
@@ -285,7 +286,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   } ~
                   path("values/") {
                     $ {
-                      audit("list of variable values") {
+                      //audit("list of variable values") {
                         get { request: HttpRequest[JValue] =>
                           tokenOf(request).flatMap { token =>
                             val path     = fullPathOf(token, request)
@@ -294,7 +295,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             aggregationEngine.getValues(token, path, variable).map(_.toList.serialize.ok)
                           }
                         }
-                      }
+                      //}
                     } ~
                     path("top/'limit") {
                       //audit("list of top variable values") {
@@ -310,7 +311,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       //}
                     } ~
                     path("bottom/'limit") {
-                      audit("list of bottom variable values") {
+                      //audit("list of bottom variable values") {
                         get { request: HttpRequest[JValue] =>
                           tokenOf(request).flatMap { token =>
                             val path     = fullPathOf(token, request)
@@ -320,7 +321,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                             aggregationEngine.getValuesBottom(token, path, variable, limit).map(_.serialize.ok)
                           }
                         }
-                      }
+                      //}
                     } ~
                     path('value) {
                       $ {
@@ -343,7 +344,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       } ~
                       path("/") {
                         path("count") {
-                          audit("count occurrences of a variable value") {
+                          //audit("count occurrences of a variable value") {
                             get { request: HttpRequest[JValue] =>
                               tokenOf(request).flatMap { token =>
                                 val path     = fullPathOf(token, request)
@@ -351,7 +352,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                 aggregationEngine.searchCount(token, path, observation).map(_.serialize.ok)
                               }
                             }
-                          }
+                          //}
                         } ~
                         path("series/") {
                           //audit("variable value series") {
@@ -412,7 +413,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
               }
             } ~
             path("/search") {
-              audit("count or series query") {
+              //audit("count or series query") {
                 post { request: HttpRequest[JValue] =>
                   tokenOf(request).flatMap { token =>
                     request.content.map[Future[HttpResponse[JValue]]] { content =>
@@ -459,7 +460,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }
                   }
                 }
-              }
+              //}
             } ~
             path("/intersect") {
               //audit("intersection query") {

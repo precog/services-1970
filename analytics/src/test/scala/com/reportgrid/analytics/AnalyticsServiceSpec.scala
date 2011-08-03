@@ -46,7 +46,7 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", Token.Test.tokenId)
 
-  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(20, 1000L.milliseconds)
+  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(30, 1000L.milliseconds)
 
   "Analytics Service" should {
     shareVariables()
