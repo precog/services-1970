@@ -20,6 +20,7 @@ import net.lag.configgy.Configgy
 import net.lag.configgy.Config
 import org.joda.time.DateTime
 
+import scala.actors.Actor
 import scala.actors.Actor._
 import scala.collection.mutable.ArrayBuffer
 
@@ -90,16 +91,18 @@ case object BenchmarkTask extends Task {
       config.getString("resultsPath", "/benchmark-results")
     )
 
-    val conf = new SamplingConfig {
-        override val clock = realClock
-        override val maxRate = config.getLong("maxRate", 1000)
-        override val samplesPerTestRate = config.getLong("samplesPerTestRate", 1000)
-        override val sampleSet = new DistributedSampleSet(
-          //Vector(containerOfN[List, Int](100, choose(0, 50)).sample.get: _*),
-          //Vector(containerOfN[List, String](1000, for (i <- choose(3, 30); chars <- containerOfN[Array, Char](i, alphaChar)) yield new String(chars)).sample.get: _*),
-          10
-        )
-    }
+    val conf = BenchmarkConfig(
+      clock = realClock,
+      maxRate = config.getLong("maxRate", 1000),
+      maxConcurrent = config.getInt("maxConcurrent", 100),
+      samplesPerTestRate = config.getLong("samplesPerTestRate", 1000),
+      sampleSet = new DistributedSampleSet(
+        //Vector(containerOfN[List, Int](100, choose(0, 50)).sample.get: _*),
+        //Vector(containerOfN[List, String](1000, for (i <- choose(3, 30); chars <- containerOfN[Array, Char](i, alphaChar)) yield new String(chars)).sample.get: _*),
+        10
+      ),
+      reportIncremental = config.getBool("reportIncremental", false)
+    )
 
     val benchmark = new AnalyticsBenchmark(testSystem, resultsSystem, conf, startTime, resultsStream)
     benchmark.run()
@@ -108,12 +111,14 @@ case object BenchmarkTask extends Task {
 
 case class BenchmarkApi(client: ReportGridClient[JValue], path: String)
 
-trait SamplingConfig {
-  def clock: Clock
-  def maxRate: Long
-  def samplesPerTestRate: Long
-  def sampleSet: SampleSet
-}
+case class BenchmarkConfig(
+  clock: Clock,
+  maxRate: Long,
+  maxConcurrent: Int,
+  samplesPerTestRate: Long,
+  sampleSet: SampleSet,
+  reportIncremental: Boolean
+)
 
 trait SampleSet {
   // the number of samples to return in the queriablesamples list
@@ -172,6 +177,7 @@ case object Query
 case object Done
 case class Sample(properties: JObject)
 case class QueryFrom(samples: List[JObject])
+case class Ready(actor: Actor)
 
 
 sealed trait QueryType
@@ -187,17 +193,17 @@ sealed trait Timing
 case class TrackTime(time: Long) extends Timing
 case class QueryTime(queryType: QueryType, time: Long) extends Timing
 
-class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: SamplingConfig, startTime: DateTime, resultsStream: java.io.PrintStream) {
+class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: BenchmarkConfig, startTime: DateTime, resultsStream: java.io.PrintStream) {
   import AdSamples._
 
   def run(): Unit = {
 		val rateStep = conf.maxRate / 5
 		for (rate <- rateStep to conf.maxRate by rateStep) {
-			benchmark(rate)
+			benchmark(rate, conf.maxConcurrent)
 		}
   }
 
-  def benchmark(rate: Long): Unit = {
+  def benchmark(rate: Long, maxConcurrent: Int): Unit = {
     val benchmarkExecutor = Executors.newScheduledThreadPool(4)
     val resultsExecutor = Executors.newScheduledThreadPool(1)
     val done = new CountDownLatch(1)
@@ -209,21 +215,26 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
 					case Send =>
 						val (sample, next) = sampleSet.next
 						sampleSet = next
-						sendActor ! Sample(sample)
+					  sendCoordinator ! Sample(sample)
 
-					case Query => sampleSet.queriableSamples.foreach(samples => queryActor ! QueryFrom(samples))
+					case Query => 
+            sampleSet.queriableSamples.foreach(samples => queryActor ! QueryFrom(samples))
 
-					case Done => sendActor ! Done
+					case Done => 
+            sendCoordinator ! Done
+            exit
 				}
       }
     }
 
-    lazy val sendActor = actor {
+    def sendActor(n: Int) = actor {
       loop {
         react {
+          case Ready(sender) => sender ! Ready(self)
           case Sample(sample) => 
             val start = System.nanoTime
             try {
+              println("Tracking from " + n)
               testApi.client.track(
                 path       = testApi.path,
                 name       = eventNames(exponentialIndex(eventNames.size)),
@@ -238,7 +249,27 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
               case t: Throwable => t.printStackTrace
             }
 
-          case Done => queryActor ! Done
+          case Done => 
+            queryActor ! Done
+            exit
+        }
+      }
+    }
+
+    lazy val sendActors = (0 to maxConcurrent).map(sendActor)
+
+    lazy val sendCoordinator = actor {
+      loop {
+        react {
+          case sample @ Sample(_) => 
+            sendActors.foreach{_ ! Ready(self)}
+            react {
+              case Ready(sendActor) => sendActor ! sample
+            }
+
+          case Done =>
+            sendActors.foreach{_ ! Done}
+            exit
         }
       }
     }
@@ -278,7 +309,9 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
               case t: Throwable => t.printStackTrace
             }
 
-          case Done => resultsActor ! Done
+          case Done => 
+            resultsActor ! Done
+            exit
         }
       }
     }
@@ -328,11 +361,12 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
               count = Some(1)
             )
 
-            if (queryStats.statistics.n % 10 == 0) printStats
+            if (conf.reportIncremental && queryStats.statistics.n % 10 == 0) printStats
 
 					case Done =>
             printStats
 						done.countDown()
+            exit
         }
       }
     }
