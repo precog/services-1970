@@ -1,6 +1,8 @@
 .idea
 tags
 lib_managed
+analytics/lib
+benchmark/lib
 src_managed
 target
 *.iml
