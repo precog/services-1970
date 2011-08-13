@@ -297,7 +297,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     val toQuery = tagTerms.map(_.storageKeys).sequence.map {
       v => Tuple2(
         v.map(_._1).toSet.sig,
-        v.map(_._2).sequence.map(v => (v.map(_._1).toSet.sig, JObject(v.map(_._2).toList)))
+        v.map(_._2).sequence.map(x => (x.map(_._1).toSet.sig, JObject(x.map(_._2).toList)))
       )
     }
 
@@ -305,7 +305,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       toQuery.map {
         case (docKey, dataKeys) => database(selectOne(dataPath).from(collection).where(filter(docKey))).map {
           results => dataKeys.flatMap {
-            case (keySig, keyData) => results.map(jobj => keyData -> (jobj(dataPath) \ keySig.hashSignature).deserialize[T])
+            case (keySig, keyData) => results.map {
+               jobj => keyData -> (jobj(dataPath) \? keySig.hashSignature).map(_.deserialize[T]).getOrElse(mzero[T])
+            }
           }
         }
       }.toSeq: _*
@@ -611,7 +613,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 }
 
 object AggregationEngine {
-  type CountType             = Long
+  type CountType = Long
   type ResultSet[K <: JValue, V] = Seq[(K, V)]
   type IntersectionResult[T] = SortedMap[List[JValue], T]
 

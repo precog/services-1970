@@ -14,6 +14,7 @@ import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.json.JPathImplicits._
+import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.persistence.mongo._
 import blueeyes.concurrent.Future
@@ -257,28 +258,28 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 //      }
 //    }
 //
-    "retrieve a time series for occurrences of a variable" in {
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
-
-      val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
-          obj.flattenWithPath.foldLeft(map) {
-            case (map, (path, _)) =>
-              val key = (eventName, path)
-              map + (key -> (map.getOrElse(key, 0) + 1))
-          }
-      }
-
-      expectedTotals.foreach {
-        case (subset @ (eventName, path), count) =>
-          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), intervalTerm).
-          map(_.total) must whenDelivered {
-            beEqualTo(count.toLong)
-          }
-      }
-    }
+//    "retrieve a time series for occurrences of a variable" in {
+//      val granularity = Minute
+//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+//      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+//
+//      val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
+//        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+//          obj.flattenWithPath.foldLeft(map) {
+//            case (map, (path, _)) =>
+//              val key = (eventName, path)
+//              map + (key -> (map.getOrElse(key, 0) + 1))
+//          }
+//      }
+//
+//      expectedTotals.foreach {
+//        case (subset @ (eventName, path), count) =>
+//          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), intervalTerm).
+//          map(_.total.count) must whenDelivered {
+//            beEqualTo(count.toLong)
+//          }
+//      }
+//    }
 //
 //    "retrieve a time series of statistics over values of a variable" in {
 //      val granularity = Hour
@@ -288,34 +289,34 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
 //      expectedMeans(events, granularity, "recipientCount").foreach {
 //        case (eventName, means) =>
 //          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), intervalTerm) must whenDelivered {
-//            verify(_.flatMap(_._2.mean) == means)
+//            verify(_.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant] -> _) }.toMap must_== means)
 //          }
 //      }
 //    }
-//
-//    "retrieve a time series for occurrences of a value of a variable" in {      
-//      val granularity = Minute
-//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-//      val expectedTotals = valueCounts(events)
-//      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
-//
-//      expectedTotals.foreach {
-//        case (subset @ (eventName, path, value), count) =>
-//          val variable = Variable(JPath(eventName) \ path)
-//          if (!variable.name.endsInInfiniteValueSpace) {
-//            val observation = JointObservation(HasValue(variable, value))
-//
-//            engine.searchSeries(Token.Benchmark, "/test", observation, intervalTerm) must whenDelivered {
-//              verify {
-//                results => 
-//                  (results.total must_== count.toLong) && 
-//                  (results must haveSize((granularity.period(minDate) to maxDate).size))
-//              }
-//            }
-//          }
-//      }
-//    }
-//
+
+    "retrieve a time series for occurrences of a value of a variable" in {      
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val expectedTotals = valueCounts(events)
+      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+
+      expectedTotals.foreach {
+        case (subset @ (eventName, path, value), count) =>
+          val variable = Variable(JPath(eventName) \ path)
+          if (!variable.name.endsInInfiniteValueSpace) {
+            val observation = JointObservation(HasValue(variable, value))
+
+            engine.searchSeries(Token.Benchmark, "/test", observation, intervalTerm) must whenDelivered {
+              verify {
+                results => 
+                  (results.total must_== count.toLong) && 
+                  (results must haveSize((granularity.period(minDate) to maxDate).size))
+              }
+            }
+          }
+      }
+    }
+
 //    "count observations of a given value" in {
 //      val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 //
