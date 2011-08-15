@@ -128,8 +128,7 @@ object FutureUtils {
   }
 }
 
-class AggregationEngineSpec extends Specification with PendingUntilFixed 
-with ArbitraryEvent with FutureMatchers with LocalMongo {
+class AggregationEngineSpec extends Specification with ArbitraryEvent with FutureMatchers with LocalMongo {
   import AggregationEngine._
   import FutureUtils._
 
