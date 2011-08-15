@@ -36,16 +36,12 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
   //override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
   override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
 
-  override def auditClientFactory(config: ConfigMap) = new ReportGridTrackingClient[JValue](JsonBlueEyes) {
-    override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = JsonBlueEyes.EmptyObject, rollup: Boolean = false, timestamp: Option[Date] = None, count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
-      //println("Tracked " + path + "; " + name + " - " + properties)
-    }
-  }
+  override def auditClientFactory(config: ConfigMap) = NoopTrackingClient
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", Token.Test.tokenId)
 
-  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(20, 1000L.milliseconds)
+  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(40, 1000L.milliseconds)
 
   "Analytics Service" should {
     shareVariables()

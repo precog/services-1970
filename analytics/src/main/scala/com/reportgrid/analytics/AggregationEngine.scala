@@ -651,8 +651,8 @@ object AggregationEngine {
       "var_val_id" -> (List(valuesId), true)
     ),
     "variable_values_infinite" -> Map(
-      "var_val_inf_id" -> (List(valuesId, "value"), true),
-      "var_val_inf_keyMatch" -> (List("ids"), false)
+      "var_val_inf_id" -> (List(valuesId, "value"), true) //,
+    //  "var_val_inf_keyMatch" -> (List("ids"), false)
     ),
     "variable_children" -> Map(
       "variable_query" -> (List("path", "accountTokenId", "variable"), false)
