@@ -555,7 +555,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     val infinitePatches = infiniteObs.foldLeft(MongoPatches.empty) {
       case (patches, hasValue) => patches + (
         infiniteSeriesKey(token, path, hasValue) -> {
-          (MongoUpdateBuilder(".ids")      pushAll refKeys) |+| 
+          (MongoUpdateBuilder(".ids")      pushAll(refKeys: _*)) |+| 
           (MongoUpdateBuilder(".variable") set  hasValue.variable.serialize) |+| 
           (MongoUpdateBuilder(".value")    set  hasValue.value.serialize) |+| 
           (MongoUpdateBuilder(".count")    inc  count)
