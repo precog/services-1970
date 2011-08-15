@@ -159,8 +159,8 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     shareVariables()
 
     // using the benchmark token for testing because it has order 3
-    val sampleEvents: List[Event] = containerOfN[List, Event](1, eventGen).sample.get ->- {
-      _.foreach(event => engine.aggregate(Token.Test, "/test", timeTag(event.timestamp), event.data, 1))
+    val sampleEvents: List[Event] = containerOfN[List, Event](50, eventGen).sample.get ->- {
+      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", timeTag(event.timestamp), event.data, 1))
     }
 
     "retrieve path children" in {
@@ -303,6 +303,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve a time series for occurrences of a value of a variable" in {      
+      //skip("nothing")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events)
@@ -346,6 +347,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "count observations of a given value in a restricted time slice" in {
+      //skip("nothing")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
@@ -408,6 +410,7 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "retrieve intersection series for a slice of time" in {      
+      //skip("nothing")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
@@ -436,34 +439,35 @@ with ArbitraryEvent with FutureMatchers with LocalMongo {
       }
     }
 
-//    "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
-//      val granularity = Minute
-//      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-//
-//      val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), (Set[JValue], Set[Period])]) {
-//        case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
-//          obj.flattenWithPath.foldLeft(map) {
-//            case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
-//              val key = (eventName, jpath, value)
-//              map + (key -> (map.getOrElse(key, (Set.empty[JValue], Set.empty[Period])).mapElements(_ + (obj \ "~tweet"), _ + granularity.period(time))))
-//
-//            case (map, _) => map
-//          }
-//      }
-//
-//      expectedValues.foreach {
-//        case ((eventName, jpath, jvalue), (infiniteValues, periods)) => 
-//          engine.findRelatedInfiniteValues(
-//            Token.Benchmark, "/test", 
-//            JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
-//            TimeSpan(minDate, maxDate)
-//          ) map {
-//            _.map(_.value).toSet
-//          } must whenDelivered {
-//            beEqualTo(infiniteValues)
-//          }
-//      }
-//    }
+    "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
+      skip("nothing")
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+
+      val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), (Set[JValue], Set[Period])]) {
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
+          obj.flattenWithPath.foldLeft(map) {
+            case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
+              val key = (eventName, jpath, value)
+              map + (key -> (map.getOrElse(key, (Set.empty[JValue], Set.empty[Period])).mapElements(_ + (obj \ "~tweet"), _ + granularity.period(time))))
+
+            case (map, _) => map
+          }
+      }
+
+      expectedValues.foreach {
+        case ((eventName, jpath, jvalue), (infiniteValues, periods)) => 
+          engine.findRelatedInfiniteValues(
+            Token.Benchmark, "/test", 
+            JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
+            TimeSpan(minDate, maxDate)
+          ) map {
+            _.map(_.value).toSet
+          } must whenDelivered {
+            beEqualTo(infiniteValues)
+          }
+      }
+    }
 
     // this test is here because it's testing internals of the analytics service
     // which are not exposed though the analytics api
