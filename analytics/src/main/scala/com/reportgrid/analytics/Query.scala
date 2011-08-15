@@ -61,7 +61,7 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   def infiniteValueKeys: Stream[Sig] = span match {
     case TimeSpan.Eternity => error("todo")
     case TimeSpan.Finite(start, end) => 
-      resultGranularity.period(start).datesTo(end).map(i => (resultGranularity, i).sig)
+      resultGranularity.period(start).datesTo(end).map(instant => Sig(resultGranularity.sig, instant.sig))
   }
 }
 

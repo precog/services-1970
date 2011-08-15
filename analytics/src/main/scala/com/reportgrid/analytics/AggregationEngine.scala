@@ -143,7 +143,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         variable_value_series putAll vvSeriesPatches.patches
 
         variable_values          putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches
-        variable_values_infinite putAll vvInfinitePatches.patches
+        variable_values_infinite putAll vvInfinitePatches.patches 
 
         val childObservations = JointObservations.ofChildren(event, 1)
         variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches
@@ -306,6 +306,9 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         case (docKey, dataKeys) => database(selectOne(dataPath).from(collection).where(filter(docKey))).map {
           results => dataKeys.flatMap {
             case (keySig, keyData) => results.map {
+               // since the data keys are a stream of all possible keys in the document that data might
+               // be found under, and since we want to return a zero-filled result set, we use the \? form of
+               // the object find method and then use getOrElse returning the zero for T if no such key is found.
                jobj => keyData -> (jobj(dataPath) \? keySig.hashSignature).map(_.deserialize[T]).getOrElse(mzero[T])
             }
           }
@@ -518,7 +521,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   def dataKeySigs(storageKeys: List[StorageKeys]): (Sig, Sig) = {
     storageKeys.map {
       case NameSetKeys(_, dataKey)      => (None, dataKey.sig)
-      case TimeRefKeys(docKey, dataKey) => (Some(dataKey.sig), Sig(docKey._1.sig, dataKey.sig))
+      case TimeRefKeys(docKey, instant) => (Some(instant.sig), Sig(docKey._1.sig, instant.sig))
       case HierarchyKeys(_, dataKey)    => (Some(dataKey.sig), dataKey.sig)
     }.foldLeft((Set.empty[Sig], Set.empty[Sig])) {
       case ((ks1, ks2), (k1, k2)) => (ks1 ++ k1, ks2 + k2)
@@ -529,8 +532,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
         
   private def variableValueSeriesPatches(token: Token, path: Path, finiteReport: Report[HasValue], infiniteObs: Set[HasValue], count: CountType): (MongoPatches, MongoPatches) = {
-    finiteReport.storageKeysets.foldLeft((MongoPatches.empty, MongoPatches.empty)) {
-      case ((finitePatches, infinitePatches), (storageKeys, finiteObservation)) => 
+    val (finitePatches, refKeys) = finiteReport.storageKeysets.foldLeft((MongoPatches.empty, List.empty[MongoPrimitive])) {
+      case ((finitePatches, refKeys), (storageKeys, finiteObservation)) => 
 
         // When we query for associated infinite values, we will use the queriable expansion (heap shaped) 
         // of the specified time series so here we need to construct a value series key that records where 
@@ -538,25 +541,29 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         // being stored. We will then construct an identical key when we query, and the fact that we have 
         // built aggregated documents will mean that we query for the minimal set of infinite value documents.
         val (dataKeySig, refSig) = dataKeySigs(storageKeys)
-        val referenceKey = valueSeriesKey(token, path, refSig, finiteObservation)
+        val referenceKey = valueSeriesKey(token, path, refSig, finiteObservation).rhs
         val docKey = valueSeriesKey(token, path, docKeySig(storageKeys), finiteObservation)
 
         Tuple2(
           finitePatches + (docKey -> ((CountsPath \ dataKeySig.hashSignature) inc count)),
-          //build infinite patches by adding the finite key id to the list of locations that the infinite value
-          //was observed in conjunction with.
-          infiniteObs.foldLeft(infinitePatches) {
-            case (patches, hasValue) => patches + (
-              infiniteSeriesKey(token, path, hasValue) -> {
-                (MongoUpdateBuilder(".ids")      push referenceKey.rhs) |+| 
-                (MongoUpdateBuilder(".variable") set  hasValue.variable.serialize) |+| 
-                (MongoUpdateBuilder(".value")    set  hasValue.value.serialize) |+| 
-                (MongoUpdateBuilder(".count")    inc  count)
-              }
-            )
-          }
+          referenceKey :: refKeys
         )
+    } 
+
+    //build infinite patches by adding the finite key id to the list of locations that the infinite value
+    //was observed in conjunction with.
+    val infinitePatches = infiniteObs.foldLeft(MongoPatches.empty) {
+      case (patches, hasValue) => patches + (
+        infiniteSeriesKey(token, path, hasValue) -> {
+          (MongoUpdateBuilder(".ids")      pushAll refKeys) |+| 
+          (MongoUpdateBuilder(".variable") set  hasValue.variable.serialize) |+| 
+          (MongoUpdateBuilder(".value")    set  hasValue.value.serialize) |+| 
+          (MongoUpdateBuilder(".count")    inc  count)
+        }
+      )
     }
+
+    (finitePatches, infinitePatches)
   }
 
   private def variableSeriesPatches(token: Token, path: Path, report: Report[Observation], count: CountType): MongoPatches = {
