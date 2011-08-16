@@ -438,10 +438,8 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         verify { results => 
           // all returned results must have the same length of time series
           val sizes = results.values.map(_.size).filter(_ > 0)
-
-          (results.values must notBeEmpty) &&
-          sizes.zip(sizes.tail).forall { case (a, b) => a must_== b } &&
-          (results.mapValues(_.total).filter(_._2 != 0) must haveTheSameElementsAs(expectedCounts))
+          sizes.zip(sizes.tail).forall { case (a, b) => a must_== b }
+          results.mapValues(_.total).filter(_._2 != 0) must haveTheSameElementsAs(expectedCounts)
         }
       }
     }
