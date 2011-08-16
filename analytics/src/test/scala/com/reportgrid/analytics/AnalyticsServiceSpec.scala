@@ -11,7 +11,8 @@ import blueeyes.json.JsonDSL._
 
 import MimeTypes._
 
-import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
+import blueeyes.json.JsonAST._
+import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
 import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo}
@@ -23,11 +24,13 @@ import net.lag.configgy.{Configgy, ConfigMap}
 
 import org.specs._
 import org.scalacheck.Gen._
+import scalaz.Scalaz._
 
 import rosetta.json.blueeyes._
 
 import Periodicity._
 import persistence.MongoSupport._
+import org.joda.time.Instant
 
 class AnalyticsServiceSpec extends BlueEyesServiceSpecification 
 with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
@@ -64,18 +67,25 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "return variable series means" in {
+      //skip("disabled")
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
       val expected = expectedMeans(events, Hour, "recipientCount")
 
       (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")) must whenDelivered {
         verify {
           case HttpResponse(status, _, Some(contents), _) => 
-            contents.deserialize[TimeSeries[Option[Double]]].series.flatMap{ case (k, v) => v.filter(_ != 0).map(c => (k, c)) } must haveTheSameElementsAs(expected("tweeted"))
+            contents match {
+              case JArray(values) => values.flatMap { 
+                case JArray(List(JObject(List(JField(_, k))), JDouble(v))) => Some((k.deserialize[Instant], v))
+                case JArray(List(JObject(List(JField(_, _))), JNull)) => None
+              } must haveTheSameElementsAs(expected("tweeted"))
+            }
         }
       } 
     }
 
     "return variable value series counts" in {
+      //skip("disabled")
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
       //val expected = expectedCounts(events, Hour, "gender")
       //expected must notBeEmpty
@@ -83,8 +93,9 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.gender/values/\"male\"/series/hour")) must whenDelivered {
         verify {
           case HttpResponse(status, _, Some(contents), _) => 
-            val series = contents.deserialize[TimeSeries[Long]].series 
-            (series must notBeEmpty) //&& (series must_== expected)
+            contents match {
+              case JArray(values) => (values must notBeEmpty) //&& (series must_== expected)
+            }
         }
       } 
     }
