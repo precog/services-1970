@@ -138,6 +138,10 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
   //val mongo = new MockMongo()
 
   val database = mongo.database(dbName)
+
+  implicit val hashFunction: HashFunction = new HashFunction {
+    override def apply(bytes : Array[Byte]) = bytes
+  }
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 
@@ -287,9 +291,9 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       }
     }
 
-    "retrieve a time series of statistics over values of a variable" in {
+    "retrieve a time series of means of values of a variable" in {
       //skip("nothing")
-      val granularity = Hour
+      val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
 
@@ -318,7 +322,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
               verify {
                 results => 
                   (results.total must_== count.toLong) && 
-                  (results must haveSize((granularity.period(minDate) to maxDate).size))
+                  (results must haveSize((granularity.period(minDate) until maxDate).size))
               }
             }
           }
@@ -384,7 +388,9 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         case (map, _) => map
       }
 
-      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan.Eternity) must whenDelivered (beEqualTo(expectedCounts)) 
+      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan.Eternity) must whenDelivered {
+        verify(_.filter(_._2 != 0) must_== expectedCounts)
+      }
     }
 
     "retrieve intersection counts for a slice of time" in {      
@@ -405,7 +411,9 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         case (map, _) => map
       }
 
-      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan(minDate, maxDate)) must whenDelivered (beEqualTo(expectedCounts)) 
+      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan(minDate, maxDate)) must whenDelivered {
+        verify(_.filter(_._2 != 0) must_== expectedCounts)
+      }
     }
 
     "retrieve intersection series for a slice of time" in {      
@@ -429,7 +437,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       engine.intersectSeries(Token.Benchmark, "/test", descriptors, intervalTerm) must whenDelivered {
         verify { results => 
           // all returned results must have the same length of time series
-          val sizes = results.values.map(_.size).toList
+          val sizes = results.values.map(_.size).filter(_ > 0)
 
           (results.values must notBeEmpty) &&
           sizes.zip(sizes.tail).forall { case (a, b) => a must_== b } &&
@@ -439,7 +447,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
-      skip("nothing")
+      //skip("nothing")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 

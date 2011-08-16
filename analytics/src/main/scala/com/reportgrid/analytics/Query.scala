@@ -46,7 +46,7 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
       Stream(Instants.Zero)
 
     case TimeSpan.Finite(start, end) => 
-      resultGranularity.period(docStoragePeriod.start max start).datesTo(docStoragePeriod.end min end)
+      resultGranularity.period(docStoragePeriod.start max start).datesUntil(docStoragePeriod.end min end)
   }
 
   val tagName = "timestamp"

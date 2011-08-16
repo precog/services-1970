@@ -85,7 +85,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
   }
 }
 
-class AggregationEngine private (config: ConfigMap, logger: Logger, database: Database) {
+class AggregationEngine private (config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
 
   private def AggregationStage(prefix: String): AggregationStage = {
@@ -299,7 +299,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         v.map(_._1).toSet.sig,
         v.map(_._2).sequence.map(x => (x.map(_._1).toSet.sig, JObject(x.map(_._2).toList)))
       )
-    }
+    } 
 
     Future (
       toQuery.map {
@@ -638,7 +638,6 @@ object AggregationEngine {
 
   val timeSeriesEncoding  = TimeSeriesEncoding.Default
   val timeGranularity     = timeSeriesEncoding.grouping.keys.min
-  implicit val SigHashFunction: HashFunction = Sha1HashFunction
 
   private val CollectionIndices = Map(
     "variable_series" -> Map(
@@ -689,11 +688,11 @@ object AggregationEngine {
     }
   }
 
-  def apply(config: ConfigMap, logger: Logger, database: Database): Future[AggregationEngine] = {
+  def apply(config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
     createIndices(database).map(_ => new AggregationEngine(config, logger, database))
   }
 
-  def forConsole(config: ConfigMap, logger: Logger, database: Database) = {
+  def forConsole(config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction) = {
     new AggregationEngine(config, logger, database)
   }
 
