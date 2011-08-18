@@ -139,9 +139,9 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
 
   val database = mongo.database(dbName)
 
-  implicit val hashFunction: HashFunction = new HashFunction {
-    override def apply(bytes : Array[Byte]) = bytes
-  }
+//  implicit val hashFunction: HashFunction = new HashFunction {
+//    override def apply(bytes : Array[Byte]) = bytes
+//  }
   
   val engine = get(AggregationEngine(config, Logger.get, database))
 

@@ -2,13 +2,16 @@ package com.reportgrid.analytics
 
 import blueeyes.json._
 import blueeyes.json.JsonAST._
+import blueeyes.json.Printer._
 import org.specs._
 import org.scalacheck._
 import Prop._
 import SignatureGen._
 
-class SignatureSpec extends Specification with ScalaCheck with ArbitraryJValue{
+class SignatureSpec extends Specification with ScalaCheck with ArbitraryJValue {
   implicit val hashFunction = Sha1HashFunction 
+
+  override val defaultPrettyParams = Pretty.Params(6)
 
   "generation of a signature" should {
     "for a jvalue" >> {
