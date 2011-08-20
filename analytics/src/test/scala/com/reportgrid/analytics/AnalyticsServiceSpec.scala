@@ -102,9 +102,6 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
               }
             }
 
-            println("results: " + resultData.toMap)
-            println("expected: " + expected("tweeted"))
-            
             resultData.toMap must haveTheSameElementsAs(expected("tweeted"))
         }
       } 

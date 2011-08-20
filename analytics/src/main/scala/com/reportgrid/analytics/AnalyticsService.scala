@@ -50,7 +50,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
   //val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
 
-  val analyticsService = service("analytics", "0.02") {
+  val analyticsService = service("analytics", "1.0") {
     logging { logger =>
       healthMonitor { monitor => context =>
         startup {
