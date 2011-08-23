@@ -13,3 +13,4 @@ build.xml
 nbproject
 *.log
 tmp
+**/.ensime

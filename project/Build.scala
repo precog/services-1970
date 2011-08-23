@@ -62,8 +62,16 @@ object ServicesBuild extends Build {
       oneJarExcludeJars := ((_: String).contains("slf4j-api-1.5.11.jar"))
     )
 
+    val jessupSettings = serviceSettings ++ oneJarSettings ++ Seq(
+      libraryDependencies ++= Seq(
+        "org.dspace.dependencies" % "dspace-geoip"        % "1.2.3",
+        "org.scala-tools.testing" % "specs_2.9.0-1"       % "1.6.8"  % "test",
+        "org.scala-tools.testing" % "scalacheck_2.9.0-1"  % "1.9"    % "test"),
+      mainClass := None)
+
     val yggdrasil = Project("yggdrasil", file("yggdrasil"), settings = yggdrasilSettings ) dependsOn(common) dependsOnAlt (blueeyes(base))
 
+    val jessup = Project("jessup", file("jessup"), settings = jessupSettings) dependsOnAlt blueeyes(base)
 
     val benchmarkSettings = serviceSettings ++ Seq(
       libraryDependencies += "org.scala-tools.testing" % "scalacheck_2.9.0-1"  % "1.9" % "compile",
@@ -73,6 +81,6 @@ object ServicesBuild extends Build {
     val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
 
     val services = Project("services", file(".")) aggregate (common, analytics, benchmark, yggdrasil) 
-    common :: analytics :: benchmark :: yggdrasil :: services :: Nil
+    common :: analytics :: benchmark :: yggdrasil :: jessup :: services :: Nil
   }
 }
