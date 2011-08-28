@@ -4,7 +4,6 @@ import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JsonAST._
 import org.joda.time.{Instant, DateTime, Duration}
 import org.specs.{Specification, ScalaCheck}
-import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
 import org.scalacheck.Gen._
 import org.scalacheck.Prop._

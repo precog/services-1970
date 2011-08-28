@@ -69,7 +69,7 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
     "return variable series means" in {
       //skip("disabled")
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
-      val expected = expectedMeans(events, Hour, "recipientCount")
+      val expected = expectedMeans(events, "recipientCount", keysf(Hour))
 
       (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")) must whenDelivered {
         verify {

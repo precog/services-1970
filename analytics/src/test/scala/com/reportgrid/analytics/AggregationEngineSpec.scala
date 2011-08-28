@@ -156,14 +156,13 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       }
   }
 
-  def timeTag(instant: Instant) = Set(Tag("timestamp", TimeReference(AggregationEngine.timeSeriesEncoding, instant)))
 
   "Aggregation engine" should {
     shareVariables()
 
     // using the benchmark token for testing because it has order 3
     val sampleEvents: List[Event] = containerOfN[List, Event](50, eventGen).sample.get ->- {
-      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", timeTag(event.timestamp), event.data, 1))
+      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.tags.toSet, event.data, 1))
     }
 
     "retrieve path children" in {
@@ -180,15 +179,20 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     "count events" in {
       //skip("nothing")
       def countEvents(eventName: String) = sampleEvents.count {
-        case Event(JObject(JField(`eventName`, _) :: Nil), _) => true
+        case Event(JObject(JField(`eventName`, _) :: Nil), tags) => true
         case _ => false
       }
 
       val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
 
+      val queryTerms = List[TagTerm](
+        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan.Eternity),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
+
       eventCounts.foreach {
         case (eventName, count) =>
-          engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName)) must whenDelivered {
+          engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName), queryTerms) must whenDelivered {
             beEqualTo(count)
           }
       }
@@ -256,11 +260,16 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       //skip("nothing")
       val expectedTotals = valueCounts(sampleEvents)
 
+      val queryTerms = List[TagTerm](
+        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan.Eternity),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
+
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
           val variable = Variable(JPath(eventName) \ path) 
           if (!variable.name.endsInInfiniteValueSpace) {
-            engine.searchCount(Token.Benchmark, "/test", JointObservation(HasValue(variable, value)), TimeSpan.Eternity) must whenDelivered {
+            engine.observationCount(Token.Benchmark, "/test", JointObservation(HasValue(variable, value)), queryTerms) must whenDelivered {
               beEqualTo(count.toLong)
             }
           }
@@ -271,7 +280,11 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       //skip("nothing")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
 
       val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
         case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
@@ -284,7 +297,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
 
       expectedTotals.foreach {
         case (subset @ (eventName, path), count) =>
-          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), intervalTerm).
+          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ path), queryTerms).
           map(_.total.count) must whenDelivered {
             beEqualTo(count.toLong)
           }
@@ -295,12 +308,21 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       //skip("nothing")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
 
-      expectedMeans(events, granularity, "recipientCount").foreach {
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
+
+      expectedMeans(events, "recipientCount", keysf(granularity)).foreach {
         case (eventName, means) =>
-          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), intervalTerm) must whenDelivered {
-            verify(_.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant] -> _) }.toMap must_== means)
+          val expected: Map[String, Double] = means.map{ case (k, v) => (k(0), v) }.toMap
+
+          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), queryTerms) must whenDelivered {
+            verify { result => 
+              val remapped: Map[String, Double] = result.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant].toString -> _) }.toMap 
+              remapped must_== expected
+            }
           }
       }
     }
@@ -310,7 +332,10 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
 
       expectedTotals.foreach {
         case (subset @ (eventName, path, value), count) =>
@@ -318,7 +343,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
           if (!variable.name.endsInInfiniteValueSpace) {
             val observation = JointObservation(HasValue(variable, value))
 
-            engine.searchSeries(Token.Benchmark, "/test", observation, intervalTerm) must whenDelivered {
+            engine.observationSeries(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered {
               verify {
                 results => 
                   (results.total must_== count.toLong) && 
@@ -333,6 +358,11 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       //skip("nothing")
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
+      val queryTerms = List[TagTerm](
+        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan.Eternity),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
+
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
@@ -345,7 +375,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
-          engine.searchCount(Token.Benchmark, "/test", observation, TimeSpan.Eternity) must whenDelivered (beEqualTo(count))
+          engine.observationCount(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -353,13 +383,15 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       //skip("nothing")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
 
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
-      var expectedPeriods = Set.empty[Period]
       val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), time)) =>
-          expectedPeriods += (granularity.period(time))
+        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
@@ -370,7 +402,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
-          engine.searchCount(Token.Benchmark, "/test", observation, TimeSpan(minDate, maxDate)) must whenDelivered (beEqualTo(count))
+          engine.observationCount(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -379,6 +411,11 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
+      val queryTerms = List[TagTerm](
+        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan.Eternity),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
+
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
         case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
@@ -388,7 +425,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         case (map, _) => map
       }
 
-      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan.Eternity) must whenDelivered {
+      engine.intersectCount(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
         verify(_.filter(_._2 != 0) must_== expectedCounts)
       }
     }
@@ -398,6 +435,10 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events)
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
 
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
@@ -411,7 +452,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         case (map, _) => map
       }
 
-      engine.intersectCount(Token.Benchmark, "/test", descriptors, TimeSpan(minDate, maxDate)) must whenDelivered {
+      engine.intersectCount(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
         verify(_.filter(_._2 != 0) must_== expectedCounts)
       }
     }
@@ -420,7 +461,11 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       //skip("nothing")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val intervalTerm = IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate))
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
+
       val expectedTotals = valueCounts(events)
 
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Variable(".tweeted.twitterClient") :: Nil
@@ -434,7 +479,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         case (map, _) => map
       }
 
-      engine.intersectSeries(Token.Benchmark, "/test", descriptors, intervalTerm) must whenDelivered {
+      engine.intersectSeries(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
         verify { results => 
           // all returned results must have the same length of time series
           val sizes = results.values.map(_.size).filter(_ > 0)
@@ -452,19 +497,19 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
-      val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), (Set[JValue], Set[Period])]) {
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
+      val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), Set[JValue]]) {
+        case (map, Event(JObject(JField(eventName, obj) :: Nil), tags)) =>
           obj.flattenWithPath.foldLeft(map) {
             case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
               val key = (eventName, jpath, value)
-              map + (key -> (map.getOrElse(key, (Set.empty[JValue], Set.empty[Period])).mapElements(_ + (obj \ "~tweet"), _ + granularity.period(time))))
+              map + (key -> (map.getOrElse(key, Set.empty[JValue]) + (obj \ "~tweet")))
 
             case (map, _) => map
           }
       }
 
       expectedValues.foreach {
-        case ((eventName, jpath, jvalue), (infiniteValues, periods)) => 
+        case ((eventName, jpath, jvalue), infiniteValues) => 
           engine.findRelatedInfiniteValues(
             Token.Benchmark, "/test", 
             JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),

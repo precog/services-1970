@@ -14,8 +14,6 @@ import AnalyticsServiceSerialization._
 sealed trait TagTerm {
   type StorageKeysType <: StorageKeys
 
-  def tagName: String
-  
   /**
    * The asymmetry between this signature and that of TagValue storage
    * key classes reflects the asymmetry between inserting at a single point
@@ -24,6 +22,12 @@ sealed trait TagTerm {
    * that has a single member)
    */
   def storageKeys: Seq[(Sig, Seq[(Sig, JField)])]
+
+  /**
+   * Return the sequence of reference signatures that will be used to correlate to 
+   * infinite value storage.
+   */
+  def infiniteValueKeys: Seq[Sig] 
 }
 
 case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodicity, span: TimeSpan) extends TagTerm {
@@ -49,17 +53,15 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
       resultGranularity.period(docStoragePeriod.start max start).datesUntil(docStoragePeriod.end min end)
   }
 
-  val tagName = "timestamp"
-
   // see AggregationEngine.dataKeySigs._1
-  def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = {
+  override def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = {
     for (docPeriod <- docStoragePeriods) 
-    yield ((resultGranularity, docPeriod).sig -> (dataKeyInstants(docPeriod).map(i => (i.sig, JField(tagName, i.serialize)))))
+    yield ((resultGranularity, docPeriod).sig -> (dataKeyInstants(docPeriod).map(i => (i.sig, JField("timestamp", i.serialize)))))
   }
 
   // see AggregationEngine.dataKeySigs._2
-  def infiniteValueKeys: Stream[Sig] = span match {
-    case TimeSpan.Eternity => error("todo")
+  override def infiniteValueKeys: Stream[Sig] = span match {
+    case TimeSpan.Eternity => Stream.empty[Sig]
     case TimeSpan.Finite(start, end) => 
       resultGranularity.period(start).datesUntil(end).map(instant => Sig(resultGranularity.sig, instant.sig))
   }
@@ -69,10 +71,36 @@ object IntervalTerm {
   def Eternity(encoding: TimeSeriesEncoding) = IntervalTerm(encoding, Periodicity.Eternity, TimeSpan.Eternity)
 }
 
+case class SpanTerm(encoding: TimeSeriesEncoding, span: TimeSpan) extends TagTerm {
+  type StorageKeysType = TimeRefKeys
+
+  override def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = {
+    span.finite.map { span => 
+      encoding.queriableExpansion(span).flatMap {
+        case (p, span) => IntervalTerm(encoding, p, span).storageKeys
+      }
+    } getOrElse {
+      IntervalTerm.Eternity(encoding).storageKeys
+    }
+  }
+
+  override def infiniteValueKeys: Stream[Sig] = {
+    span.finite.map { span => 
+      encoding.queriableExpansion(span).flatMap {
+        case (p, span) => IntervalTerm(encoding, p, span).infiniteValueKeys
+      }
+    } getOrElse {
+      IntervalTerm.Eternity(encoding).infiniteValueKeys
+    }
+  }
+}
+
 case class HierarchyLocationTerm(tagName: String, location: Hierarchy.Location) extends TagTerm {
   type StorageKeysType = HierarchyKeys
-  def storageKeys: Seq[(Sig, List[(Sig, JField)])] = {
+  override def storageKeys: Seq[(Sig, List[(Sig, JField)])] = {
     location.path.parent.map(_.sig -> List((location.path.sig, JField(tagName, location.path.path.serialize)))).toSeq
   }
+
+  override def infiniteValueKeys: List[Sig] = List(location.path.sig)
 }
 

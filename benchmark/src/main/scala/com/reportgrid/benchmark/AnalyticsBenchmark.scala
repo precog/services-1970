@@ -286,13 +286,13 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
 
             try {
               //count
-              time(testApi.client.select(Count).of(".track").from(testApi.path), QueryTime(QueryType.Count, _))
+              time(testApi.client.select(Count).of(".click.gender").from(testApi.path), QueryTime(QueryType.Count, _))
 
               //select
-              time(testApi.client.select(Minute(Some((startTime.toDate, conf.clock.now().toDate)))).of(".track").from(testApi.path), QueryTime(QueryType.Series,_))
+              time(testApi.client.select(Minute(Some((startTime.toDate, conf.clock.now().toDate)))).of(".click.gender").from(testApi.path), QueryTime(QueryType.Series,_))
 
               //search
-              //time(testApi.client.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".track").from(testApi.path), QueryTime(QueryType.Search,_))
+              //time(testApi.client.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".click.gender").from(testApi.path), QueryTime(QueryType.Search,_))
 
               //intersect
               if (sampleKeys.size > 1) {

@@ -158,6 +158,17 @@ object Hierarchy {
     def path: Path
   }
 
+  object Location {
+    implicit object LocationExtractor extends Extractor[Location] {
+      def extract(v: JValue): Location = {
+        v match {
+          case JString(path) => AnonLocation(Path(path))
+          case JObject(List(JField(name, JString(path)))) => NamedLocation(name, Path(path))
+        }
+      }
+    }
+  }
+
   case class AnonLocation(path: Path) extends Location
   case class NamedLocation(name: String, path: Path) extends Location
 
@@ -172,11 +183,11 @@ object Hierarchy {
         case (ht, Nil) => ht
       }
 
-      if (tails.isEmpty) acc && heads.distinct.size == 1
+      if (heads.isEmpty) acc 
       else parallel(tails, acc && heads.distinct.size == 1)
     }
 
-    values.map(_.length).distinct.size == 1 && parallel(values.map(_.elements), true)
+    values.map(_.length).distinct.size == values.size && parallel(values.map(_.elements), true)
   }
 }
 

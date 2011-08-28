@@ -134,15 +134,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       case field @ JField(eventName, _) => 
         val event = JObject(field :: Nil)
 
-        path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)
+        path_children   put addChildOfPath(forTokenAndPath(token, path), "." + eventName)
 
         val (finiteObs, infiniteObs) = JointObservations.ofValues(event, order, depth, limit)
         val finiteOrder1 = finiteObs.filter(_.order == 1)
 
-        val (vvSeriesPatches, vvInfinitePatches) = variableValueSeriesPatches(token, path, Report(tags, finiteObs), infiniteObs, count)
-        variable_value_series putAll vvSeriesPatches.patches
+        variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches
 
-        variable_values          putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches
+        val (vvSeriesPatches, vvInfinitePatches) = variableValueSeriesPatches(token, path, Report(tags, finiteObs), infiniteObs, count)
+        variable_value_series    putAll vvSeriesPatches.patches
         variable_values_infinite putAll vvInfinitePatches.patches 
 
         val childObservations = JointObservations.ofChildren(event, 1)
@@ -213,115 +213,45 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   /** Retrieves a count of how many times the specified variable appeared in a path */
-  def getVariableCount(token: Token, path: Path, variable: Variable): Future[CountType] = {
-    getVariableSeries(token, path, variable, IntervalTerm.Eternity(timeSeriesEncoding)).map {
+  def getVariableCount(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[CountType] = {
+    getVariableSeries(token, path, variable, tagTerms).map {
       _.mapValues(_.count).total
     }
   }
 
   /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
-  def getVariableSeries(token: Token, path: Path, variable: Variable, intervalTerm: IntervalTerm): Future[ResultSet[JObject, ValueStats]] = {
-
+  def getVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, ValueStats]] = {
     internalSearchSeries[ValueStats](
-      List(intervalTerm), 
+      tagTerms,
       variableSeriesKey(token, path, _, variable), 
       DataPath, variable_series.collection)
   }
 
   /** Retrieves a count of the specified observed state over the given time period */
-  def searchCount(token: Token, path: Path, observation: JointObservation[HasValue], timeSpan: TimeSpan): Future[CountType] = {
-    searchPeriod(timeSpan, searchSeries(token, path, observation, _)) map {
-      _.map(_.total).asMA.sum
-    }
+  def observationCount(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[CountType] = {
+    observationSeries(token, path, observation, tagTerms) map (_.total)
   }
 
   /** Retrieves a time series of counts of the specified observed state
    *  over the given time period.
    */
-  def searchSeries(token: Token, path: Path, observation: JointObservation[HasValue], intervalTerm: IntervalTerm): Future[ResultSet[JObject, CountType]] = {
-
+  def observationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
     internalSearchSeries[CountType](
-      List(intervalTerm), 
+      tagTerms,
       valueSeriesKey(token, path, _, observation), 
       CountsPath, variable_value_series.collection)
   }
 
-  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], timeSpan: TimeSpan): Future[IntersectionResult[CountType]] = {
-
-    searchPeriod(timeSpan, intersectSeries(token, path, properties, _)) map {
+  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[IntersectionResult[CountType]] = {
+    intersectSeries(token, path, properties, tagTerms) map {
       _.foldLeft(SortedMap.empty[List[JValue], CountType](ListJValueOrdering)) {
-        case (total, partialResult) => partialResult.foldLeft(total) {
-          case (total, (key, timeSeries)) => 
-            total + (key -> total.get(key).map(_ |+| timeSeries.total).getOrElse(timeSeries.total))
-        }
-      } 
-    }
-  }
-
-  def intersectSeries(token: Token, path: Path, properties: List[VariableDescriptor], intervalTerm: IntervalTerm): 
-                      Future[IntersectionResult[ResultSet[JObject, CountType]]] = {
-
-    intersectValueSeries(token, path, properties, intervalTerm)
-  }
-
-  def findRelatedInfiniteValues(token: Token, path: Path, observation: JointObservation[HasValue], span: TimeSpan.Finite): Future[List[HasValue]] = {
-    def find(intervalTerm: IntervalTerm) = Future {
-      intervalTerm.infiniteValueKeys.map { timeKey =>
-        val refKey = valueSeriesKey(token, path, Set(timeKey).sig, observation).rhs
-        database(
-          select(".variable", ".value")
-          .from(variable_values_infinite.collection)
-          .where(".ids" === refKey) //array comparison in Mongo uses equality for set inclusion. Go figure.
-        ) 
-      }: _*
-    } 
-
-    searchPeriod(span, find) map {
-      _.flatten.flatMap { 
-        _.map(jobj => HasValue((jobj \ "variable").deserialize[Variable], (jobj \ "value")))
+        case (total, (key, timeSeries)) => 
+          total + (key -> total.get(key).map(_ |+| timeSeries.total).getOrElse(timeSeries.total))
       }
-    }
-  }
-
-  private def searchPeriod[T](span: TimeSpan, f: (IntervalTerm) => Future[T]): Future[List[T]] = {
-    import TimeSpan._
-    val futureResults = timeSeriesEncoding.queriableExpansion(span) map {
-      case (p, span) => f(IntervalTerm(timeSeriesEncoding, p, span))
-    }
-
-    Future(futureResults: _*)
-  }
-
-  private def internalSearchSeries[T: AbelianGroup : Extractor](tagTerms: Seq[TagTerm], filter: Sig => MongoFilter, dataPath: JPath, collection: MongoCollection): Future[ResultSet[JObject, T]] = {
-
-    val toQuery = tagTerms.map(_.storageKeys).sequence.map {
-      v => Tuple2(
-        v.map(_._1).toSet.sig,
-        v.map(_._2).sequence.map(x => (x.map(_._1).toSet.sig, JObject(x.map(_._2).toList)))
-      )
     } 
-
-    Future (
-      toQuery.map {
-        case (docKey, dataKeys) => database(selectOne(dataPath).from(collection).where(filter(docKey))).map {
-          results => dataKeys.flatMap {
-            case (keySig, keyData) => results.map {
-               // since the data keys are a stream of all possible keys in the document that data might
-               // be found under, and since we want to return a zero-filled result set, we use the \? form of
-               // the object find method and then use getOrElse returning the zero for T if no such key is found.
-               jobj => keyData -> (jobj(dataPath) \? keySig.hashSignature).map(_.deserialize[T]).getOrElse(mzero[T])
-            }
-          }
-        }
-      }.toSeq: _*
-    ) map {
-      _.flatten
-    }
   }
 
-  private def intersectValueSeries(
-      token: Token, path: Path, variableDescriptors: List[VariableDescriptor], intervalTerm: IntervalTerm):
-      Future[IntersectionResult[ResultSet[JObject, CountType]]] = { 
+  def intersectSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[IntersectionResult[ResultSet[JObject, CountType]]] = {
 
     val variables = variableDescriptors.map(_.variable)
 
@@ -357,7 +287,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       Future {
         observations(variables).map { joint => 
           val obsMap: Map[Variable, JValue] = joint.obs.map(hv => hv.variable -> hv.value)(collection.breakOut)
-          searchSeries(token, path, joint, intervalTerm).map { result => 
+          observationSeries(token, path, joint, tagTerms).map { result => 
             (variables.flatMap(obsMap.get).toList -> result)
           }
         }.toSeq: _*
@@ -367,6 +297,61 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
             results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
         }
       }
+    }
+  }
+
+  def findRelatedInfiniteValues(token: Token, path: Path, observation: JointObservation[HasValue], span: TimeSpan.Finite): Future[List[HasValue]] = {
+    def find(intervalTerm: IntervalTerm) = Future {
+      intervalTerm.infiniteValueKeys.map { timeKey =>
+        val refKey = valueSeriesKey(token, path, Set(timeKey).sig, observation).rhs
+        database(
+          select(".variable", ".value")
+          .from(variable_values_infinite.collection)
+          .where(".ids" === refKey) //array comparison in Mongo uses equality for set inclusion. Go figure.
+        ) 
+      }: _*
+    } 
+
+    searchQueriableExpansion(span, find) map {
+      _.flatten.flatMap { 
+        _.map(jobj => HasValue((jobj \ "variable").deserialize[Variable], (jobj \ "value")))
+      }
+    }
+  }
+
+  private def searchQueriableExpansion[T](span: TimeSpan, f: (IntervalTerm) => Future[T]): Future[List[T]] = {
+    import TimeSpan._
+    val futureResults = timeSeriesEncoding.queriableExpansion(span) map {
+      case (p, span) => f(IntervalTerm(timeSeriesEncoding, p, span))
+    }
+
+    Future(futureResults: _*)
+  }
+
+  private def internalSearchSeries[T: AbelianGroup : Extractor](tagTerms: Seq[TagTerm], filter: Sig => MongoFilter, dataPath: JPath, collection: MongoCollection): Future[ResultSet[JObject, T]] = {
+
+    val toQuery = tagTerms.map(_.storageKeys).sequence.map {
+      v => Tuple2(
+        v.map(_._1).toSet.sig,
+        v.map(_._2).sequence.map(x => (x.map(_._1).toSet.sig, JObject(x.map(_._2).toList)))
+      )
+    } 
+
+    Future (
+      toQuery.map {
+        case (docKey, dataKeys) => database(selectOne(dataPath).from(collection).where(filter(docKey))).map {
+          results => dataKeys.flatMap {
+            case (keySig, keyData) => results.map {
+               // since the data keys are a stream of all possible keys in the document that data might
+               // be found under, and since we want to return a zero-filled result set, we use the \? form of
+               // the object find method and then use getOrElse returning the zero for T if no such key is found.
+               jobj => keyData -> (jobj(dataPath) \? keySig.hashSignature).map(_.deserialize[T]).getOrElse(mzero[T])
+            }
+          }
+        }
+      }.toSeq: _*
+    ) map {
+      _.flatten
     }
   }
 

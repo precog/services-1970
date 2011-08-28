@@ -10,6 +10,7 @@ import org.scalacheck.{Gen, Arbitrary}
 import Gen._
 
 import scala.math.Ordered._
+import scalaz.Scalaz._
 
 trait ArbitraryEvent extends ArbitraryTime {
   val Locations = for (i <- 0 to 10) yield "location" + i
@@ -24,11 +25,45 @@ trait ArbitraryEvent extends ArbitraryTime {
     startups <- containerOfN[List, String](i, oneOf(Startups))
   } yield startups
 
-  case class Event(data: JObject, timestamp: Instant) {
+  case class Event(data: JObject, tags: List[Tag]) {
     def message = JObject(
-      JField("events", data) :: JField("timestamp", timestamp.getMillis) :: Nil
+      JField("events", data) :: tags.flatMap(t => (t.serialize --> classOf[JObject]).fields)
     )
   }
+
+  val locations = List(
+    "usa" -> List(
+      "colorado" -> List(
+        "boulder" -> List("80303", "80304", "80305"),
+        "lakewood" -> List("80215")
+      ),
+      "arizona" -> List(
+        "tucson" -> List("85716")
+      )
+    )
+  )
+  
+  import Hierarchy._
+  implicit val locGen: Gen[Hierarchy] = for {
+    (country, states) <- oneOf(locations)
+    val countryPath = Path(country) 
+
+    (state, cities) <- oneOf(states)
+    val statePath = countryPath / state
+
+    (city, zips) <- oneOf(cities)
+    val cityPath = statePath / city
+
+    zip <- oneOf(zips)
+    val zipPath = cityPath / zip
+  } yield Hierarchy.of(
+    List(
+      NamedLocation("country", countryPath),
+      NamedLocation("state", statePath),
+      NamedLocation("city", cityPath),
+      NamedLocation("zip", zipPath)
+    )
+  ).get
   
   implicit val eventGen = for {
     eventName      <- oneOf(EventTypes)
@@ -41,6 +76,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     otherStartups  <- genOtherStartups
     twitterClient  <- oneOf(TwitterClients)
     tweet          <- identifier
+    geoloc         <- locGen
   } yield Event(
     JObject(
       JField(eventName, JObject(
@@ -55,48 +91,56 @@ trait ArbitraryEvent extends ArbitraryTime {
         Nil
       )) :: Nil
     ),
-    time
+    List(Tag("timestamp", TimeReference(AggregationEngine.timeSeriesEncoding, time)), Tag("location", geoloc))
+  )
+
+  def keysf(granularity: Periodicity): List[PartialFunction[Tag, String]] = List(
+    { case Tag("timestamp", TimeReference(_, instant)) => granularity.floor(instant).toString },
+    { case Tag("location", Hierarchy(locations)) => locations.sortBy(_.path.length).head.path.toString }
   )
 
   def timeSlice(l: List[Event], granularity: Periodicity) = {
-    val sortedEvents = l.sortBy(_.timestamp)
+    val timestamps = l.map(_.tags.collect{ case Tag("timestamp", TimeReference(_, time)) => time }.head)
+    val sortedEvents = l.zip(timestamps).sortBy(_._2)
     val sliceLength = sortedEvents.size / 2
-    val startTime = granularity.floor(sortedEvents.drop(sliceLength / 2).head.timestamp)
-    val endTime = granularity.ceil(sortedEvents.drop(sliceLength + (sliceLength / 2)).head.timestamp)
-    (sortedEvents.filter(t => t.timestamp >= startTime && t.timestamp < endTime), startTime, endTime)
+    val startTime = granularity.floor(sortedEvents.drop(sliceLength / 2).head._2)
+    val endTime = granularity.ceil(sortedEvents.drop(sliceLength + (sliceLength / 2)).head._2)
+    (sortedEvents.flatMap { case (e, t) => (t >= startTime && t < endTime).option(e) }, startTime, endTime)
   }
 
-  def expectedCounts(events: List[Event], granularity: Periodicity, property: String) = {
-    expectedSums(events, granularity, property) mapValues {
+  def expectedCounts(events: List[Event], property: String, keys: List[Tag => String]) = {
+    expectedSums(events, property, keys) mapValues {
       _.mapValues {
         case (k, v) => v 
       }
     }
   }
 
-  def expectedMeans(events: List[Event], granularity: Periodicity, property: String) = {
-    expectedSums(events, granularity, property) mapValues {
+  def expectedMeans(events: List[Event], property: String, keys: List[Tag => String]) = {
+    expectedSums(events, property, keys) mapValues {
       _.mapValues {
         case (k, v) => v / k
       }
     }
   }
 
-  def expectedSums(events: List[Event], granularity: Periodicity, property: String) = {
-    events.foldLeft(Map.empty[String, Map[Instant, (Int, Double)]]) {
-      case (map, Event(JObject(JField(eventName, obj) :: Nil), time)) =>
+  // returns a map from set of keys derived from the tags to count and sum
+  def expectedSums(events: List[Event], property: String, keyf: List[Tag => String]) = {
+    events.foldLeft(Map.empty[String, Map[List[String], (Int, Double)]]) {
+      case (map, Event(JObject(JField(eventName, obj) :: Nil), tags)) =>
+        val keys = tags zip keyf map { case (t, f) => f(t) }
+
         obj.flattenWithPath.foldLeft(map) {
           case (map, (path, value)) if path.nodes.last == JPathField(property) =>
-            val instant = granularity.floor(time)
             map + (
               eventName -> (
                 map.get(eventName) match {
-                  case None => Map(instant -> (1, value.deserialize[Int]))
+                  case None => Map(keys -> (1, value.deserialize[Int]))
                   case Some(totals) => 
-                    totals.get(instant) match {
-                      case None => totals + (instant -> (1, value.deserialize[Double]))
+                    totals.get(keys) match {
+                      case None => totals + (keys -> (1, value.deserialize[Double]))
                       case Some((count, sum)) =>
-                        totals + (instant -> (count + 1, value.deserialize[Double] + sum))
+                        totals + (keys -> (count + 1, value.deserialize[Double] + sum))
                     }
                 }
               )
