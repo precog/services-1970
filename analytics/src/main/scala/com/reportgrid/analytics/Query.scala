@@ -2,8 +2,8 @@ package com.reportgrid.analytics
 
 import blueeyes.util._
 import blueeyes.json.JsonAST._
-import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.xschema.JodaSerializationImplicits._
 
 import org.joda.time.Instant
 import scalaz.Scalaz._

@@ -5,6 +5,7 @@ import blueeyes.json.JsonAST._
 import blueeyes.json.Printer._
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.xschema.JodaSerializationImplicits._
 
 import org.joda.time.Instant
 import scala.annotation.tailrec
@@ -78,60 +79,6 @@ object JointObservations {
 }
 
 case class Tag(name: String, value: TagValue) 
-
-object Tag {
-  import Hierarchy._
-
-  implicit object TagDecomposer extends Decomposer[Tag] {
-    def decompose(v: Tag): JValue = v match {
-      case Tag(name, NameSet(values)) => JObject(
-        JField("#" + name, values.serialize) :: Nil
-      )
-
-      case Tag(name, Hierarchy(values)) => JObject(
-        JField("#" + name, JArray(
-          values map {
-            case AnonLocation(p) => JString(p.path)
-            case NamedLocation(name, p) => JObject(JField(name, JString(p.path)) :: Nil) 
-          }
-        )) :: Nil
-      )
-
-      case _ => error("todo")
-    }
-  }
-
-  implicit object TagExtractor extends Extractor[Tag] {
-    def extract(v: JValue): Tag = {
-      v match {
-        case JObject(JField(name, JArray(tags)) :: Nil) if name.startsWith("#") =>
-          val tagName = name.drop(1)
-          val (lefts, rights) = tags.foldLeft((List.empty[(String, String)], List.empty[String])) {
-            case ((lefts, rights), JObject(JField(lodName, JString(value)) :: Nil)) => ((lodName, value) :: lefts, rights)
-            case ((lefts, rights), JString(value)) => (lefts, value :: rights)
-            case _ => sys.error("Bad tag format: tags must be either strings or objects with a single field each.")
-          } 
-
-          if (lefts.isEmpty ^ rights.isEmpty) { //xor to the rescue
-            sys.error("You cannot match labeled and unlabeled level-of-detail tags.")
-          } 
-          
-          Tag(
-            tagName,
-            if (rights.isEmpty) {
-              Hierarchy.of(lefts.map(t => NamedLocation(t._1, Path(t._2)))).getOrElse {
-                sys.error("Tag value levels do not respect the refinement rule.")
-              }
-            } else {
-              Hierarchy.of(rights.map(v => AnonLocation(Path(v)))).getOrElse(NameSet(rights.toSet))
-            }
-          )
-
-        case _ => sys.error("Illegal tag format: " + renderNormalized(v))
-      }
-    }
-  }
-}
 
 sealed trait TagValue {
   type StorageKeysType <: StorageKeys

@@ -7,11 +7,12 @@ import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test._
 import blueeyes.util.metrics.Duration._
-import blueeyes.json.JsonDSL._
 
 import MimeTypes._
 
 import blueeyes.json.JsonAST._
+import blueeyes.json.JsonDSL
+import blueeyes.json.JsonDSL._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
@@ -53,13 +54,27 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
     }
 
+    "explore variables" in {
+      (jsonTestService.get[JValue]("/vfs/test/.tweeted")) must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => 
+            val expected = List(".startup",".retweet",".otherStartups",".~tweet",".location",".twitterClient",".gender",".recipientCount")
+            result.deserialize[List[String]] must haveTheSameElementsAs(expected)
+        }
+      } 
+    }
+
     "count created events" in {
       lazy val tweetedCount = sampleEvents.count {
         case Event(JObject(JField("tweeted", _) :: Nil), _) => true
         case _ => false
       }
 
-      (jsonTestService.get[JValue]("/vfs/test/.tweeted/count")) must whenDelivered {
+      val queryTerms = JObject(
+        JField("location", "usa") :: Nil
+      )
+
+      (jsonTestService.post[JValue]("/vfs/test/.tweeted/count")(queryTerms)) must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
         }
@@ -71,15 +86,26 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
       val expected = expectedMeans(events, "recipientCount", keysf(Hour))
 
-      (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")) must whenDelivered {
+      val queryTerms = JObject(
+        JField("start", minDate.getMillis) ::
+        JField("end", maxDate.getMillis) ::
+        JField("location", "usa") :: Nil
+      )
+
+      (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")(queryTerms)) must whenDelivered {
         verify {
           case HttpResponse(status, _, Some(contents), _) => 
-            contents match {
+            val resultData = contents match {
               case JArray(values) => values.flatMap { 
-                case JArray(List(JObject(List(JField(_, k))), JDouble(v))) => Some((k.deserialize[Instant], v))
-                case JArray(List(JObject(List(JField(_, _))), JNull)) => None
-              } must haveTheSameElementsAs(expected("tweeted"))
+                case JArray(List(JObject(List(JField("timestamp", k), JField("location", k2))), JDouble(v))) => Some((List(k.deserialize[Instant].toString, k2.deserialize[String]), v))
+                case JArray(List(JObject(List(_, _)), JNull)) => None
+              }
             }
+
+            println("results: " + resultData.toMap)
+            println("expected: " + expected("tweeted"))
+            
+            resultData.toMap must haveTheSameElementsAs(expected("tweeted"))
         }
       } 
     }
@@ -90,7 +116,13 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       //val expected = expectedCounts(events, Hour, "gender")
       //expected must notBeEmpty
 
-      (jsonTestService.header("Range", "time=" + minDate.getMillis + "-" + maxDate.getMillis).get[JValue]("/vfs/test/.tweeted.gender/values/\"male\"/series/hour")) must whenDelivered {
+      val queryTerms = JObject(
+        JField("start", minDate.getMillis) ::
+        JField("end", maxDate.getMillis) ::
+        JField("location", "usa") :: Nil
+      )
+
+      (jsonTestService.post[JValue]("/vfs/test/.tweeted.gender/values/\"male\"/series/hour")(queryTerms)) must whenDelivered {
         verify {
           case HttpResponse(status, _, Some(contents), _) => 
             contents match {

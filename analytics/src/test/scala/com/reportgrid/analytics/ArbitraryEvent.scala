@@ -1,9 +1,11 @@
 package com.reportgrid.analytics
 
+import blueeyes._
 import blueeyes.util._
 import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.xschema.JodaSerializationImplicits._
 
 import org.joda.time.Instant
 import org.scalacheck.{Gen, Arbitrary}
@@ -27,8 +29,15 @@ trait ArbitraryEvent extends ArbitraryTime {
 
   case class Event(data: JObject, tags: List[Tag]) {
     def message = JObject(
-      JField("events", data) :: tags.flatMap(t => (t.serialize --> classOf[JObject]).fields)
-    )
+      JField("events", data) :: tags.map {
+        case Tag(name, TimeReference(_, time)) => JField(name, time.serialize)
+        case Tag(name, Hierarchy(locations)) => JField(name, JObject(
+          locations.collect {
+            case Hierarchy.NamedLocation(name, path) => JField(name, path.path.serialize)
+          }
+        ))
+      }
+    ) 
   }
 
   val locations = List(

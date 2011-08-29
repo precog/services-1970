@@ -197,7 +197,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       val variable = variableOf(request)
 
                       withTokenAndPath(request) { (token, path) => 
-                        aggregationEngine.getVariableChildren(token, path, variable).map(_.serialize.ok)
+                        aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_.child).serialize.ok)
                       }
                     }
                   }
@@ -341,7 +341,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       path("/") {
                         path("count") {
                           audit("count occurrences of a variable value") {
-                            get { request: HttpRequest[JValue] =>
+                            post { request: HttpRequest[JValue] =>
                               val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
 
                               withTokenAndPath(request) { (token, path) => 
@@ -567,17 +567,33 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     (start <**> end)(TimeSpan(_, _))
   }
 
-  def location(content: JValue): Option[Hierarchy.Location] = (content \ "location") match {
+  def timeSpanTerm(content: JValue, p: Option[Periodicity]): Option[TagTerm] = {
+    val periodicity = (content \ "periodicity") match {
+      case JNothing | JNull | JBool(true) => p.orElse(Some(Periodicity.Eternity))
+      //only if it is explicitly stated that no timestamp was used on submission do we exclude a time term
+      case JBool(false) => None 
+      case jvalue => p.orElse(Some(jvalue.deserialize[Periodicity]))
+    }
+
+    periodicity flatMap {
+      case Periodicity.Eternity => 
+        timeSpan(content).map(SpanTerm(timeSeriesEncoding, _)).orElse(Some(SpanTerm(timeSeriesEncoding, TimeSpan.Eternity)))
+
+      case other => 
+        timeSpan(content).map(IntervalTerm(timeSeriesEncoding, other, _)).orElse {
+          throw new HttpException(BadRequest, "A periodicity was specified, but no finite time span could be determined.")
+        }
+    }
+  }
+
+  def locationTerm(content: JValue): Option[TagTerm] = (content \ "location") match {
     case JNothing | JNull => None
-    case jvalue => Some(jvalue.deserialize[Hierarchy.Location])
+    case jvalue => Some(HierarchyLocationTerm("location", jvalue.deserialize[Hierarchy.Location]))
   }
 
   def tagTerms(requestContent: Option[JValue], p: Option[Periodicity]): List[TagTerm] = {
     requestContent.toList.flatMap { content => 
-      List(
-        timeSpan(content).map(span => p.map(IntervalTerm(timeSeriesEncoding, _, span)).getOrElse(SpanTerm(timeSeriesEncoding, span))): Option[TagTerm],
-        location(content).map(HierarchyLocationTerm("location", _)): Option[TagTerm]
-      ).flatten
+      List(timeSpanTerm(content, p), locationTerm(content)).flatten 
     } 
   }
 
