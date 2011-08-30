@@ -121,36 +121,32 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   private val path_children             = AggregationStage("path_children")
 
 
-  /** Aggregates the specified data. The object may contain multiple events or
-   * just one.
+  /** 
+   * Add the event data for the specified event to the database
    */
-  def aggregate(token: Token, path: Path, tags: Set[Tag], jobject: JObject, count: Long) = Future.async {
+  def aggregate(token: Token, path: Path, eventName: String, tags: Set[Tag], eventBody: JObject, count: Int) = Future.async {
     import token.limits.{order, depth, limit}
+
+    val event = JObject(JField(eventName, eventBody) :: Nil)
 
     // Keep track of parent/child relationships:
     path_children putAll addPathChildrenOfPath(token, path).patches
+    path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)
 
-    jobject.fields.foreach {
-      case field @ JField(eventName, _) => 
-        val event = JObject(field :: Nil)
+    val (finiteObs, infiniteObs) = JointObservations.ofValues(event, order, depth, limit)
+    val finiteOrder1 = finiteObs.filter(_.order == 1)
 
-        path_children   put addChildOfPath(forTokenAndPath(token, path), "." + eventName)
+    variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches
 
-        val (finiteObs, infiniteObs) = JointObservations.ofValues(event, order, depth, limit)
-        val finiteOrder1 = finiteObs.filter(_.order == 1)
+    val (vvSeriesPatches, vvInfinitePatches) = variableValueSeriesPatches(token, path, Report(tags, finiteObs), infiniteObs, count)
+    variable_value_series    putAll vvSeriesPatches.patches
+    variable_values_infinite putAll vvInfinitePatches.patches 
 
-        variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches
+    val childObservations = JointObservations.ofChildren(event, 1)
+    variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches
 
-        val (vvSeriesPatches, vvInfinitePatches) = variableValueSeriesPatches(token, path, Report(tags, finiteObs), infiniteObs, count)
-        variable_value_series    putAll vvSeriesPatches.patches
-        variable_values_infinite putAll vvInfinitePatches.patches 
-
-        val childObservations = JointObservations.ofChildren(event, 1)
-        variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches
-
-        val childSeriesReport = Report(tags, (JointObservations.ofInnerNodes(event, 1) ++ finiteOrder1 ++ infiniteObs.map(JointObservation(_))).map(_.of[Observation]))
-        variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches
-    }
+    val childSeriesReport = Report(tags, (JointObservations.ofInnerNodes(event, 1) ++ finiteOrder1 ++ infiniteObs.map(JointObservation(_))).map(_.of[Observation]))
+    variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches
   }
 
   /** Retrieves children of the specified path &amp; variable.  */

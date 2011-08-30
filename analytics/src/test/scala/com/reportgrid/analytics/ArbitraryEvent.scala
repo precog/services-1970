@@ -27,15 +27,16 @@ trait ArbitraryEvent extends ArbitraryTime {
     startups <- containerOfN[List, String](i, oneOf(Startups))
   } yield startups
 
-  case class Event(data: JObject, tags: List[Tag]) {
+  case class Event(eventName: String, data: JObject, tags: List[Tag]) {
     def message = JObject(
-      JField("events", data) :: tags.map {
-        case Tag(name, TimeReference(_, time)) => JField(name, time.serialize)
-        case Tag(name, Hierarchy(locations)) => JField(name, JObject(
-          locations.collect {
-            case Hierarchy.NamedLocation(name, path) => JField(name, path.path.serialize)
-          }
-        ))
+      JField("events", JObject(JField(eventName, data) :: Nil)) :: 
+      tags.map {
+        case Tag(name, TimeReference(_, time)) => 
+          JField("#" + name, time.serialize)
+
+        case Tag(name, Hierarchy(locations)) => 
+          JField("#" + name, 
+                 JObject(locations.collect { case Hierarchy.NamedLocation(name, path) => JField(name, path.path.serialize) }))
       }
     ) 
   }
@@ -66,13 +67,11 @@ trait ArbitraryEvent extends ArbitraryTime {
     zip <- oneOf(zips)
     val zipPath = cityPath / zip
   } yield Hierarchy.of(
-    List(
-      NamedLocation("country", countryPath),
-      NamedLocation("state", statePath),
-      NamedLocation("city", cityPath),
-      NamedLocation("zip", zipPath)
-    )
-  ).get
+    List(NamedLocation("country", countryPath),
+         NamedLocation("state", statePath),
+         NamedLocation("city", cityPath),
+         NamedLocation("zip", zipPath))
+  ) | error("can't happen")
   
   implicit val eventGen = for {
     eventName      <- oneOf(EventTypes)
@@ -87,18 +86,17 @@ trait ArbitraryEvent extends ArbitraryTime {
     tweet          <- identifier
     geoloc         <- locGen
   } yield Event(
+    eventName, 
     JObject(
-      JField(eventName, JObject(
-        JField("location",       location.serialize) ::
-        JField("retweet",        retweet.serialize) ::
-        JField("gender",         gender) ::
-        JField("recipientCount", recipientCount.serialize) ::
-        JField("startup",        startup.serialize) ::
-        JField("otherStartups",  otherStartups.serialize) ::
-        JField("twitterClient",  twitterClient) ::
-        JField("~tweet",         tweet) ::
-        Nil
-      )) :: Nil
+      JField("location",       location.serialize) ::
+      JField("retweet",        retweet.serialize) ::
+      JField("gender",         gender) ::
+      JField("recipientCount", recipientCount.serialize) ::
+      JField("startup",        startup.serialize) ::
+      JField("otherStartups",  otherStartups.serialize) ::
+      JField("twitterClient",  twitterClient) ::
+      JField("~tweet",         tweet) ::
+      Nil
     ),
     List(Tag("timestamp", TimeReference(AggregationEngine.timeSeriesEncoding, time)), Tag("location", geoloc))
   )
@@ -136,7 +134,7 @@ trait ArbitraryEvent extends ArbitraryTime {
   // returns a map from set of keys derived from the tags to count and sum
   def expectedSums(events: List[Event], property: String, keyf: List[Tag => String]) = {
     events.foldLeft(Map.empty[String, Map[List[String], (Int, Double)]]) {
-      case (map, Event(JObject(JField(eventName, obj) :: Nil), tags)) =>
+      case (map, Event(eventName, obj, tags)) =>
         val keys = tags zip keyf map { case (t, f) => f(t) }
 
         obj.flattenWithPath.foldLeft(map) {

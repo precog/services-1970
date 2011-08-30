@@ -50,11 +50,12 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
   "Analytics Service" should {
     shareVariables()
 
-    val sampleEvents: List[Event] = containerOfN[List, Event](100, eventGen).sample.get ->- {
+    val sampleEvents: List[Event] = containerOfN[List, Event](50, eventGen).sample.get ->- {
       _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
     }
 
     "explore variables" in {
+      //skip("disabled")
       (jsonTestService.get[JValue]("/vfs/test/.tweeted")) must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(result), _) => 
@@ -65,8 +66,9 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
     }
 
     "count created events" in {
+      //skip("disabled")
       lazy val tweetedCount = sampleEvents.count {
-        case Event(JObject(JField("tweeted", _) :: Nil), _) => true
+        case Event("tweeted", _, _) => true
         case _ => false
       }
 
@@ -110,7 +112,7 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
     "return variable value series counts" in {
       //skip("disabled")
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
-      //val expected = expectedCounts(events, Hour, "gender")
+      //val expected = expectedCounts(events, "gender", keysf(Hour))
       //expected must notBeEmpty
 
       val queryTerms = JObject(

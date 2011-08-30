@@ -133,6 +133,18 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             }
           }
 
+          def geoipLocationHierarchy(request: HttpRequest[_]): Hierarchy = {
+            error("todo")
+          }
+
+          def getTagSet(result: Tag.ExtractionResult) = result match {
+            case Tag.Skipped => Set.empty[Tag]
+            case Tag.Tags(tags) => tags.toSet
+            case Tag.Errors(errors) =>
+              val errmsg = "Errors occurred extracting tag information: " + errors.map(_.toString).mkString("; ")
+              throw new HttpException(BadRequest, errmsg)
+          }
+
           jsonp {
             /* The virtual file system, which is used for storing data,
              * retrieving data, and querying for metadata.
@@ -145,36 +157,32 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   //forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
                     post { request: HttpRequest[JValue] =>
                       withTokenAndPath(request) { (token, path) => 
-                        request.content.foreach { content =>
-                          val timestamp: Option[Tag] = (content \ "timestamp") match {
-                            case JNothing | JBool(true) => Some(Tag("timestamp", TimeReference(timeSeriesEncoding, clock.instant())))
-                            case JBool(false) => None
-                            case jvalue   => Some(Tag("timestamp", TimeReference(timeSeriesEncoding, jvalue.deserialize[Instant])))
-                          }
+                        val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, TimeReference(timeSeriesEncoding, clock.instant())) ::
+                                            Tag.locationTagExtractor(geoipLocationHierarchy(request)) ::
+                                            Nil
 
-                          val geo: Option[Tag] = (content \ "location") match {
-                            case JNothing | JBool(false) => None
-                            case JBool(true) => None //TODO: call the geoip service
-                            case JArray(elements) => 
-                              Hierarchy.of(elements.map(Path(_)).map(Hierarchy.AnonLocation(_))).map(Tag("location", _))
+                        request.content.foreach { 
+                          case obj @ JObject(fields) => 
+                            val count: Int = request.parameters.get('count).map(_.toInt)
+                                             .orElse((obj \? "count").flatMap(_.validated[Int].toOption))
+                                             .getOrElse(1)
 
-                            case JObject(fields) => 
-                              Hierarchy.of(fields.map(f => Hierarchy.NamedLocation(f.name, Path(f.value)))).map(Tag("location", _))
-                          }
+                            val (tagResults, _) = Tag.extractTags(tagExtractors, obj)
+                            val tags = getTagSet(tagResults)
 
-                          val events: JObject = (content \ "events") match {
-                            case jobject: JObject => jobject
-                            case _ => sys.error("Expecting to find .events field containing object to aggregate")
-                          }
+                            (obj \ "events") match {
+                              case JObject(fields) => 
+                                fields.foreach {
+                                  case JField(eventName, event: JObject) => 
+                                    aggregationEngine.aggregate(token, path, eventName, tags, event, count)
 
-                          val count: Int = (content \ "count") match {
-                            case JNothing => 1
-                            case jvalue   => jvalue.deserialize[Int]
-                          }
+                                  case _ => 
+                                    throw new HttpException(BadRequest, "Events must be JSON objects.")
+                                }
 
-                          val tags = Set() ++ timestamp ++ geo
-
-                          aggregationEngine.aggregate(token, path, tags, events, count)
+                              case err => 
+                                throw new HttpException(BadRequest, "Unexpected type for field \"events\".")
+                            }
                         }
 
                         Future.sync(HttpResponse[JValue](content = None))

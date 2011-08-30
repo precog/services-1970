@@ -148,7 +148,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
   override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(String, JPath, JValue), Int]) {
-    case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+    case (map, Event(eventName, obj, _)) =>
       obj.flattenWithPath.foldLeft(map) {
         case (map, (path, value)) =>
           val key = (eventName, path, value)
@@ -161,13 +161,13 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
 
     // using the benchmark token for testing because it has order 3
     val sampleEvents: List[Event] = containerOfN[List, Event](50, eventGen).sample.get ->- {
-      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.tags.toSet, event.data, 1))
+      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags.toSet, event.data, 1))
     }
 
     "retrieve path children" in {
       //skip("disabled")
       val children = sampleEvents.map {
-        case Event(JObject(JField(eventName, _) :: Nil), _) => "." + eventName
+        case Event(eventName, _, _) => "." + eventName
       }.toSet
 
       engine.getPathChildren(Token.Benchmark, "/test") must whenDelivered {
@@ -178,7 +178,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     "count events" in {
       ////skip("disabled")
       def countEvents(eventName: String) = sampleEvents.count {
-        case Event(JObject(JField(`eventName`, _) :: Nil), tags) => true
+        case Event(`eventName`, _, tags) => true
         case _ => false
       }
 
@@ -200,7 +200,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     "retrieve values" in {
       //skip("disabled")
       val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+        case (map, Event(eventName, obj, _)) =>
           obj.flattenWithPath.foldLeft(map) {
             case (map, (path, value)) => 
               val key = (eventName, path)
@@ -226,7 +226,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     "retrieve all values of arrays" in {
       //skip("disabled")
       val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+        case (map, Event(eventName, obj, _)) =>
           map <+> ((obj.children.collect { case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet) }).toMap)
 
         case (map, _) => map
@@ -243,7 +243,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     "retrieve the top results of a histogram" in {
       //skip("disabled")
       val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) => 
+        case (map, Event("tweeted", obj, _)) => 
           val key = obj(".retweet")
           map + (key -> map.get(key).map(_ + 1).getOrElse(1))
 
@@ -286,7 +286,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       )
 
       val expectedTotals = events.foldLeft(Map.empty[(String, JPath), Int]) {
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), _)) =>
+        case (map, Event(eventName, obj, _)) =>
           obj.flattenWithPath.foldLeft(map) {
             case (map, (path, _)) =>
               val key = (eventName, path)
@@ -363,7 +363,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       )
 
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+        case (map, Event("tweeted", obj, _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
@@ -390,7 +390,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
       val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+        case (map, Event("tweeted", obj, _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
@@ -416,7 +416,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       )
 
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+        case (map, Event("tweeted", obj, _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
 
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
@@ -443,7 +443,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
       val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+        case (map, Event("tweeted", obj, _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
 
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
@@ -471,7 +471,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
       val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event(JObject(JField("tweeted", obj) :: Nil), _)) =>
+        case (map, Event("tweeted", obj, _)) =>
           val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
@@ -497,7 +497,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
       val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), Set[JValue]]) {
-        case (map, Event(JObject(JField(eventName, obj) :: Nil), tags)) =>
+        case (map, Event(eventName, obj, tags)) =>
           obj.flattenWithPath.foldLeft(map) {
             case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
               val key = (eventName, jpath, value)

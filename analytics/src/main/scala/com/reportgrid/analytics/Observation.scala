@@ -80,6 +80,103 @@ object JointObservations {
 
 case class Tag(name: String, value: TagValue) 
 
+object Tag {
+  sealed trait ExtractionResult
+  case class Tags(tags: Seq[Tag]) extends ExtractionResult
+  case object Skipped extends ExtractionResult
+  case class Errors(errors: Seq[ExtractionError]) extends ExtractionResult
+
+  case class ExtractionError(fieldName: String, message: String) {
+    override def toString = "An error occurred parsing tag " + fieldName + ": " + message
+  }
+
+  type TagExtractor = JObject => (ExtractionResult, JObject)
+
+  class RichTagExtractor(ex: TagExtractor) {
+    def or (other: TagExtractor): TagExtractor = (o: JObject) => ex(o) match {
+      case (Tags(tags), remainder) => other(remainder) match {
+        case (Tags(rest), remainder) => (Tags(tags ++ rest), remainder)
+        case x => x
+      }
+
+      case (Errors(errors), remainder) => other(remainder) match {
+        case (Tags(tags), remainder) => (Tags(tags), remainder)
+        case (Errors(rest), remainder) => (Errors(errors ++ rest), remainder)
+      }
+
+      case (Skipped, remainder) => other(remainder)
+    }
+  } 
+
+  implicit def richTagExtractor(ex: TagExtractor) = new RichTagExtractor(ex)
+
+  def timeTagExtractor(encoding: TimeSeriesEncoding, auto: => TimeReference): TagExtractor = (o: JObject) => {
+    val remainder = JObject(o.fields.filter(_.name != "#timestamp"))
+
+    (o \ "#timestamp") match {
+      case JBool(false) => (Skipped, remainder)
+
+      case JNothing | JBool(true) => (Tags(Tag("timestamp", auto) :: Nil), remainder)
+
+      case jvalue => extractTimestampTag(encoding, "timestamp", jvalue) match {
+        case tags: Tags => (tags, remainder)
+        case x => (x, o)
+      }    
+    }
+  }
+
+  def extractTimestampTag(encoding: TimeSeriesEncoding, tagName: String, jvalue: JValue) = jvalue.validated[Instant].fold(
+    error => Errors(ExtractionError(tagName, error) :: Nil), 
+    instant => Tags(Tag(tagName, TimeReference(encoding, instant)) :: Nil)
+  )
+
+  def locationTagExtractor(auto: => Hierarchy) = (o: JObject) => {
+    val remainder = JObject(o.fields.filter(_.name != "#location"))
+    (o \ "#location") match {
+      case JBool(true) => (Tags(Tag("location", auto) :: Nil), remainder)
+      case x => extractHierarchyTag("location", x) match {
+        case Skipped => (Errors(ExtractionError("location", "The value of the location tag is formatted incorrectly.") :: Nil), o)
+        case tags: Tags => (tags, remainder)
+        case errors => (errors, o)
+      }
+    }
+  }
+
+  def extractHierarchyTag(tagName: String, v: JValue): ExtractionResult = {
+    def result(locations: List[Hierarchy.Location]) = Hierarchy.of(locations).fold(
+      error => Errors(ExtractionError(tagName, error) :: Nil),
+      hierarchy => Tags(Tag(tagName, hierarchy) :: Nil)
+    )
+
+    v match {
+      case JArray(elements) => 
+        val locations = elements.collect {
+          case JString(pathName) => Hierarchy.AnonLocation(Path(pathName))
+        }
+
+        if (locations.size == elements.size) result(locations) else Skipped
+
+      case JObject(fields) => 
+        val locations = fields.collect {
+          case JField(name, JString(pathName)) => Hierarchy.NamedLocation(name, Path(pathName))
+        }
+        
+        if (locations.size == fields.size) result(locations) else Skipped
+      
+      case _ => Skipped
+    }
+  }
+
+  def extractTags(extractors: List[TagExtractor], event: JObject): (ExtractionResult, JObject) = {
+    extractors.reduceLeft(_ or _).apply(event) match {
+      case (result, remainder) => 
+        val unparsed = remainder.fields.filter(_.name.startsWith("#")) 
+        if (unparsed.isEmpty) (result, remainder)
+        else (Errors(unparsed.map(field => ExtractionError(field.name, "No extractor could handle the field."))), remainder)
+    }
+  }
+}
+
 sealed trait TagValue {
   type StorageKeysType <: StorageKeys
   def storageKeys: List[StorageKeysType]
@@ -120,7 +217,9 @@ object Hierarchy {
   case class NamedLocation(name: String, path: Path) extends Location
 
   def of[T <: Location](locations: List[T]) = {
-    (respectsRefinementRule(locations.map(_.path))).option(Hierarchy(locations.sortBy(_.path.length)))
+    (respectsRefinementRule(locations.map(_.path)))
+    .option(Hierarchy(locations.sortBy(_.path.length)))
+    .toSuccess("The specified list of locations " + locations + " does not respect the refinement rule.")
   }
 
   def respectsRefinementRule(values: List[Path]): Boolean = {
