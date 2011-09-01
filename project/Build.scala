@@ -8,7 +8,7 @@ import sbt.NameFilter._
 object ServicesSettings {
   val buildOrganization = "com.reportgrid"
   val buildVersion = "1.0.0"
-  val buildScalaVersion = "2.9.1.RC4"
+  val buildScalaVersion = "2.9.1"
   
   val serviceSettings = Defaults.defaultSettings ++ Seq (
     organization := buildOrganization,
@@ -29,7 +29,6 @@ object ServicesBuild extends Build {
     val common = Project("common", file("common"), 
       settings = serviceSettings ++ Seq(libraryDependencies += "joda-time" % "joda-time" % "1.6.2")
     )
-
 
     val analyticsSettings = serviceSettings ++ Seq( 
       libraryDependencies ++= Seq(

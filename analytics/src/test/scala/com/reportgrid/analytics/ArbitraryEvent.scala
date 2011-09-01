@@ -115,6 +115,15 @@ trait ArbitraryEvent extends ArbitraryTime {
     (sortedEvents.flatMap { case (e, t) => (t >= startTime && t < endTime).option(e) }, startTime, endTime)
   }
 
+  def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(JPath, JValue), Int]) {
+    case (map, Event(eventName, obj, _)) =>
+      obj.flattenWithPath.foldLeft(map) {
+        case (map, (path, value)) =>
+          val key = (JPath(eventName) \ path, value)
+          map + (key -> (map.getOrElse(key, 0) + 1))
+      }
+  }
+
   def expectedCounts(events: List[Event], property: String, keys: List[Tag => String]) = {
     expectedSums(events, property, keys) mapValues {
       _.mapValues {

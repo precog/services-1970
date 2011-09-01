@@ -8,6 +8,7 @@ import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.json._
 import blueeyes.json.xschema._
+import blueeyes.json.xschema.DefaultOrderings._
 import blueeyes.json.xschema.DefaultSerialization._
 
 import com.reportgrid.analytics._
@@ -224,31 +225,30 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   /** Retrieves a count of the specified observed state over the given time period */
-  def observationCount(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[CountType] = {
-    observationSeries(token, path, observation, tagTerms) map (_.total)
+  def getObservationCount(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[CountType] = {
+    getObservationSeries(token, path, observation, tagTerms) map (_.total)
   }
 
   /** Retrieves a time series of counts of the specified observed state
    *  over the given time period.
    */
-  def observationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
+  def getObservationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
     internalSearchSeries[CountType](
       tagTerms,
       valueSeriesKey(token, path, _, observation), 
       CountsPath, variable_value_series.collection)
   }
 
-  def intersectCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[IntersectionResult[CountType]] = {
-    intersectSeries(token, path, properties, tagTerms) map {
-      _.foldLeft(SortedMap.empty[List[JValue], CountType](ListJValueOrdering)) {
+  def getIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, CountType]] = {
+    getIntersectionSeries(token, path, properties, tagTerms) map {
+      _.foldLeft(SortedMap.empty[JArray, CountType](JArrayOrdering)) {
         case (total, (key, timeSeries)) => 
           total + (key -> total.get(key).map(_ |+| timeSeries.total).getOrElse(timeSeries.total))
-      }
+      }.toSeq
     } 
   }
 
-  def intersectSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[IntersectionResult[ResultSet[JObject, CountType]]] = {
-
+  def getIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
     val variables = variableDescriptors.map(_.variable)
 
     val futureHistograms: Future[List[Map[JValue, CountType]]] = Future {
@@ -283,15 +283,15 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       Future {
         observations(variables).map { joint => 
           val obsMap: Map[Variable, JValue] = joint.obs.map(hv => hv.variable -> hv.value)(collection.breakOut)
-          observationSeries(token, path, joint, tagTerms).map { result => 
-            (variables.flatMap(obsMap.get).toList -> result)
+          getObservationSeries(token, path, joint, tagTerms).map { result => 
+            (JArray(variables.flatMap(obsMap.get).toList) -> result)
           }
         }.toSeq: _*
       } map {
-        _.foldLeft(SortedMap.empty[List[JValue], ResultSet[JObject, CountType]]) {
+        _.foldLeft(SortedMap.empty[JArray, ResultSet[JObject, CountType]]) {
           case (results, (k, v)) => 
             results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
-        }
+        }.toSeq
       }
     }
   }
@@ -603,7 +603,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 object AggregationEngine {
   type CountType = Long
   type ResultSet[K <: JValue, V] = Seq[(K, V)]
-  type IntersectionResult[T] = SortedMap[List[JValue], T]
 
   implicit def rsRich[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]): RichResultSet[K, V] = new RichResultSet(resultSet)
   class RichResultSet[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]) {
@@ -655,20 +654,6 @@ object AggregationEngine {
     Future(futures.toSeq: _*)
   }
 
-  val ListJValueOrdering: Ordering[List[JValue]] = new Ordering[List[JValue]] {
-    import blueeyes.json.xschema.DefaultOrderings.JValueOrdering
-
-    def compare(l1: List[JValue], l2: List[JValue]): Int = {
-      (l1.zip(l2).map {
-        case (v1, v2) => JValueOrdering.compare(v1, v2)
-      }).dropWhile(_ == 0).headOption match {
-        case None => l1.length compare l2.length
-        
-        case Some(c) => c
-      }
-    }
-  }
-
   def apply(config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
     createIndices(database).map(_ => new AggregationEngine(config, logger, database))
   }
@@ -677,10 +662,10 @@ object AggregationEngine {
     new AggregationEngine(config, logger, database)
   }
 
-  def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[JValue, T])]): scala.math.Ordering[List[JValue]] = {
-    new scala.math.Ordering[List[JValue]] {
-      override def compare(l1: List[JValue], l2: List[JValue]) = {
-        val valuesOrder = (l1 zip l2).zipWithIndex.foldLeft(0) {
+  def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[JValue, T])]): scala.math.Ordering[JArray] = {
+    new scala.math.Ordering[JArray] {
+      override def compare(l1: JArray, l2: JArray) = {
+        val valuesOrder = (l1.elements zip l2.elements).zipWithIndex.foldLeft(0) {
           case (0, ((v1, v2), i)) => 
             val (sortOrder, histogram) = histograms(i)  
             val valueOrder = histogram(v1) compare histogram(v2)
@@ -692,7 +677,7 @@ object AggregationEngine {
           case (x, _) => x
         }
 
-        if (valuesOrder == 0) ListJValueOrdering.compare(l1, l2) else valuesOrder
+        if (valuesOrder == 0) JArrayOrdering.compare(l1, l2) else valuesOrder
       }
     }   
   }
