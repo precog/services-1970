@@ -163,7 +163,6 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                             Tag.locationTagExtractor(geoipLocationHierarchy(request)) ::
                                             Nil
                                             
-
                         request.content.foreach { 
                           case obj @ JObject(fields) => 
                             val count: Int = request.parameters.get('count).map(_.toInt)
@@ -186,6 +185,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                               case err => 
                                 throw new HttpException(BadRequest, "Unexpected type for field \"events\".")
                             }
+
+                          case err => 
+                            throw new HttpException(BadRequest, "Expected a JSON object but got " + pretty(render(err)))
                         }
 
                         Future.sync(HttpResponse[JValue](content = None))
@@ -523,8 +525,8 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   import AnalyticsServiceSerialization._
   import AggregationEngine._
 
-  def groupTimeSeries[R, T](periodicity: Option[Periodicity]) = (timeSeries: TimeSeries[T]) => {
-    periodicity flatMap (timeSeries.groupBy) toRight timeSeries
+  def groupTimeSeries[K <: JValue, V](periodicity: Option[Periodicity]) = (timeSeries: ResultSet[K, V]) => {
+    //periodicity flatMap (timeSeries.groupBy) toRight timeSeries
   }
 
   def fullPathOf(token: Token, request: HttpRequest[_]): Path = {

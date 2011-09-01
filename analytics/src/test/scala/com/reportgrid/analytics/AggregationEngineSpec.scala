@@ -156,7 +156,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve path children" in {
-      skip("disabled")
+      //skip("disabled")
       val children = sampleEvents.map {
         case Event(eventName, _, _) => "." + eventName
       }.toSet
@@ -167,7 +167,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
  
     "count events" in {
-      skip("disabled")
+      //skip("disabled")
       def countEvents(eventName: String) = sampleEvents.count {
         case Event(`eventName`, _, tags) => true
         case _ => false
@@ -189,7 +189,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
  
     "retrieve values" in {
-      skip("disabled")
+      //skip("disabled")
       val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
         case (map, Event(eventName, obj, _)) =>
           obj.flattenWithPath.foldLeft(map) {
@@ -215,7 +215,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve all values of arrays" in {
-      skip("disabled")
+      //skip("disabled")
       val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
         case (map, Event(eventName, obj, _)) =>
           map <+> ((obj.children.collect { case JField(name, JArray(elements)) => ((eventName, JPath(name)), elements.toSet) }).toMap)
@@ -232,7 +232,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve the top results of a histogram" in {
-      skip("disabled")
+      //skip("disabled")
       val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
         case (map, Event("tweeted", obj, _)) => 
           val key = obj(".retweet")
@@ -247,7 +247,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve totals" in {
-      skip("disabled")
+      //skip("disabled")
       val expectedTotals = valueCounts(sampleEvents)
 
       val queryTerms = List[TagTerm](
@@ -267,7 +267,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve a time series for occurrences of a variable" in {
-      skip("disabled")
+      //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
@@ -295,7 +295,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve a time series of means of values of a variable" in {
-      skip("disabled")
+      //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
@@ -318,7 +318,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve a time series for occurrences of a value of a variable" in {      
-      //skip("disabled")
+      ////skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events)
@@ -345,7 +345,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "count observations of a given value" in {
-      skip("disabled")
+      //skip("disabled")
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
       val queryTerms = List[TagTerm](
@@ -370,7 +370,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "count observations of a given value in a restricted time slice" in {
-      skip("disabled")
+      //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val queryTerms = List[TagTerm](
@@ -397,7 +397,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve intersection counts" in {      
-      skip("disabled")
+      //skip("disabled")
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
@@ -416,12 +416,12 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       }
 
       engine.getIntersectionCount(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
-        verify(_.filter(_._2 != 0) must_== expectedCounts)
+        verify(_.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
       }
     }
 
     "retrieve intersection counts for a slice of time" in {      
-      skip("disabled")
+      //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val queryTerms = List[TagTerm](
@@ -442,12 +442,12 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       }
 
       engine.getIntersectionCount(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
-        verify(_.filter(_._2 != 0) must_== expectedCounts)
+        verify(_.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
       }
     }
 
     "retrieve intersection series for a slice of time" in {      
-      skip("disabled")
+      //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val queryTerms = List[TagTerm](
@@ -473,14 +473,14 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
 
           results.isEmpty || (
             (sizes.zip(sizes.tail).forall { case (a, b) => a must_== b }) &&
-            (results.map(((_: ResultSet[JObject, CountType]).total).second).filter(_._2 != 0) must haveTheSameElementsAs(expectedCounts))
+            (results.map(((_: ResultSet[JObject, CountType]).total).second).collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
           )
         }
       }
     }
 
     "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
-      skip("disabled")
+      //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
