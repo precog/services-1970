@@ -34,9 +34,9 @@ import scala.collection.immutable.SortedMap
 import scala.collection.immutable.IndexedSeq
 import scalaz.Scalaz._
 
-case class YggdrasilConfig(host: String, port: Option[Int], path: String)
+case class ForwardingConfig(host: String, port: Option[Int], path: String)
 
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: YggdrasilConfig)
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], v1ForwardingConfig: ForwardingConfig)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString with ReportGridInstrumentation {
   import AggregationEngine._
@@ -46,8 +46,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
   def mongoFactory(configMap: ConfigMap): Mongo
 
   def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
+  def v1Rewrite(req: HttpRequest[JValue], conf: ForwardingConfig): Option[HttpRequest[JValue]]
 
-  //val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
+  val v1Client: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
 
   val analyticsService = service("analytics", "0.02") {
     logging { logger =>
@@ -65,11 +66,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
           //val auditClient = auditClientFactory(config.configMap("audit"))
 
-          val yggConfigMap = config.configMap("yggdrasil")
-          val yggConfig = YggdrasilConfig(
-            yggConfigMap.getString("host", "api.reportgrid.com"),
-            yggConfigMap.getInt("port"),
-            yggConfigMap.getString("path", "/services/yggdrasil/v0")
+          val v1ConfigMap = config.configMap("v1")
+          val v1ForwardingConfig = ForwardingConfig(
+            v1ConfigMap.getString("host", "localhost"),
+            Some(v1ConfigMap.getInt("port", 10020)),
+            v1ConfigMap.getString("path", "")
           )
 
           for {
@@ -77,7 +78,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             aggregationEngine <- AggregationEngine(config, logger, database)
           } yield {
             //AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggConfig)
-            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, null, yggConfig)
+            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, null, v1ForwardingConfig)
           }
         } ->
         request { (state: AnalyticsState) =>
@@ -113,21 +114,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
           }
 
           //val audit = auditor[JValue, JValue](auditClient, clock, tokenOf)
+
+          val v1ForwardingClient : HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
           
-          def yggdrasilRewrite[T](req: HttpRequest[T]): Option[HttpRequest[T]] = {
-            import HttpHeaders._
-            (!req.headers.header[`User-Agent`].exists(_.value == ReportGridUserAgent)).option {
-              val prefixPath = req.parameters.get('prefixPath).getOrElse("")
-              req.copy(
-                uri = req.uri.copy(
-                  host = Some(yggdrasil.host), 
-                  port = yggdrasil.port, 
-                  path = Some(yggdrasil.path + "/vfs/" + prefixPath)
-                ),
-                parameters = req.parameters - 'prefixPath
-              ) 
-            }
-          }
 
           jsonp {
             /* The virtual file system, which is used for storing data,
@@ -138,7 +127,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 /* Post data to the virtual file system.
                  */
                 //audit("track") {
-                  //forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
+                  forwarding(v1Rewrite(_: HttpRequest[JValue], v1ForwardingConfig))(v1ForwardingClient) {
                     post { request: HttpRequest[JValue] =>
                       tokenOf(request).map { token =>
                         val path = fullPathOf(token, request)
@@ -164,8 +153,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                         HttpResponse[JValue](content = None)
                       }
-                    } ~
-                  //}
+                    }
+                  } ~
                 //} ~
                 //audit("explore paths") {
                   get { request: HttpRequest[JValue] =>

@@ -2,7 +2,7 @@ package com.reportgrid.analytics
 
 import blueeyes._
 import blueeyes.core.data.Bijection.identity
-import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
+import blueeyes.core.http._
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test._
@@ -42,6 +42,8 @@ with AnalyticsService with ArbitraryEvent with FutureMatchers with LocalMongo {
       //println("Tracked " + path + "; " + name + " - " + properties)
     }
   }
+
+  override def v1Rewrite(req: HttpRequest[JValue], conf: ForwardingConfig) = None
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", Token.Test.tokenId)
