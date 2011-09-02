@@ -334,10 +334,9 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
             val observation = JointObservation(HasValue(variable, value))
 
             engine.getObservationSeries(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered {
-              verify {
-                results => 
-                  (results.total must_== count.toLong) && 
-                  (results must haveSize((granularity.period(minDate) until maxDate).size))
+              verify { results => 
+                (results.total must_== count.toLong) && 
+                (results must haveSize((granularity.period(minDate) until maxDate).size))
               }
             }
           }

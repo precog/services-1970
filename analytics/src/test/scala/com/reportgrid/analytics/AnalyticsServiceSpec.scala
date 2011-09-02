@@ -130,10 +130,31 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       if (!jpath.endsInInfiniteValueSpace) {
         (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered {
           verify {
-            case HttpResponse(status, _, Some(contents), _) => 
-              contents match {
-                case JArray(values) => (values must notBeEmpty) //&& (series must_== expected)
-              }
+            case HttpResponse(status, _, Some(JArray(values)), _) => (values must notBeEmpty) //&& (series must_== expected)
+          }
+        }
+      }
+    }
+
+    "group variable value series counts" in {
+      val granularity = Hour
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val expectedTotals = valueCounts(events)
+
+      val queryTerms = JObject(
+        JField("start", minDate.getMillis) ::
+        JField("end", maxDate.getMillis) ::
+        JField("location", "usa") :: Nil
+      )
+
+      val ((jpath, value), count) = (expectedTotals.find{ case ((k, _), _) => k.nodes.last == JPathField("gender") }).get
+
+      val vtext = compact(render(value))
+      val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour?groupBy=day"
+      if (!jpath.endsInInfiniteValueSpace) {
+        (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered {
+          verify {
+            case HttpResponse(status, _, Some(JArray(values)), _) => (values must notBeEmpty) //&& (series must_== expected)
           }
         }
       }

@@ -11,6 +11,7 @@ import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.json.{JPath, JsonParser, JPathField}
 import blueeyes.json.xschema._
+import blueeyes.json.xschema.DefaultOrderings._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.persistence.mongo._
@@ -33,6 +34,8 @@ import com.reportgrid.api.ReportGridTrackingClient
 import com.reportgrid.api.blueeyes._
 import scala.collection.immutable.SortedMap
 import scala.collection.immutable.IndexedSeq
+
+import scalaz.Semigroup
 import scalaz.Scalaz._
 
 case class YggdrasilConfig(host: String, port: Option[Int], path: String)
@@ -376,10 +379,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                 val terms = tagTerms(request.content, Some(periodicity))
 
                                 withTokenAndPath(request) { (token, path) => 
-                                  aggregationEngine.getObservationSeries(token, path, observation, terms) map (_.serialize.ok)
-                                  //todo: make this work again
-                                  // .map(groupTimeSeries(seriesGrouping(request)))
-                                  // .map(_.fold(_.serialize, _.serialize).ok)
+                                  aggregationEngine.getObservationSeries(token, path, observation, terms)
+                                  .map(groupTimeSeries(periodicity, seriesGrouping(request)))
+                                  .map(_.serialize.ok)
                                 }
                               } 
                             }
@@ -405,13 +407,14 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
                     Selection(select) match {
                       case Count => 
-                        aggregationEngine.getObservationCount(token, from, observation, tagTerms(Some(content), None)) map (_.serialize.ok)
+                        val terms = tagTerms(Some(content), None)
+                        aggregationEngine.getObservationCount(token, from, observation, terms) map (_.serialize.ok)
 
                       case Series(periodicity) => 
-                        aggregationEngine.getObservationSeries(token, from, observation, tagTerms(Some(content), Some(periodicity))) map (_.serialize.ok)
-                        // todo: make this work again
-                        //.map(groupTimeSeries(grouping))
-                        //.map(_.fold(_.serialize, _.serialize).ok)
+                        val terms = tagTerms(Some(content), Some(periodicity))
+                        aggregationEngine.getObservationSeries(token, from, observation, terms)
+                        .map(groupTimeSeries(periodicity, seriesGrouping(request)))
+                        .map(_.serialize.ok)
 
                       case Related => 
                         val finiteSpan = timeSpan(content).getOrElse {
@@ -525,8 +528,28 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   import AnalyticsServiceSerialization._
   import AggregationEngine._
 
-  def groupTimeSeries[K <: JValue, V](periodicity: Option[Periodicity]) = (timeSeries: ResultSet[K, V]) => {
-    //periodicity flatMap (timeSeries.groupBy) toRight timeSeries
+  def groupTimeSeries[V: Semigroup](original: Periodicity, grouping: Option[(Periodicity, Set[Int])]) = (resultSet: ResultSet[JObject, V]) => {
+    grouping match {
+      case Some((grouping, groups)) => 
+        resultSet.foldLeft(SortedMap.empty[JObject, V](JObjectOrdering)) {
+          case (acc, (obj, v)) => 
+            val key = JObject(
+              obj.fields.flatMap {
+                case JField("timestamp", instant) => 
+                  val index = original.indexOf(instant.deserialize[Instant], grouping).getOrElse {
+                    sys.error("Cannot group time series of periodicity " + original + " by " + grouping)
+                  }
+                  
+                  (groups.isEmpty || groups.contains(index)) option JField(grouping.name, index)
+                  
+                case field => Some(field)
+              })
+
+            acc + (key -> acc.get(key).map(_ |+| v).getOrElse(v))
+        }.toSeq
+
+      case None => resultSet
+    }
   }
 
   def fullPathOf(token: Token, request: HttpRequest[_]): Path = {
@@ -558,8 +581,10 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     }
   }
 
-  def seriesGrouping(request: HttpRequest[_]): Option[Periodicity] = {
-    request.parameters.get('groupBy).flatMap(Periodicity.byName)
+  def seriesGrouping(request: HttpRequest[_]): Option[(Periodicity, Set[Int])] = {
+    request.parameters.get('groupBy).flatMap(Periodicity.byName).map { grouping =>
+      (grouping, request.parameters.get('groups).toSet.flatMap((_:String).split(",").map(_.toInt)))
+    }
   }
 
   def grouping(content: JValue) = (content \ "groupBy") match {
@@ -618,10 +643,9 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
         val variable    = variableOf(request)
         val periodicity = periodicityOf(request)
 
-        aggregationEngine.getVariableSeries(token, path, variable, tagTerms(request.content, Some(periodicity))) map (_.mapValues(f).serialize.ok)
-        // todo: make work again
-        //.map(groupTimeSeries(seriesGrouping(request)))
-        //.map(_.fold(_.map(f).serialize, _.map(f).serialize).ok)
+        aggregationEngine.getVariableSeries(token, path, variable, tagTerms(request.content, Some(periodicity))) 
+        .map(groupTimeSeries(periodicity, seriesGrouping(request)))
+        .map(_.map(f.second).serialize.ok)
       }
     } 
   }
