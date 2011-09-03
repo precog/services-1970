@@ -1,1 +1,1 @@
-java -Dactors.corePoolSize=100 -jar ${RG_HOME}/services/benchmark/target/benchmark-v0.jar --configFile $1
+java -Dactors.corePoolSize=100 -jar ${RG_HOME}/services/benchmark/target/benchmark-v1.jar --configFile $1
