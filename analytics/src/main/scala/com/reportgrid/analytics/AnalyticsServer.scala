@@ -26,6 +26,7 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
     val content = req.content.map {
       case JObject(fields) => JObject(fields.map {
         case JField("timestamp", value) => JField("#timestamp", value)
+        case v => v
       })
 
       case v => v // should be an error, but for now just forwarding it on
