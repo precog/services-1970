@@ -39,8 +39,9 @@ import scalaz.Semigroup
 import scalaz.Scalaz._
 
 case class YggdrasilConfig(host: String, port: Option[Int], path: String)
+case class JessupConfig(host: String, port: Option[Int], path: String)
 
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: YggdrasilConfig)
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: YggdrasilConfig, jessup: JessupConfig)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString with ReportGridInstrumentation {
   import AggregationEngine._
@@ -52,6 +53,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
   def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
 
   //val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
+  val jessupClient: HttpClient[JValue] = new HttpClientXLightWeb().translate[JValue]
   var engine: Option[AggregationEngine] = None
 
   val analyticsService = service("analytics", "1.0") {
@@ -76,13 +78,19 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             yggConfigMap.getInt("port"),
             yggConfigMap.getString("path", "/services/yggdrasil/v0")
           )
+          
+          val jessupConfigMap = config.configMap("jessup")
+          val jessupConfig = JessupConfig(
+            jessupConfigMap.getString("host", "api.reportgrid.com"),
+            jessupConfigMap.getInt("port"),
+            jessupConfigMap.getString("path", "/services/jessup/v0"))
 
           for {
             tokenManager      <- TokenManager(database, tokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, database)
           } yield {
             engine = Some(aggregationEngine)
-            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggConfig)
+            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggConfig, jessupConfig)
           }
         } ->
         request { (state: AnalyticsState) =>
@@ -138,8 +146,29 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             }
           }
 
-          def geoipLocationHierarchy(request: HttpRequest[_]): Hierarchy = {
-            error("todo")
+          def geoipLocationHierarchy(request: HttpRequest[_]): Future[Option[Hierarchy]] = {
+            val client = jessupClient host jessup.host port (jessup.port getOrElse 8080) path jessup.path
+            
+            val result: Option[Future[Option[Hierarchy]]] = request.remoteHost map { host =>
+              client.get[JValue]("/" + host.getHostAddress) map { response =>
+                response.content flatMap { jvalue =>
+                  val JString(countryName) = jvalue \ "country-name"
+                  val JString(region) = jvalue \ "region"
+                  val JString(city) = jvalue \ "city"
+                  val JString(postalCode) = jvalue \ "postal-code"
+                  
+                  val back = Hierarchy of (
+                    Hierarchy.AnonLocation(Path("/%s".format(countryName))) ::
+                    Hierarchy.AnonLocation(Path("/%s/%s".format(countryName, region))) ::
+                    Hierarchy.AnonLocation(Path("/%s/%s/%s".format(countryName, region, city))) ::
+                    Hierarchy.AnonLocation(Path("/%s/%s/%s/%s".format(countryName, region, city, postalCode))) :: Nil)
+                    
+                  back.toOption
+                }
+              }
+            }
+            
+            result getOrElse Future.sync(None)
           }
 
           def getTagSet(result: Tag.ExtractionResult) = result match {
@@ -163,8 +192,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     post { request: HttpRequest[JValue] =>
                       withTokenAndPath(request) { (token, path) => 
                         val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, TimeReference(timeSeriesEncoding, clock.instant())) ::
-                                            Tag.locationTagExtractor(geoipLocationHierarchy(request)) ::
-                                            Nil
+                                              error("todo") :: Nil
+//                                            Tag.locationTagExtractor(geoipLocationHierarchy(request)) ::
+//                                            Nil
                                             
                         request.content.foreach { 
                           case obj @ JObject(fields) => 
