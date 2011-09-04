@@ -90,6 +90,7 @@ trait AnalyticsSerialization {
       JField("order", limits.order.serialize) ::
       JField("limit", limits.limit.serialize) ::
       JField("depth", limits.depth.serialize) ::
+      JField("tags",  limits.tags.serialize) ::
       Nil
     )
   }
@@ -98,7 +99,8 @@ trait AnalyticsSerialization {
     def extract(jvalue: JValue): Limits = Limits(
       order = (jvalue \ "order").deserialize[Int],
       limit = (jvalue \ "limit").deserialize[Int],
-      depth = (jvalue \ "depth").deserialize[Int]
+      depth = (jvalue \ "depth").deserialize[Int],
+      tags  = (jvalue \ "tags").deserialize[Int]
     )
   }
 

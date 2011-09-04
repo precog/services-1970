@@ -155,7 +155,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 audit("explore paths") {
                   get { request: HttpRequest[JValue] =>
                     withTokenAndPath(request) { (token, path) => 
-                      aggregationEngine.getPathChildren(token, path).map(_.serialize.ok)
+                      if (token.permissions.explore) {
+                        aggregationEngine.getPathChildren(token, path).map(_.serialize.ok)
+                      } else {
+                        throw new HttpException(Unauthorized, "The specified token does not permit exploration of the virtual filesystem.")
+                      }
                     }
                   }
                 }
@@ -167,7 +171,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       val variable = variableOf(request)
 
                       withTokenAndPath(request) { (token, path) => 
-                        aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_.child).serialize.ok)
+                        if (token.permissions.explore) {
+                          aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_.child).serialize.ok)
+                        } else {
+                          throw new HttpException(Unauthorized, "The specified token does not permit exploration of the virtual filesystem.")
+                        }
                       }
                     }
                   }
@@ -252,10 +260,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   path("length") {
                     audit("count of variable values") {
                       get { request: HttpRequest[JValue] =>
-                        tokenOf(request).flatMap { token =>
-                          val path     = fullPathOf(token, request)
-                          val variable = variableOf(request)
+                        val variable = variableOf(request)
 
+                        withTokenAndPath(request) { (token, path) => 
                           aggregationEngine.getVariableLength(token, path, variable).map(_.serialize.ok)
                         }
                       }
@@ -265,11 +272,14 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     $ {
                       audit("list of variable values") {
                         get { request: HttpRequest[JValue] =>
-                          tokenOf(request).flatMap { token =>
-                            val path     = fullPathOf(token, request)
-                            val variable = variableOf(request)
+                          val variable = variableOf(request)
 
-                            aggregationEngine.getValues(token, path, variable).map(_.toList.serialize.ok)
+                          withTokenAndPath(request) { (token, path) => 
+                            if (token.permissions.explore) {
+                              aggregationEngine.getValues(token, path, variable).map(_.toList.serialize.ok)
+                            } else {
+                              throw new HttpException(Unauthorized, "The specified token does not permit exploration of the virtual filesystem.")
+                            }
                           }
                         }
                       }
@@ -277,11 +287,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     path("top/'limit") {
                       audit("list of top variable values") {
                         get { request: HttpRequest[JValue] =>
-                          tokenOf(request).flatMap { token =>
-                            val path     = fullPathOf(token, request)
-                            val variable = variableOf(request)
-                            val limit    = request.parameters('limit).toInt
+                          val variable = variableOf(request)
+                          val limit    = request.parameters('limit).toInt
 
+                          withTokenAndPath(request) { (token, path) => 
                             aggregationEngine.getValuesTop(token, path, variable, limit).map(_.serialize.ok)
                           }
                         }
