@@ -55,34 +55,38 @@ extends Yggdrasil[T] with ReportGridInstrumentation with HttpRequestHandlerCombi
 }
 
 trait Jessup {
-  def apply(host: InetAddress): Future[Option[Hierarchy]]
+  def apply(host: Option[InetAddress]): Future[Option[Hierarchy]]
 }
 
 object Jessup {
   def Noop = new Jessup {
-    override def apply(host: InetAddress) = Future.sync(None)
+    override def apply(host: Option[InetAddress]) = Future.sync(None)
   }
 }
 
 class JessupServiceProxy(host: String, port: Option[Int], path: String) extends Jessup with BijectionsChunkJson {
   val client = new HttpClientXLightWeb().translate[JValue].host(host).port(port getOrElse 80).path(path)
 
-  override def apply(host: InetAddress): Future[Option[Hierarchy]] = {
-    client.get[JValue]("/" + host.getHostAddress) map { response =>
-      response.content flatMap { jvalue =>
-        val JString(countryName) = jvalue \ "country-name"
-        val JString(region) = jvalue \ "region"
-        val JString(city) = jvalue \ "city"
-        val JString(postalCode) = jvalue \ "postal-code"
-        
-        val back = Hierarchy of (
-          Hierarchy.AnonLocation(Path("/%s".format(countryName))) ::
-          Hierarchy.AnonLocation(Path("/%s/%s".format(countryName, region))) ::
-          Hierarchy.AnonLocation(Path("/%s/%s/%s".format(countryName, region, city))) ::
-          Hierarchy.AnonLocation(Path("/%s/%s/%s/%s".format(countryName, region, city, postalCode))) :: Nil)
+  override def apply(host: Option[InetAddress]): Future[Option[Hierarchy]] = {
+    host map { host =>
+      client.get[JValue]("/" + host.getHostAddress) map { response =>
+        response.content flatMap { jvalue =>
+          val JString(countryName) = jvalue \ "country-name"
+          val JString(region) = jvalue \ "region"
+          val JString(city) = jvalue \ "city"
+          val JString(postalCode) = jvalue \ "postal-code"
           
-        back.toOption
+          val back = Hierarchy of (
+            Hierarchy.AnonLocation(Path("/%s".format(countryName))) ::
+            Hierarchy.AnonLocation(Path("/%s/%s".format(countryName, region))) ::
+            Hierarchy.AnonLocation(Path("/%s/%s/%s".format(countryName, region, city))) ::
+            Hierarchy.AnonLocation(Path("/%s/%s/%s/%s".format(countryName, region, city, postalCode))) :: Nil)
+            
+          back.toOption
+        }
       }
+    } getOrElse {
+      Future.sync(None)
     }
   }
 }

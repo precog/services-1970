@@ -117,10 +117,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   state.yggdrasil {
                     post { request: HttpRequest[JValue] =>
                       withTokenAndPath(request) { (token, path) => 
-                        val tagExtractors = List(
-                          Some(Tag.timeTagExtractor(timeSeriesEncoding, state.clock.instant())),
-                          request.remoteHost.map(h => Tag.locationTagExtractor(state.jessup(h)))
-                        ).flatten
+                        val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, state.clock.instant()) ::
+                                            Tag.locationTagExtractor(state.jessup(request.remoteHost))      :: Nil
                                             
                         request.content.foreach { 
                           case obj @ JObject(fields) => 
