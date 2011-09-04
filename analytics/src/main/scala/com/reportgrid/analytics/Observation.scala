@@ -1,5 +1,6 @@
 package com.reportgrid.analytics
 
+import blueeyes.concurrent.Future
 import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.Printer._
@@ -82,7 +83,7 @@ case class Tag(name: String, value: TagValue)
 
 object Tag {
   sealed trait ExtractionResult
-  case class Tags(tags: Seq[Tag]) extends ExtractionResult
+  case class Tags(tags: Future[Seq[Tag]]) extends ExtractionResult
   case object Skipped extends ExtractionResult
   case class Errors(errors: Seq[ExtractionError]) extends ExtractionResult
 
@@ -95,13 +96,13 @@ object Tag {
   class RichTagExtractor(ex: TagExtractor) {
     def or (other: TagExtractor): TagExtractor = (o: JObject) => ex(o) match {
       case (Tags(tags), remainder) => other(remainder) match {
-        case (Tags(rest), remainder) => (Tags(tags ++ rest), remainder)
+        case (Tags(rest), remainder) => (Tags(tags |+| rest), remainder)
         case x => x
       }
 
       case (Errors(errors), remainder) => other(remainder) match {
         case (Tags(tags), remainder) => (Tags(tags), remainder)
-        case (Errors(rest), remainder) => (Errors(errors ++ rest), remainder)
+        case (Errors(rest), remainder) => (Errors(errors |+| rest), remainder)
       }
 
       case (Skipped, remainder) => other(remainder)
@@ -110,13 +111,13 @@ object Tag {
 
   implicit def richTagExtractor(ex: TagExtractor) = new RichTagExtractor(ex)
 
-  def timeTagExtractor(encoding: TimeSeriesEncoding, auto: => TimeReference): TagExtractor = (o: JObject) => {
+  def timeTagExtractor(encoding: TimeSeriesEncoding, auto: => Instant): TagExtractor = (o: JObject) => {
     val remainder = JObject(o.fields.filter(_.name != "#timestamp"))
 
     (o \ "#timestamp") match {
       case JBool(false) => (Skipped, remainder)
 
-      case JNothing | JBool(true) => (Tags(Tag("timestamp", auto) :: Nil), remainder)
+      case JNothing | JBool(true) => (Tags(Future.sync(Tag("timestamp", TimeReference(encoding, auto)) :: Nil)), remainder)
 
       case jvalue => extractTimestampTag(encoding, "timestamp", jvalue) match {
         case tags: Tags => (tags, remainder)
@@ -127,13 +128,13 @@ object Tag {
 
   def extractTimestampTag(encoding: TimeSeriesEncoding, tagName: String, jvalue: JValue) = jvalue.validated[Instant].fold(
     error => Errors(ExtractionError(tagName, error) :: Nil), 
-    instant => Tags(Tag(tagName, TimeReference(encoding, instant)) :: Nil)
+    instant => Tags(Future.sync(Tag(tagName, TimeReference(encoding, instant)) :: Nil))
   )
 
-  def locationTagExtractor(auto: => Hierarchy) = (o: JObject) => {
+  def locationTagExtractor(auto: => Future[Option[Hierarchy]]) = (o: JObject) => {
     val remainder = JObject(o.fields.filter(_.name != "#location"))
     (o \ "#location") match {
-      case JBool(true) => (Tags(Tag("location", auto) :: Nil), remainder)
+      case JBool(true) => (Tags(auto.map(_.map(Tag("location", _)).toSeq)), remainder)
       case x => extractHierarchyTag("location", x) match {
         case Skipped => (Errors(ExtractionError("location", "The value of the location tag is formatted incorrectly.") :: Nil), o)
         case tags: Tags => (tags, remainder)
@@ -145,7 +146,7 @@ object Tag {
   def extractHierarchyTag(tagName: String, v: JValue): ExtractionResult = {
     def result(locations: List[Hierarchy.Location]) = Hierarchy.of(locations).fold(
       error => Errors(ExtractionError(tagName, error) :: Nil),
-      hierarchy => Tags(Tag(tagName, hierarchy) :: Nil)
+      hierarchy => Tags(Future.sync(Tag(tagName, hierarchy) :: Nil))
     )
 
     v match {

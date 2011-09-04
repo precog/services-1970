@@ -1,9 +1,9 @@
 package com.reportgrid.analytics
+import  external._
 
 import blueeyes.BlueEyesServer
-import blueeyes.json.JsonAST.{JValue, JObject, JField, JString, JNothing, JArray}
+import blueeyes.json.JsonAST._
 import blueeyes.persistence.mongo.Mongo
-import com.reportgrid.api.ReportGridTrackingClient
 import com.reportgrid.api.Server
 import com.reportgrid.api.blueeyes.ReportGrid
 import java.util.Date
@@ -15,7 +15,7 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
     new blueeyes.persistence.mongo.RealMongo(configMap)
   }
 
-  def auditClientFactory(config: ConfigMap) = {
+  def auditClient(config: ConfigMap) = {
     NoopTrackingClient
 //    val auditToken = config.getString("token", Token.Audit.tokenId)
 //    val environment = config.getString("environment", "production") match {
@@ -25,11 +25,19 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
 //
 //    ReportGrid(auditToken, environment)
   }
-}
 
-object NoopTrackingClient extends ReportGridTrackingClient[JValue](JsonBlueEyes) {
-  override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = JsonBlueEyes.EmptyObject, rollup: Boolean = false, timestamp: Option[Date] = None, count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
-    //println("Tracked " + path + "; " + name + " - " + properties)
+  def yggdrasil(configMap: ConfigMap): Yggdrasil[JValue] = {
+    new YggdrasilServiceProxy[JValue](
+      configMap.getString("host", "api.reportgrid.com"),
+      configMap.getInt("port"),
+      configMap.getString("path", "/services/yggdrasil/v0"))
+  }
+
+  def jessup(configMap: ConfigMap): Jessup = {
+    new JessupServiceProxy(
+      configMap.getString("host", "api.reportgrid.com"),
+      configMap.getInt("port"),
+      configMap.getString("path", "/services/jessup/v0"))
   }
 }
 
@@ -39,7 +47,9 @@ object TestAnalyticsServer extends BlueEyesServer with AnalyticsService {
     new blueeyes.persistence.mongo.mock.MockMongo()
   }
 
-  def auditClientFactory(config: ConfigMap) = ReportGrid(Token.Test.tokenId, Server.Local)
+  def auditClient(config: ConfigMap) = NoopTrackingClient
+  def yggdrasil(configMap: ConfigMap) = Yggdrasil.Noop[JValue]
+  def jessup(configMap: ConfigMap) = Jessup.Noop
 }
 
 // vim: set ts=4 sw=4 et:

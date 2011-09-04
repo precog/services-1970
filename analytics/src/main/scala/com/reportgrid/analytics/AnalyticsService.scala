@@ -1,12 +1,12 @@
 package com.reportgrid.analytics
+import  external._
 
 import blueeyes._
 import blueeyes.concurrent.Future
-import blueeyes.core.data.{Chunk, ByteChunk, BijectionsChunkJson, BijectionsChunkString}
+import blueeyes.core.data.{BijectionsChunkJson, BijectionsChunkString}
 import blueeyes.core.http._
 import blueeyes.core.http.MimeTypes.{application, json}
 import blueeyes.core.service._
-import blueeyes.core.service.engines.HttpClientXLightWeb
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.json.{JPath, JsonParser, JPathField}
@@ -29,19 +29,14 @@ import java.util.concurrent.TimeUnit
 
 import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.blueeyes.ReportGridInstrumentation
-import com.reportgrid.api.Server
 import com.reportgrid.api.ReportGridTrackingClient
-import com.reportgrid.api.blueeyes._
 import scala.collection.immutable.SortedMap
 import scala.collection.immutable.IndexedSeq
 
 import scalaz.Semigroup
 import scalaz.Scalaz._
 
-case class YggdrasilConfig(host: String, port: Option[Int], path: String)
-case class JessupConfig(host: String, port: Option[Int], path: String)
-
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: YggdrasilConfig, jessup: JessupConfig)
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: Yggdrasil[JValue], jessup: Jessup)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString with ReportGridInstrumentation {
   import AggregationEngine._
@@ -50,11 +45,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
   def mongoFactory(configMap: ConfigMap): Mongo
 
-  def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
+  def auditClient(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
 
-  //val yggdrasilClient: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
-  val jessupClient: HttpClient[JValue] = new HttpClientXLightWeb().translate[JValue]
-  var engine: Option[AggregationEngine] = None
+  def yggdrasil(configMap: ConfigMap): Yggdrasil[JValue]
+
+  def jessup(configMap: ConfigMap): Jessup
 
   val analyticsService = service("analytics", "1.0") {
     logging { logger =>
@@ -70,40 +65,19 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
           val tokensCollection = mongoConfig.getString("tokensCollection").getOrElse("tokens")
 
-          val auditClient = auditClientFactory(config.configMap("audit"))
-
-          val yggConfigMap = config.configMap("yggdrasil")
-          val yggConfig = YggdrasilConfig(
-            yggConfigMap.getString("host", "api.reportgrid.com"),
-            yggConfigMap.getInt("port"),
-            yggConfigMap.getString("path", "/services/yggdrasil/v0")
-          )
-          
-          val jessupConfigMap = config.configMap("jessup")
-          val jessupConfig = JessupConfig(
-            jessupConfigMap.getString("host", "api.reportgrid.com"),
-            jessupConfigMap.getInt("port"),
-            jessupConfigMap.getString("path", "/services/jessup/v0"))
-
           for {
             tokenManager      <- TokenManager(database, tokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, database)
           } yield {
-            engine = Some(aggregationEngine)
-            AnalyticsState(aggregationEngine, tokenManager, ClockSystem.realtimeClock, auditClient, yggConfig, jessupConfig)
+            AnalyticsState(
+              aggregationEngine, tokenManager, ClockSystem.realtimeClock, 
+              auditClient(config.configMap("audit")),
+              yggdrasil(config.configMap("yggdrasil")),
+              jessup(config.configMap("jessup")))
           }
         } ->
         request { (state: AnalyticsState) =>
-          import state._
-
-          def renderHistogram(histogram: Traversable[(JValue, Long)]): JObject = {
-            histogram.foldLeft(JObject.empty) {
-              case (content, (value, count)) =>
-                val name = JPathField(renderNormalized(value))
-
-                content.set(name, JInt(count)) --> classOf[JObject]
-            }
-          }
+          import state.{aggregationEngine, tokenManager}
 
           def tokenOf(request: HttpRequest[_]): Future[Token] = {
             request.parameters.get('tokenId) match {
@@ -129,55 +103,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             tokenOf(request) flatMap { token => f(token, fullPathOf(token, request)) }
           }
 
-          val audit = auditor[JValue, JValue](auditClient, clock, tokenOf)
-          
-          def yggdrasilRewrite[T](req: HttpRequest[T]): Option[HttpRequest[T]] = {
-            import HttpHeaders._
-            (!req.headers.header[`User-Agent`].exists(_.value == ReportGridUserAgent)).option {
-              val prefixPath = req.parameters.get('prefixPath).getOrElse("")
-              req.copy(
-                uri = req.uri.copy(
-                  host = Some(yggdrasil.host), 
-                  port = yggdrasil.port, 
-                  path = Some(yggdrasil.path + "/vfs/" + prefixPath)
-                ),
-                parameters = req.parameters - 'prefixPath
-              ) 
-            }
-          }
-
-          def geoipLocationHierarchy(request: HttpRequest[_]): Future[Option[Hierarchy]] = {
-            val client = jessupClient host jessup.host port (jessup.port getOrElse 8080) path jessup.path
-            
-            val result: Option[Future[Option[Hierarchy]]] = request.remoteHost map { host =>
-              client.get[JValue]("/" + host.getHostAddress) map { response =>
-                response.content flatMap { jvalue =>
-                  val JString(countryName) = jvalue \ "country-name"
-                  val JString(region) = jvalue \ "region"
-                  val JString(city) = jvalue \ "city"
-                  val JString(postalCode) = jvalue \ "postal-code"
-                  
-                  val back = Hierarchy of (
-                    Hierarchy.AnonLocation(Path("/%s".format(countryName))) ::
-                    Hierarchy.AnonLocation(Path("/%s/%s".format(countryName, region))) ::
-                    Hierarchy.AnonLocation(Path("/%s/%s/%s".format(countryName, region, city))) ::
-                    Hierarchy.AnonLocation(Path("/%s/%s/%s/%s".format(countryName, region, city, postalCode))) :: Nil)
-                    
-                  back.toOption
-                }
-              }
-            }
-            
-            result getOrElse Future.sync(None)
-          }
-
-          def getTagSet(result: Tag.ExtractionResult) = result match {
-            case Tag.Skipped => Set.empty[Tag]
-            case Tag.Tags(tags) => tags.toSet
-            case Tag.Errors(errors) =>
-              val errmsg = "Errors occurred extracting tag information: " + errors.map(_.toString).mkString("; ")
-              throw new HttpException(BadRequest, errmsg)
-          }
+          val audit = auditor[JValue, JValue](state.auditClient, state.clock, tokenOf)
 
           jsonp {
             /* The virtual file system, which is used for storing data,
@@ -188,13 +114,13 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 /* Post data to the virtual file system.
                  */
                 audit("track") {
-                  //forwarding(yggdrasilRewrite[JValue])(yggdrasilClient) {
+                  state.yggdrasil {
                     post { request: HttpRequest[JValue] =>
                       withTokenAndPath(request) { (token, path) => 
-                        val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, TimeReference(timeSeriesEncoding, clock.instant())) ::
-                                              error("todo") :: Nil
-//                                            Tag.locationTagExtractor(geoipLocationHierarchy(request)) ::
-//                                            Nil
+                        val tagExtractors = List(
+                          Some(Tag.timeTagExtractor(timeSeriesEncoding, state.clock.instant())),
+                          request.remoteHost.map(h => Tag.locationTagExtractor(state.jessup(h)))
+                        ).flatten
                                             
                         request.content.foreach { 
                           case obj @ JObject(fields) => 
@@ -203,20 +129,20 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                              .getOrElse(1)
 
                             val (tagResults, _) = Tag.extractTags(tagExtractors, obj)
-                            val tags = getTagSet(tagResults)
+                            for (tags <- getTagSet(tagResults)) {
+                              (obj \ "events") match {
+                                case JObject(fields) => 
+                                  fields.foreach {
+                                    case JField(eventName, event: JObject) => 
+                                      aggregationEngine.aggregate(token, path, eventName, tags, event, count)
 
-                            (obj \ "events") match {
-                              case JObject(fields) => 
-                                fields.foreach {
-                                  case JField(eventName, event: JObject) => 
-                                    aggregationEngine.aggregate(token, path, eventName, tags, event, count)
+                                    case _ => 
+                                      throw new HttpException(BadRequest, "Events must be JSON objects.")
+                                  }
 
-                                  case _ => 
-                                    throw new HttpException(BadRequest, "Events must be JSON objects.")
-                                }
-
-                              case err => 
-                                throw new HttpException(BadRequest, "Unexpected type for field \"events\".")
+                                case err => 
+                                  throw new HttpException(BadRequest, "Unexpected type for field \"events\".")
+                              }
                             }
 
                           case err => 
@@ -226,7 +152,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         Future.sync(HttpResponse[JValue](content = None))
                       }
                     }
-                  //}
+                  }
                 } ~
                 audit("explore paths") {
                   get { request: HttpRequest[JValue] =>
@@ -678,6 +604,23 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
         .map(_.map(f.second).serialize.ok)
       }
     } 
+  }
+
+  def getTagSet(result: Tag.ExtractionResult) = result match {
+    case Tag.Skipped => Future.sync(Set.empty[Tag])
+    case Tag.Tags(tags) => tags.map(_.toSet)
+    case Tag.Errors(errors) =>
+      val errmsg = "Errors occurred extracting tag information: " + errors.map(_.toString).mkString("; ")
+      throw new HttpException(BadRequest, errmsg)
+  }
+
+  def renderHistogram(histogram: Traversable[(JValue, Long)]): JObject = {
+    histogram.foldLeft(JObject.empty) {
+      case (content, (value, count)) =>
+        val name = JPathField(renderNormalized(value))
+
+        content.set(name, JInt(count)) --> classOf[JObject]
+    }
   }
 }
 

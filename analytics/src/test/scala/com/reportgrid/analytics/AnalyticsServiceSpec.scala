@@ -40,7 +40,9 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   //override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
   override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
 
-  override def auditClientFactory(config: ConfigMap) = NoopTrackingClient
+  def auditClient(config: ConfigMap) = external.NoopTrackingClient
+  def yggdrasil(configMap: ConfigMap) = external.Yggdrasil.Noop[JValue]
+  def jessup(configMap: ConfigMap) = external.Jessup.Noop
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", Token.Test.tokenId)
