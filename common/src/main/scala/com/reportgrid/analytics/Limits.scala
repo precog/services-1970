@@ -15,5 +15,5 @@ case class Limits(order: Int, limit: Int, depth: Int, tags: Int = 1) {
 }
 
 object Limits {
-  val None = Limits(100, 100, 100)
+  val None = Limits(100, 100, 100, 100)
 }

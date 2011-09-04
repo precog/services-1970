@@ -152,7 +152,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
 
     // using the benchmark token for testing because it has order 3
     val sampleEvents: List[Event] = containerOfN[List, Event](10, eventGen).sample.get ->- {
-      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags.toSet, event.data, 1))
+      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1))
     }
 
     "retrieve path children" in {

@@ -40,7 +40,7 @@ object JointObservations {
   /** Creates a report of values.
    */
   def ofValues(event: JValue, order: Int, depth: Int, limit: Int): (Set[JointObservation[HasValue]], Set[HasValue]) = {
-    val (infinite, finite) = event.flattenWithPath.take(limit).map {
+    val (infinite, finite) = event.flattenWithPath.filter(_._1.length <= depth).take(limit).map {
       case (jpath, jvalue) => HasValue(Variable(jpath), jvalue)
     } partition {
       case HasValue(Variable(jpath), _) => jpath.endsInInfiniteValueSpace
@@ -111,13 +111,15 @@ object Tag {
 
   implicit def richTagExtractor(ex: TagExtractor) = new RichTagExtractor(ex)
 
-  def timeTagExtractor(encoding: TimeSeriesEncoding, auto: => Instant): TagExtractor = (o: JObject) => {
+  def timeTagExtractor(encoding: TimeSeriesEncoding, auto: => Instant, alwaysTrack: Boolean): TagExtractor = (o: JObject) => {
     val remainder = JObject(o.fields.filter(_.name != "#timestamp"))
+    def skippedResult = (Skipped, remainder)
+    def autoResult = (Tags(Future.sync(Tag("timestamp", TimeReference(encoding, auto)) :: Nil)), remainder)
 
     (o \ "#timestamp") match {
-      case JBool(false) => (Skipped, remainder)
-
-      case JNothing | JBool(true) => (Tags(Future.sync(Tag("timestamp", TimeReference(encoding, auto)) :: Nil)), remainder)
+      case JBool(false)     => skippedResult
+      case JBool(true)      => autoResult
+      case JNothing | JNull => if (alwaysTrack) autoResult else skippedResult
 
       case jvalue => extractTimestampTag(encoding, "timestamp", jvalue) match {
         case tags: Tags => (tags, remainder)

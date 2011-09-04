@@ -105,10 +105,58 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
           val audit = auditor[JValue, JValue](state.auditClient, state.clock, tokenOf)
 
+          def aggregate(request: HttpRequest[JValue], tagExtractors: List[Tag.TagExtractor]) = {
+            withTokenAndPath(request) { (token, path) => 
+              request.content.foreach { 
+                case obj @ JObject(fields) => 
+                  val count: Int = request.parameters.get('count).map(_.toInt)
+                                   .orElse((obj \? "count").flatMap(_.validated[Int].toOption))
+                                   .getOrElse(1)
+
+                  val (tagResults, _) = Tag.extractTags(tagExtractors, obj)
+                  for (tags <- getTags(tagResults)) {
+                    (obj \ "events") match {
+                      case JObject(fields) => 
+                        fields.foreach {
+                          case JField(eventName, event: JObject) => 
+                            aggregationEngine.aggregate(token, path, eventName, tags, event, count)
+
+                          case _ => 
+                            throw new HttpException(BadRequest, "Events must be JSON objects.")
+                        }
+
+                      case err => 
+                        throw new HttpException(BadRequest, "Unexpected type for field \"events\".")
+                    }
+                  }
+
+                case err => 
+                  throw new HttpException(BadRequest, "Expected a JSON object but got " + pretty(render(err)))
+              }
+
+              Future.sync(HttpResponse[JValue](content = None))
+            }
+          }
+
+
           jsonp {
             /* The virtual file system, which is used for storing data,
              * retrieving data, and querying for metadata.
              */
+            path("""/vfs/store/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])+)/?)?)""") { 
+              $ {
+                audit("store") {
+                  state.yggdrasil {
+                    post { request: HttpRequest[JValue] =>
+                      val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, state.clock.instant(), false) ::
+                                          Tag.locationTagExtractor(state.jessup(request.remoteHost))      :: Nil
+
+                      aggregate(request, tagExtractors)
+                    }
+                  }
+                }
+              }
+            } ~
             path("""/vfs/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])+)/?)?)""") { 
               $ {
                 /* Post data to the virtual file system.
@@ -116,39 +164,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 audit("track") {
                   state.yggdrasil {
                     post { request: HttpRequest[JValue] =>
-                      withTokenAndPath(request) { (token, path) => 
-                        val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, state.clock.instant()) ::
-                                            Tag.locationTagExtractor(state.jessup(request.remoteHost))      :: Nil
-                                            
-                        request.content.foreach { 
-                          case obj @ JObject(fields) => 
-                            val count: Int = request.parameters.get('count).map(_.toInt)
-                                             .orElse((obj \? "count").flatMap(_.validated[Int].toOption))
-                                             .getOrElse(1)
+                      val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, state.clock.instant(), true) ::
+                                          Tag.locationTagExtractor(state.jessup(request.remoteHost))      :: Nil
 
-                            val (tagResults, _) = Tag.extractTags(tagExtractors, obj)
-                            for (tags <- getTagSet(tagResults)) {
-                              (obj \ "events") match {
-                                case JObject(fields) => 
-                                  fields.foreach {
-                                    case JField(eventName, event: JObject) => 
-                                      aggregationEngine.aggregate(token, path, eventName, tags, event, count)
-
-                                    case _ => 
-                                      throw new HttpException(BadRequest, "Events must be JSON objects.")
-                                  }
-
-                                case err => 
-                                  throw new HttpException(BadRequest, "Unexpected type for field \"events\".")
-                              }
-                            }
-
-                          case err => 
-                            throw new HttpException(BadRequest, "Expected a JSON object but got " + pretty(render(err)))
-                        }
-
-                        Future.sync(HttpResponse[JValue](content = None))
-                      }
+                      aggregate(request, tagExtractors)
                     }
                   }
                 } ~
@@ -613,9 +632,9 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     } 
   }
 
-  def getTagSet(result: Tag.ExtractionResult) = result match {
-    case Tag.Skipped => Future.sync(Set.empty[Tag])
-    case Tag.Tags(tags) => tags.map(_.toSet)
+  def getTags(result: Tag.ExtractionResult) = result match {
+    case Tag.Tags(tags) => tags
+    case Tag.Skipped => Future.sync(Nil)
     case Tag.Errors(errors) =>
       val errmsg = "Errors occurred extracting tag information: " + errors.map(_.toString).mkString("; ")
       throw new HttpException(BadRequest, errmsg)

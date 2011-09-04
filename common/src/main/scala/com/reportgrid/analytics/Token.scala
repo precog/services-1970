@@ -52,7 +52,7 @@ object Token {
     path           = "test-account-root",
     permissions    = Permissions(true, true, true, true),
     expires        = Never,
-    limits         = Limits(order = 2, depth = 3, limit = 20)
+    limits         = Limits(order = 2, depth = 3, limit = 20, tags = 2)
   )
 
   lazy val Benchmark = Token(
@@ -62,7 +62,7 @@ object Token {
     path           = "test-account-benchmark",
     permissions    = Permissions(true, true, true, true),
     expires        = Never,
-    limits         = Limits(order = 3, depth = 5, limit = 20)
+    limits         = Limits(order = 3, depth = 5, limit = 20, tags = 2)
   )
 
   def newAccount(path: Path, limits: Limits, permissions: Permissions = Permissions.All, expires: DateTime = Never): Token = {

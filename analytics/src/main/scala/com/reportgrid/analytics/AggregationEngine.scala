@@ -125,9 +125,10 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   /** 
    * Add the event data for the specified event to the database
    */
-  def aggregate(token: Token, path: Path, eventName: String, tags: Set[Tag], eventBody: JObject, count: Int) = Future.async {
+  def aggregate(token: Token, path: Path, eventName: String, allTags: Seq[Tag], eventBody: JObject, count: Int) = Future.async {
     import token.limits.{order, depth, limit}
 
+    val tags = allTags.take(token.limits.tags)
     val event = JObject(JField(eventName, eventBody) :: Nil)
 
     // Keep track of parent/child relationships:
@@ -482,7 +483,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }
   }
 
-  def docKeySig(storageKeys: List[StorageKeys]): Sig = {
+  def docKeySig(storageKeys: Seq[StorageKeys]): Sig = {
     val keySigs = storageKeys.map {
       // this redundancy is necessary to get the correct implicits used for sig generation
       case NameSetKeys(docKey, _)   => docKey.sig
@@ -499,7 +500,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
    * The second element of the resulting tuple is the "reference" signature used to relate the
    * observations to associated infinite values.
    */
-  def dataKeySigs(storageKeys: List[StorageKeys]): (Sig, Sig) = {
+  def dataKeySigs(storageKeys: Seq[StorageKeys]): (Sig, Sig) = {
     storageKeys.map {
       case NameSetKeys(_, dataKey)      => (None, dataKey.sig)
       case TimeRefKeys(docKey, instant) => (Some(instant.sig), Sig(docKey._1.sig, instant.sig))
