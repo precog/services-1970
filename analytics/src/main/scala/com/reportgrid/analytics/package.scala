@@ -16,7 +16,7 @@ package object analytics extends AggregatorImplicits {
     }
 
     def endsInTagSpace = jpath.nodes.exists {
-      case JPathField(name) => name startsWith "#"
+      case JPathField(name) => name startsWith Tag.Prefix
       case _ => false
     }
   }

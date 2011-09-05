@@ -28,17 +28,16 @@ trait ArbitraryEvent extends ArbitraryTime {
   } yield startups
 
   case class Event(eventName: String, data: JObject, tags: List[Tag]) {
-    def message = JObject(
-      JField("events", JObject(JField(eventName, data) :: Nil)) :: 
-      tags.map {
-        case Tag(name, TimeReference(_, time)) => 
-          JField("#" + name, time.serialize)
+    def tagFields = tags.map {
+      case Tag(name, TimeReference(_, time)) => 
+        JField(Tag.tname(name), time.serialize)
 
-        case Tag(name, Hierarchy(locations)) => 
-          JField("#" + name, 
-                 JObject(locations.collect { case Hierarchy.NamedLocation(name, path) => JField(name, path.path.serialize) }))
-      }
-    ) 
+      case Tag(name, Hierarchy(locations)) => 
+        JField(Tag.tname(name), 
+               JObject(locations.collect { case Hierarchy.NamedLocation(name, path) => JField(name, path.path.serialize) }))
+    }
+
+    lazy val message = JObject(JField(eventName, JObject(data.fields ::: tagFields)) :: Nil)
   }
 
   val locations = List(

@@ -82,6 +82,10 @@ object JointObservations {
 case class Tag(name: String, value: TagValue) 
 
 object Tag {
+  val Prefix = "@"
+
+  def tname(s: String) = s.replaceAll("^@*", "@")
+
   sealed trait ExtractionResult
   case class Tags(tags: Future[Seq[Tag]]) extends ExtractionResult
   case object Skipped extends ExtractionResult
@@ -112,11 +116,11 @@ object Tag {
   implicit def richTagExtractor(ex: TagExtractor) = new RichTagExtractor(ex)
 
   def timeTagExtractor(encoding: TimeSeriesEncoding, auto: => Instant, alwaysTrack: Boolean): TagExtractor = (o: JObject) => {
-    val remainder = JObject(o.fields.filter(_.name != "#timestamp"))
+    val remainder = JObject(o.fields.filter(_.name != tname("timestamp")))
     def skippedResult = (Skipped, remainder)
     def autoResult = (Tags(Future.sync(Tag("timestamp", TimeReference(encoding, auto)) :: Nil)), remainder)
 
-    (o \ "#timestamp") match {
+    (o \ tname("timestamp")) match {
       case JBool(false)     => skippedResult
       case JBool(true)      => autoResult
       case JNothing | JNull => if (alwaysTrack) autoResult else skippedResult
@@ -134,8 +138,8 @@ object Tag {
   )
 
   def locationTagExtractor(auto: => Future[Option[Hierarchy]]) = (o: JObject) => {
-    val remainder = JObject(o.fields.filter(_.name != "#location"))
-    (o \ "#location") match {
+    val remainder = JObject(o.fields.filter(_.name != tname("location")))
+    (o \ tname("location")) match {
       case JBool(true) => (Tags(auto.map(_.map(Tag("location", _)).toSeq)), remainder)
       case x => extractHierarchyTag("location", x) match {
         case Skipped => (Errors(ExtractionError("location", "The value of the location tag is formatted incorrectly.") :: Nil), o)
@@ -173,7 +177,7 @@ object Tag {
   def extractTags(extractors: List[TagExtractor], event: JObject): (ExtractionResult, JObject) = {
     extractors.reduceLeft(_ or _).apply(event) match {
       case (result, remainder) => 
-        val unparsed = remainder.fields.filter(_.name.startsWith("#")) 
+        val unparsed = remainder.fields.filter(_.name.startsWith(Tag.Prefix)) 
         if (unparsed.isEmpty) (result, remainder)
         else (Errors(unparsed.map(field => ExtractionError(field.name, "No extractor could handle the field."))), remainder)
     }
