@@ -371,28 +371,32 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       throw new HttpException(BadRequest, """request body was empty. "select", "from", and "where" fields must be specified.""")
                     }
                       
-                    val select = (content \ "select").deserialize[String].toLowerCase
-                    val from = token.path / ((content \ "from").deserialize[String])
-                    val observation = JointObservation((content \ "where").deserialize[Set[HasValue]])
+                    val queryComponents = (content \ "select").validated[String].map(Selection(_)).liftFailNel |@| 
+                                          (content \ "from").validated[String].map(token.path / _).liftFailNel |@|
+                                          (content \ "where").validated[Set[HasValue]].map(JointObservation(_)).liftFailNel
 
-                    Selection(select) match {
-                      case Count => 
-                        val terms = tagTerms(request.parameters, Some(content), None)
-                        aggregationEngine.getObservationCount(token, from, observation, terms) map (_.serialize.ok)
+                    val result = queryComponents.apply {
+                      case (select, from, observation) => select match {
+                        case Count => 
+                          val terms = tagTerms(request.parameters, Some(content), None)
+                          aggregationEngine.getObservationCount(token, from, observation, terms) map (_.serialize.ok)
 
-                      case Series(periodicity) => 
-                        val terms = tagTerms(request.parameters, Some(content), Some(periodicity))
-                        aggregationEngine.getObservationSeries(token, from, observation, terms)
-                        .map(groupTimeSeries(periodicity, seriesGrouping(request)))
-                        .map(_.serialize.ok)
+                        case Series(periodicity) => 
+                          val terms = tagTerms(request.parameters, Some(content), Some(periodicity))
+                          aggregationEngine.getObservationSeries(token, from, observation, terms)
+                          .map(groupTimeSeries(periodicity, seriesGrouping(request)))
+                          .map(_.serialize.ok)
 
-                      case Related => 
-                        val finiteSpan = timeSpan(request.parameters, content).getOrElse {
-                          throw new HttpException(BadRequest, "Start and end dates must be specified to query for values related to an observation.")
-                        }
+                        case Related => 
+                          val finiteSpan = timeSpan(request.parameters, content).getOrElse {
+                            throw new HttpException(BadRequest, "Start and end dates must be specified to query for values related to an observation.")
+                          }
 
-                        aggregationEngine.findRelatedInfiniteValues(token, from, observation, finiteSpan) map (_.serialize.ok)
+                          aggregationEngine.findRelatedInfiniteValues(token, from, observation, finiteSpan) map (_.serialize.ok)
+                      }
                     }
+
+                    result.fold(errors => throw new HttpException(BadRequest, errors.list.mkString("; ")), success => success)
                   }
                 }
               }
@@ -403,23 +407,27 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   tokenOf(request).flatMap { token => 
                     import VariableDescriptor._
                     val content = request.content.getOrElse {
-                      throw new HttpException(BadRequest, """request body was empty. "select", "from", and "where" fields must be specified.""")
+                      throw new HttpException(BadRequest, """request body was empty. "select", "from", and "properties" fields must be specified.""")
                     }
                       
-                    val select = Selection((content \ "select").deserialize[String].toLowerCase)
-                    val from: Path = token.path + "/" + (content \ "from").deserialize[String]
-                    val where = (content \ "where").deserialize[List[VariableDescriptor]]
+                    val queryComponents = (content \ "select").validated[String].map(Selection(_)).liftFailNel |@| 
+                                          (content \ "from").validated[String].map(token.path / _).liftFailNel |@|
+                                          (content \ "properties").validated[List[VariableDescriptor]].liftFailNel
 
-                    select match {
-                      case Count => 
-                        aggregationEngine.getIntersectionCount(token, from, where, tagTerms(request.parameters, Some(content), None))
-                        .map(serializeIntersectionResult[CountType]).map(_.ok)
+                    val result = queryComponents.apply {
+                      case (select, from, where) => select match {
+                        case Count => 
+                          aggregationEngine.getIntersectionCount(token, from, where, tagTerms(request.parameters, Some(content), None))
+                          .map(serializeIntersectionResult[CountType]).map(_.ok)
 
-                      case Series(periodicity) =>
-                        aggregationEngine.getIntersectionSeries(token, from, where, tagTerms(request.parameters, Some(content), Some(periodicity)))
-                        //.map(_.map((groupTimeSeries(grouping)(_: TimeSeriesType).fold(_.serialize, _.serialize)).second)(collection.breakOut))
-                        .map(serializeIntersectionResult[ResultSet[JObject, CountType]]).map(_.ok)
+                        case Series(periodicity) =>
+                          aggregationEngine.getIntersectionSeries(token, from, where, tagTerms(request.parameters, Some(content), Some(periodicity)))
+                          //.map(_.map((groupTimeSeries(grouping)(_: TimeSeriesType).fold(_.serialize, _.serialize)).second)(collection.breakOut))
+                          .map(serializeIntersectionResult[ResultSet[JObject, CountType]]).map(_.ok)
+                      }
                     }
+
+                    result.fold(errors => throw new HttpException(BadRequest, errors.list.mkString("; ")), success => success)
                   }
                 } 
               }
@@ -562,22 +570,28 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     case jvalue   => Periodicity.byName(jvalue)
   }
 
-  val timeStartKey = Symbol("@start")
-  val timeEndKey   = Symbol("@end")
+  val timeStartKey = Symbol("start")
+  val timeEndKey   = Symbol("end")
   def timeSpan(parameters: Map[Symbol, String], content: JValue): Option[TimeSpan.Finite] = {
-    val start = parameters.get(timeStartKey).map(new DateTime(_: String, DateTimeZone.UTC).toInstant).orElse {
-      (content \ timeStartKey.name) match {
-        case JNothing | JNull => None
-        case jvalue   => 
-          jvalue.validated[Instant].toOption
+    def parseDate(s: String): Option[Instant] = {
+      try {
+        Some(try { new Instant(s.toLong) } catch { case _ => new DateTime(s, DateTimeZone.UTC).toInstant })
+      } catch {
+        case _ => None
       }
     }
 
-    val end = parameters.get(timeEndKey).map(new DateTime(_: String, DateTimeZone.UTC).toInstant).orElse {
+    val start = parameters.get(timeStartKey).flatMap(parseDate).orElse {
+      (content \ timeStartKey.name) match {
+        case JNothing | JNull => None
+        case jvalue   => jvalue.validated[Instant].toOption
+      }
+    }
+
+    val end = parameters.get(timeEndKey).flatMap(parseDate).orElse {
       (content \ timeEndKey.name) match {
         case JNothing | JNull => None
-        case jvalue  => 
-          jvalue.validated[Instant].toOption
+        case jvalue  => jvalue.validated[Instant].toOption
       }
     }
 
@@ -604,7 +618,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     }
   }
 
-  val locationKey = Symbol("@location")
+  val locationKey = Symbol("location")
   def locationTerm(parameters: Map[Symbol, String], content: JValue): Option[TagTerm] = {
     parameters.get(locationKey) map (p => Hierarchy.AnonLocation(Path(p))) orElse {
       (content \ locationKey.name) match {

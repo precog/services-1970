@@ -77,7 +77,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
 
       val queryTerms = JObject(
-        JField("@location", "usa") :: Nil
+        JField("location", "usa") :: Nil
       )
 
       (jsonTestService.post[JValue]("/vfs/test/.tweeted/count")(queryTerms)) must whenDelivered {
@@ -93,9 +93,9 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       val expected = expectedMeans(events, "recipientCount", keysf(Hour))
 
       val queryTerms = JObject(
-        JField("@start", minDate.getMillis) ::
-        JField("@end", maxDate.getMillis) ::
-        JField("@location", "usa") :: Nil
+        JField("start", minDate.getMillis) ::
+        JField("end", maxDate.getMillis) ::
+        JField("location", "usa") :: Nil
       )
 
       (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")(queryTerms)) must whenDelivered {
@@ -120,9 +120,9 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       val expectedTotals = valueCounts(events)
 
       val queryTerms = JObject(
-        JField("@start", minDate.getMillis) ::
-        JField("@end", maxDate.getMillis) ::
-        JField("@location", "usa") :: Nil
+        JField("start", minDate.getMillis) ::
+        JField("end", maxDate.getMillis) ::
+        JField("location", "usa") :: Nil
       )
 
       val ((jpath, value), count) = (expectedTotals.find{ case ((k, _), _) => k.nodes.last == JPathField("gender") }).get
@@ -144,9 +144,9 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       val expectedTotals = valueCounts(events)
 
       val queryTerms = JObject(
-        JField("@start", minDate.getMillis) ::
-        JField("@end", maxDate.getMillis) ::
-        JField("@location", "usa") :: Nil
+        JField("start", minDate.getMillis) ::
+        JField("end", maxDate.getMillis) ::
+        JField("location", "usa") :: Nil
       )
 
       val ((jpath, value), count) = (expectedTotals.find{ case ((k, _), _) => k.nodes.last == JPathField("gender") }).get
