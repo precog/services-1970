@@ -138,13 +138,13 @@ object Tag {
   )
 
   def locationTagExtractor(auto: => Future[Option[Hierarchy]]) = (o: JObject) => {
-    val remainder = JObject(o.fields.filter(_.name != tname("location")))
-    (o \ tname("location")) match {
+    val tagName = tname("location")
+    val remainder = JObject(o.fields.filter(_.name != tagName))
+    (o \ tagName) match {
       case JBool(true) => (Tags(auto.map(_.map(Tag("location", _)).toSeq)), remainder)
-      case x => extractHierarchyTag("location", x) match {
-        case Skipped => (Errors(ExtractionError("location", "The value of the location tag is formatted incorrectly.") :: Nil), o)
+      case x => extractHierarchyTag(tagName, x) match {
         case tags: Tags => (tags, remainder)
-        case errors => (errors, o)
+        case other => (other, o)
       }
     }
   }
