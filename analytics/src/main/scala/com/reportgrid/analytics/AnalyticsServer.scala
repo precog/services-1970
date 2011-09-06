@@ -3,10 +3,13 @@ package com.reportgrid.analytics
 import blueeyes.BlueEyesServer
 import blueeyes.core.http._
 import blueeyes.json.JsonAST._
+import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.persistence.mongo.Mongo
 import com.reportgrid.api.Server
 import com.reportgrid.api.blueeyes.ReportGrid
 import net.lag.configgy.ConfigMap
+import org.joda.time.Instant
 
 object AnalyticsServer extends BlueEyesServer with AnalyticsService {
   override def mongoFactory(configMap: ConfigMap): Mongo = new blueeyes.persistence.mongo.RealMongo(configMap)
@@ -23,25 +26,36 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
 
   override def v1Rewrite(req: HttpRequest[JValue], conf: ForwardingConfig): Option[HttpRequest[JValue]] = {
     import HttpHeaders._
-    val content = req.content.map {
-      case JObject(fields) => JObject(fields.map {
-        case JField("timestamp", value) => JField("#timestamp", value)
-        case v => v
-      })
+    req.content.map { content =>
+      val count = (content \ "count") match {
+        case JInt(value) => Some(value)
+        case _ => None
+      }
 
-      case v => v // should be an error, but for now just forwarding it on
-    }
+      val timestamp = (content \ "timestamp") match {
+        case JNothing | JNull => None
+        case jvalue => Some(jvalue.deserialize[Instant])
+      }
 
-    content.map { forwardContent =>
+      val events = (content \ "events") match {
+        case JObject(fields) => 
+          JObject(
+            fields.flatMap {
+              case JField(eventName, JObject(metadata)) => 
+                Some(JField(eventName, JObject(metadata ++ timestamp.map(instant => JField("@timestamp", instant.serialize)))))
+
+              case _ => None
+            }
+          )
+
+        case err => JNothing
+      }
+
       val prefixPath = req.parameters.get('prefixPath).getOrElse("")
       req.copy(
-        uri = req.uri.copy(
-          host = Some(conf.host), 
-          port = conf.port, 
-          path = Some(conf.path + "/vfs/" + prefixPath)
-        ),
-        parameters = req.parameters - 'prefixPath,
-        content = Some(forwardContent)
+        uri = req.uri.copy(host = Some(conf.host), port = conf.port, path = Some(conf.path + "/vfs/" + prefixPath)),
+        parameters = (req.parameters - 'prefixPath) ++ (count.map(v => 'count -> v.toString).toMap),
+        content = Some(events)
       ) 
     }
   }

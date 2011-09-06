@@ -48,8 +48,6 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
   def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
   def v1Rewrite(req: HttpRequest[JValue], conf: ForwardingConfig): Option[HttpRequest[JValue]]
 
-  val v1Client: HttpClient[JValue] = (new HttpClientXLightWeb).translate[JValue]
-
   val analyticsService = service("analytics", "0.02") {
     logging { logger =>
       healthMonitor { monitor => context =>
