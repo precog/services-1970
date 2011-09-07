@@ -99,9 +99,10 @@ object Tag {
 
   class RichTagExtractor(ex: TagExtractor) {
     def or (other: TagExtractor): TagExtractor = (o: JObject) => ex(o) match {
-      case (Tags(tags), remainder) => other(remainder) match {
+      case result @ (Tags(tags), remainder) => other(remainder) match {
         case (Tags(rest), remainder) => (Tags(tags |+| rest), remainder)
-        case x => x
+        case (Skipped, _) => result
+        case error => error
       }
 
       case err @ (Errors(errors), remainder) => other(remainder) match {
