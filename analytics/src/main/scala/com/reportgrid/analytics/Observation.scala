@@ -82,9 +82,9 @@ object JointObservations {
 case class Tag(name: String, value: TagValue) 
 
 object Tag {
-  val Prefix = "@"
-
-  def tname(s: String) = s.replaceAll("^@*", "@")
+  val Prefix = "#"
+  private val pattern = "^" + Prefix + "*"
+  def tname(s: String) = s.replaceAll(pattern, Prefix)
 
   sealed trait ExtractionResult
   case class Tags(tags: Future[Seq[Tag]]) extends ExtractionResult
@@ -104,9 +104,10 @@ object Tag {
         case x => x
       }
 
-      case (Errors(errors), remainder) => other(remainder) match {
+      case err @ (Errors(errors), remainder) => other(remainder) match {
         case (Tags(tags), remainder) => (Tags(tags), remainder)
         case (Errors(rest), remainder) => (Errors(errors |+| rest), remainder)
+        case _ => err
       }
 
       case (Skipped, remainder) => other(remainder)
@@ -211,11 +212,10 @@ object Hierarchy {
 
   object Location {
     implicit object LocationExtractor extends Extractor[Location] {
-      def extract(v: JValue): Location = {
-        v match {
-          case JString(path) => AnonLocation(Path(path))
-          case JObject(List(JField(name, JString(path)))) => NamedLocation(name, Path(path))
-        }
+      def extract(v: JValue): Location = v match {
+        case JString(path) => AnonLocation(Path(path))
+        case JObject(List(JField(name, JString(path)))) => NamedLocation(name, Path(path))
+        case x => sys.error("Cannot deserialize a Location from " + pretty(render(x)))
       }
     }
   }
