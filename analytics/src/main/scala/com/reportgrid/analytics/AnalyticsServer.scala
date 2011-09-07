@@ -42,7 +42,7 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
           JObject(
             fields.flatMap {
               case JField(eventName, JObject(metadata)) => 
-                Some(JField(eventName, JObject(metadata ++ timestamp.map(instant => JField("@timestamp", instant.serialize)))))
+                Some(JField(eventName, JObject(metadata ++ timestamp.map(instant => JField("#timestamp", instant.serialize)))))
 
               case _ => None
             }
