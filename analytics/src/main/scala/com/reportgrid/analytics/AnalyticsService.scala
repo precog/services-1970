@@ -173,7 +173,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
               } ~
               path("""(?<variable>\.[^\n/]+)""") {
                 $ {
-                  audit("explore variables") {
+                  //audit("explore variables") {
                     get { request: HttpRequest[JValue] =>
                       val variable = variableOf(request)
 
@@ -185,7 +185,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         }
                       }
                     }
-                  }
+                  //}
                 } ~
                 path("/") {
                   path("statistics") {
@@ -200,14 +200,14 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }
                   } ~
                   path("count") {
-                    audit("variable occurrence count") {
-                      post { request: HttpRequest[JValue] =>
+                    audit("variable occurrence count") { request: HttpRequest[JValue] =>
+                      //post { request: HttpRequest[JValue] =>
                         val variable = variableOf(request)
 
                         withTokenAndPath(request) { (token, path) => 
                           aggregationEngine.getVariableCount(token, path, variable, tagTerms(request.parameters, request.content, None)).map(_.serialize.ok)
                         }
-                      }
+                      //}
                     }
                   } ~
                   path("series/") {
@@ -275,7 +275,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       }
                     }
                   } ~
-                  path("values/") {
+                  path("values") {
                     $ {
                       audit("list of variable values") {
                         get { request: HttpRequest[JValue] =>
@@ -291,69 +291,71 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         }
                       }
                     } ~
-                    path("top/'limit") {
-                      audit("list of top variable values") {
-                        get { request: HttpRequest[JValue] =>
-                          val variable = variableOf(request)
-                          val limit    = request.parameters('limit).toInt
-
-                          withTokenAndPath(request) { (token, path) => 
-                            aggregationEngine.getValuesTop(token, path, variable, limit).map(_.serialize.ok)
-                          }
-                        }
-                      }
-                    } ~
-                    path("bottom/'limit") {
-                      audit("list of bottom variable values") {
-                        get { request: HttpRequest[JValue] =>
-                          val variable = variableOf(request)
-                          val limit    = request.parameters('limit).toInt
-
-                          withTokenAndPath(request) { (token, path) => 
-                            aggregationEngine.getValuesBottom(token, path, variable, limit).map(_.serialize.ok)
-                          }
-                        }
-                      }
-                    } ~
-                    path('value) {
-                      $ {
-                        audit("explore a variable value") {
+                    path("/") {
+                      path("top/'limit") {
+                        audit("list of top variable values") {
                           get { request: HttpRequest[JValue] =>
-                            // return a list of valid subpaths
-                            Future.sync(JArray(JString("count") :: JString("series/") :: Nil).ok[JValue])
+                            val variable = variableOf(request)
+                            val limit    = request.parameters('limit).toInt
+
+                            withTokenAndPath(request) { (token, path) => 
+                              aggregationEngine.getValuesTop(token, path, variable, limit).map(_.serialize.ok)
+                            }
                           }
                         }
                       } ~
-                      path("/") {
-                        path("count") {
-                          audit("count occurrences of a variable value") {
-                            post { request: HttpRequest[JValue] =>
-                              val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
+                      path("bottom/'limit") {
+                        audit("list of bottom variable values") {
+                          get { request: HttpRequest[JValue] =>
+                            val variable = variableOf(request)
+                            val limit    = request.parameters('limit).toInt
 
-                              withTokenAndPath(request) { (token, path) => 
-                                aggregationEngine.getObservationCount(token, path, observation, tagTerms(request.parameters, request.content, None)) map (_.serialize.ok)
-                              }
+                            withTokenAndPath(request) { (token, path) => 
+                              aggregationEngine.getValuesBottom(token, path, variable, limit).map(_.serialize.ok)
+                            }
+                          }
+                        }
+                      } ~
+                      path('value) {
+                        $ {
+                          audit("explore a variable value") {
+                            get { request: HttpRequest[JValue] =>
+                              // return a list of valid subpaths
+                              Future.sync(JArray(JString("count") :: JString("series/") :: Nil).ok[JValue])
                             }
                           }
                         } ~
-                        path("series/") {
-                          audit("variable value series") {
+                        path("/") {
+                          path("count") {
+                            audit("count occurrences of a variable value") { request: HttpRequest[JValue] =>
+                              //post { request: HttpRequest[JValue] =>
+                                val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
+
+                                withTokenAndPath(request) { (token, path) => 
+                                  aggregationEngine.getObservationCount(token, path, observation, tagTerms(request.parameters, request.content, None)) map (_.serialize.ok)
+                                }
+                              //}
+                            }
+                          } ~
+                          path("series/") {
                             get { request: HttpRequest[JValue] =>
                               // simply return the names of valid periodicities that can be used for series queries
                               Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
                             } ~
-                            path('periodicity) {
-                              post { request: HttpRequest[JValue] =>
-                                val periodicity = periodicityOf(request)
-                                val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
-                                val terms = tagTerms(request.parameters, request.content, Some(periodicity))
+                            path('periodicity) { 
+                              audit("variable value series") { request: HttpRequest[JValue] =>
+                                //post { request: HttpRequest[JValue] =>
+                                  val periodicity = periodicityOf(request)
+                                  val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
+                                  val terms = tagTerms(request.parameters, request.content, Some(periodicity))
 
-                                withTokenAndPath(request) { (token, path) => 
-                                  aggregationEngine.getObservationSeries(token, path, observation, terms)
-                                  .map(groupTimeSeries(periodicity, seriesGrouping(request)))
-                                  .map(_.serialize.ok)
-                                }
-                              } 
+                                  withTokenAndPath(request) { (token, path) => 
+                                    aggregationEngine.getObservationSeries(token, path, observation, terms)
+                                    .map(groupTimeSeries(periodicity, seriesGrouping(request)))
+                                    .map(_.serialize.ok)
+                                  }
+                                //} 
+                              }
                             }
                           }
                         }
@@ -388,7 +390,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           .map(_.serialize.ok)
 
                         case Related => 
-                          val finiteSpan = timeSpan(request.parameters, content).getOrElse {
+                          val finiteSpan = timeSpan(request.parameters, Some(content)).getOrElse {
                             throw new HttpException(BadRequest, "Start and end dates must be specified to query for values related to an observation.")
                           }
 
@@ -570,9 +572,9 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     case jvalue   => Periodicity.byName(jvalue)
   }
 
-  val timeStartKey = Symbol("start")
-  val timeEndKey   = Symbol("end")
-  def timeSpan(parameters: Map[Symbol, String], content: JValue): Option[TimeSpan.Finite] = {
+  val timeStartKey = 'start
+  val timeEndKey   = 'end
+  def timeSpan(parameters: Map[Symbol, String], content: Option[JValue]): Option[TimeSpan.Finite] = {
     def parseDate(s: String): Option[Instant] = {
       try {
         Some(try { new Instant(s.toLong) } catch { case _ => new DateTime(s, DateTimeZone.UTC).toInstant })
@@ -582,14 +584,14 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     }
 
     val start = parameters.get(timeStartKey).flatMap(parseDate).orElse {
-      (content \ timeStartKey.name) match {
+      content map (_ \ timeStartKey.name) flatMap {
         case JNothing | JNull => None
         case jvalue   => jvalue.validated[Instant].toOption
       }
     }
 
     val end = parameters.get(timeEndKey).flatMap(parseDate).orElse {
-      (content \ timeEndKey.name) match {
+      content map (_ \ timeEndKey.name) flatMap {
         case JNothing | JNull => None
         case jvalue  => jvalue.validated[Instant].toOption
       }
@@ -598,13 +600,14 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     (start <**> end)(TimeSpan(_, _))
   }
 
-  def timeSpanTerm(parameters: Map[Symbol, String], content: JValue, p: Option[Periodicity]): Option[TagTerm] = {
-    val periodicity = (content \ "periodicity") match {
-      case JNothing | JNull | JBool(true) => p.orElse(Some(Periodicity.Eternity))
-      //only if it is explicitly stated that no timestamp was used on submission do we exclude a time term
-      case JBool(false) => None 
-      case JString("none") => None
-      case jvalue => p.orElse(Some(jvalue.deserialize[Periodicity]))
+  def timeSpanTerm(parameters: Map[Symbol, String], content: Option[JValue], p: Option[Periodicity]): Option[TagTerm] = {
+    val periodicity = p orElse {
+      content map (_ \ "periodicity") flatMap {
+        case JNothing | JNull | JBool(true) => Some(Periodicity.Eternity)
+        //only if it is explicitly stated that no timestamp was used on submission do we exclude a time term
+        case JBool(false) | JString("none") => None
+        case jvalue => jvalue.validated[Periodicity].toOption
+      }
     }
 
     periodicity flatMap {
@@ -619,24 +622,22 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   }
 
   val locationKey = Symbol("location")
-  def locationTerm(parameters: Map[Symbol, String], content: JValue): Option[TagTerm] = {
+  def locationTerm(parameters: Map[Symbol, String], content: Option[JValue]): Option[TagTerm] = {
     parameters.get(locationKey) map (p => Hierarchy.AnonLocation(Path(p))) orElse {
-      (content \ locationKey.name) match {
+      content.map(_ \ locationKey.name).flatMap { 
         case JNothing | JNull => None
         case jvalue => Some(jvalue.deserialize[Hierarchy.Location])
       }
     } map (HierarchyLocationTerm("location", _))
   }
 
-  def tagTerms(parameters: Map[Symbol, String], requestContent: Option[JValue], p: Option[Periodicity]): List[TagTerm] = {
-    requestContent.toList.flatMap { content => 
-      List(timeSpanTerm(parameters, content, p), locationTerm(parameters, content)).flatten 
-    } 
+  def tagTerms(parameters: Map[Symbol, String], content: Option[JValue], p: Option[Periodicity]): List[TagTerm] = {
+    List(timeSpanTerm(parameters, content, p), locationTerm(parameters, content)).flatten 
   }
 
   def queryVariableSeries[T: Decomposer : AbelianGroup](tokenOf: HttpRequest[_] => Future[Token], f: ValueStats => T, aggregationEngine: AggregationEngine) = {
-    post { request: HttpRequest[JValue] =>
-      tokenOf(request).flatMap { token =>
+    //post { request: HttpRequest[JValue] =>
+      (request: HttpRequest[JValue]) => tokenOf(request).flatMap { token =>
         val path        = fullPathOf(token, request)
         val variable    = variableOf(request)
         val periodicity = periodicityOf(request)
@@ -645,7 +646,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
         .map(groupTimeSeries(periodicity, seriesGrouping(request)))
         .map(_.map(f.second).serialize.ok)
       }
-    } 
+    //} 
   }
 
   def getTags(result: Tag.ExtractionResult) = result match {
