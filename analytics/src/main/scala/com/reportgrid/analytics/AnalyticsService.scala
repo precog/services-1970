@@ -189,17 +189,6 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   //}
                 } ~
                 path("/") {
-                  path("statistics") {
-                    audit("variable statistics") {
-                      get { request: HttpRequest[JValue] =>
-                        val variable = variableOf(request)
-
-                        withTokenAndPath(request) { (token, path) => 
-                          aggregationEngine.getVariableStatistics(token, path, variable).map(_.serialize.ok)
-                        }
-                      }
-                    }
-                  } ~
                   path("count") {
                     audit("variable occurrence count") { request: HttpRequest[JValue] =>
                       //post { request: HttpRequest[JValue] =>
@@ -210,6 +199,17 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           aggregationEngine.getVariableCount(token, path, variable, terms).map(_.serialize.ok)
                         }
                       //}
+                    }
+                  } ~
+                  path("statistics") {
+                    audit("variable statistics") {
+                      get { request: HttpRequest[JValue] =>
+                        val variable = variableOf(request)
+
+                        withTokenAndPath(request) { (token, path) => 
+                          aggregationEngine.getVariableStatistics(token, path, variable).map(_.serialize.ok)
+                        }
+                      }
                     }
                   } ~
                   path("series/") {
@@ -229,38 +229,40 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                       }
                     }
                   } ~
-                  path("histogram/") {
+                  path("histogram") {
                     $ {
                       audit("variable histogram") {
                         get { request: HttpRequest[JValue] =>
                           val variable = variableOf(request)
 
                           withTokenAndPath(request) { (token, path) => 
-                            aggregationEngine.getHistogram(token, path, variable).map(renderHistogram).map(_.ok)
+                            aggregationEngine.getHistogram(token, path, variable).map(_.serialize.ok)
                           }
                         }
                       }
                     } ~
-                    path("top/'limit") {
-                      audit("variable histogram top") {
-                        get { request: HttpRequest[JValue] =>
-                          val variable = variableOf(request)
-                          val limit    = request.parameters('limit).toInt
+                    path("/") {
+                      path("top/'limit") {
+                        audit("variable histogram top") {
+                          get { request: HttpRequest[JValue] =>
+                            val variable = variableOf(request)
+                            val limit    = request.parameters('limit).toInt
 
-                          withTokenAndPath(request) { (token, path) => 
-                            aggregationEngine.getHistogramTop(token, path, variable, limit).map(renderHistogram).map(_.ok)
+                            withTokenAndPath(request) { (token, path) => 
+                              aggregationEngine.getHistogramTop(token, path, variable, limit).map(_.serialize.ok)
+                            }
                           }
                         }
-                      }
-                    } ~
-                    path("bottom/'limit") {
-                      audit("variable histogram bottom") {
-                        get { request: HttpRequest[JValue] =>
-                          val variable = variableOf(request)
-                          val limit    = request.parameters('limit).toInt
-                          
-                          withTokenAndPath(request) { (token, path) => 
-                            aggregationEngine.getHistogramBottom(token, path, variable, limit).map(renderHistogram).map(_.ok)
+                      } ~
+                      path("bottom/'limit") {
+                        audit("variable histogram bottom") {
+                          get { request: HttpRequest[JValue] =>
+                            val variable = variableOf(request)
+                            val limit    = request.parameters('limit).toInt
+                            
+                            withTokenAndPath(request) { (token, path) => 
+                              aggregationEngine.getHistogramBottom(token, path, variable, limit).map(_.serialize.ok)
+                            }
                           }
                         }
                       }
@@ -421,12 +423,14 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     val result = queryComponents.apply {
                       case (select, from, where) => select match {
                         case Count => 
-                          aggregationEngine.getIntersectionCount(token, from, where, tagTerms(request.parameters, Some(content), None))
+                          val terms = tagTerms(request.parameters, Some(content), None)
+                          aggregationEngine.getIntersectionCount(token, from, where, terms)
                           .map(serializeIntersectionResult[CountType]).map(_.ok)
 
                         case Series(periodicity) =>
-                          aggregationEngine.getIntersectionSeries(token, from, where, tagTerms(request.parameters, Some(content), Some(periodicity)))
-                          //.map(_.map((groupTimeSeries(grouping)(_: TimeSeriesType).fold(_.serialize, _.serialize)).second)(collection.breakOut))
+                          val terms = tagTerms(request.parameters, Some(content), Some(periodicity))
+                          aggregationEngine.getIntersectionSeries(token, from, where, terms)
+                          .map(_.map(groupTimeSeries[CountType](periodicity, seriesGrouping(request)).second))
                           .map(serializeIntersectionResult[ResultSet[JObject, CountType]]).map(_.ok)
                       }
                     }
@@ -658,15 +662,6 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
       val errmsg = "Errors occurred extracting tag information: " + errors.map(_.toString).mkString("; ")
       throw new HttpException(BadRequest, errmsg)
   }
-
-  def renderHistogram(histogram: Traversable[(JValue, Long)]): JObject = {
-    histogram.foldLeft(JObject.empty) {
-      case (content, (value, count)) =>
-        val name = JPathField(renderNormalized(value))
-
-        content.set(name, JInt(count)) --> classOf[JObject]
-    }
-  }
 }
 
 object AnalyticsServiceSerialization extends AnalyticsSerialization {
@@ -682,30 +677,6 @@ object AnalyticsServiceSerialization extends AnalyticsSerialization {
     }
   }
 
-  implicit def SortedMapDecomposer[K: Decomposer, V: Decomposer]: Decomposer[SortedMap[K, V]] = new Decomposer[SortedMap[K, V]] {
-    override def decompose(m: SortedMap[K, V]): JValue = JArray(
-      m.map(t => JArray(List(t._1.serialize, t._2.serialize))).toList
-    )
-  }
-
-  implicit def TimeSeriesDecomposer[T: Decomposer]: Decomposer[TimeSeries[T]] = new Decomposer[TimeSeries[T]] {
-    override def decompose(t: TimeSeries[T]) = JObject(
-      JField("type", JString("timeseries")) ::
-      JField("periodicity", t.periodicity.serialize) ::
-      JField("data", t.series.serialize) ::
-      Nil
-    )
-  }
-
-  implicit def DeltaSetDecomposer[A: Decomposer, D: Decomposer, V : Decomposer : AbelianGroup]: Decomposer[DeltaSet[A, D, V]] = new Decomposer[DeltaSet[A, D, V]] {
-    def decompose(value: DeltaSet[A, D, V]): JValue = JObject(
-      JField("type", JString("deltas")) ::
-      JField("zero", value.zero.serialize) ::
-      JField("data", value.data.serialize) ::
-      Nil
-    )
-  }
-
   implicit val StatisticsDecomposer: Decomposer[Statistics] = new Decomposer[Statistics] {
     def decompose(v: Statistics): JValue = JObject(
       JField("n",  v.n.serialize) ::
@@ -717,20 +688,4 @@ object AnalyticsServiceSerialization extends AnalyticsSerialization {
       Nil
     )
   }
-
-  implicit val VariableValueDecomposer: Decomposer[(Variable, HasValue)] = new Decomposer[(Variable, HasValue)] {
-    def decompose(v: (Variable, HasValue)): JValue = JObject(
-      JField("variable", v._1.serialize) :: 
-      JField("value", v._2.serialize) ::
-      Nil
-    )
-  }
-
-//  implicit val HasValueExtractor: Extractor[HasValue] = new Extractor[HasValue] {
-//    def extract(v: JValue): HasValue = {
-//      (v \ "where").children.collect {
-//        case JField(name, value) => HasValue(Variable(JPath(name)), value)
-//      }.toSet
-//    }
-//  }
 }

@@ -58,6 +58,8 @@ object MongoSupport extends AnalyticsSerialization {
           fields.foldLeft(TimeSeries.empty[T](periodicity)) { 
             case (series, JArray(List(time, value))) =>
               series + (new Instant(time.deserialize[Instant]) -> value.deserialize[T])
+
+            case (_, err) => sys.error("Not a time series component: " + err)
           }
 
         case _ => sys.error("Expected object but found: " + value)

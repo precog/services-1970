@@ -415,7 +415,10 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       }
 
       engine.getIntersectionCount(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
-        verify(_.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
+        verify { result => 
+          println(result)
+          result.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts
+        }
       }
     }
 
