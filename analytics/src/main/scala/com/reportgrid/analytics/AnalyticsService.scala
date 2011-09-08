@@ -112,6 +112,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             withTokenAndPath(request) { (token, path) => 
               request.content.foreach { 
                 case obj @ JObject(fields) => for (JField(eventName, event: JObject) <- fields) {
+                  logger.debug("Recording event: " + compact(render(obj)))
                   val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
                   for (tags <- getTags(tagResults)) {
                     aggregationEngine.aggregate(token, path, eventName, tags, remainder, count)
