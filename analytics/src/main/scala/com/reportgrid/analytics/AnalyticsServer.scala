@@ -53,15 +53,12 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
       }
 
       val prefixPath = req.parameters.get('prefixPath).getOrElse("")
-      val forwarding = req.copy(
-        uri = req.uri.copy(host = Some(conf.host), port = conf.port, path = Some(conf.path + "/vfs/" + prefixPath)),
-        parameters = (req.parameters - 'prefixPath) ++ (count.map(v => 'count -> v.toString).toMap),
+      HttpRequest(
+        method = HttpMethods.POST,
+        uri = req.uri.copy(host = Some(conf.host), port = conf.port, path = Some(conf.path + "/vfs/" + prefixPath), query = None),
+        parameters = (req.parameters - 'prefixPath - 'content - 'method - 'callback) ++ (count.map(v => 'count -> v.toString).toMap),
         content = Some(events)
       ) 
-
-      logger.debug("Forwarding request from v0 " + req + " as " + forwarding)
-      
-      forwarding
     }
   }
 }
