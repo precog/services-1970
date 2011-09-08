@@ -206,7 +206,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         val variable = variableOf(request)
 
                         withTokenAndPath(request) { (token, path) => 
-                          aggregationEngine.getVariableCount(token, path, variable, tagTerms(request.parameters, request.content, None)).map(_.serialize.ok)
+                          val terms = tagTerms(request.parameters, request.content, None)
+                          aggregationEngine.getVariableCount(token, path, variable, terms).map(_.serialize.ok)
                         }
                       //}
                     }
@@ -603,7 +604,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
 
   def timeSpanTerm(parameters: Map[Symbol, String], content: Option[JValue], p: Option[Periodicity]): Option[TagTerm] = {
     val periodicity = p orElse {
-      content map (_ \ "periodicity") flatMap {
+      (content.getOrElse(JNothing) \ "periodicity") match {
         case JNothing | JNull | JBool(true) => Some(Periodicity.Eternity)
         //only if it is explicitly stated that no timestamp was used on submission do we exclude a time term
         case JBool(false) | JString("none") => None
