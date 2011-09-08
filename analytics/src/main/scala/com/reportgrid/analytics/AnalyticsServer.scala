@@ -9,6 +9,7 @@ import blueeyes.persistence.mongo.Mongo
 import com.reportgrid.api.Server
 import com.reportgrid.api.blueeyes.ReportGrid
 import net.lag.configgy.ConfigMap
+import net.lag.logging.Logger
 import org.joda.time.Instant
 
 object AnalyticsServer extends BlueEyesServer with AnalyticsService {
@@ -24,7 +25,7 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
     ReportGrid(auditToken, environment)
   }
 
-  override def v1Rewrite(req: HttpRequest[JValue], conf: ForwardingConfig): Option[HttpRequest[JValue]] = {
+  override def v1Rewrite(logger: Logger, req: HttpRequest[JValue], conf: ForwardingConfig): Option[HttpRequest[JValue]] = {
     import HttpHeaders._
     req.content.map { content =>
       val count = (content \ "count") match {
@@ -37,7 +38,7 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
         case jvalue => Some(jvalue.deserialize[Instant])
       }
 
-      val events = (content \ "events") match {
+      val events: JValue = (content \ "events") match {
         case JObject(fields) => 
           JObject(
             fields.flatMap {
@@ -52,11 +53,15 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
       }
 
       val prefixPath = req.parameters.get('prefixPath).getOrElse("")
-      req.copy(
+      val forwarding = req.copy(
         uri = req.uri.copy(host = Some(conf.host), port = conf.port, path = Some(conf.path + "/vfs/" + prefixPath)),
         parameters = (req.parameters - 'prefixPath) ++ (count.map(v => 'count -> v.toString).toMap),
         content = Some(events)
       ) 
+
+      logger.debug("Forwarding request from v0 " + req + " as " + forwarding)
+      
+      forwarding
     }
   }
 }
@@ -64,7 +69,7 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
 object TestAnalyticsServer extends BlueEyesServer with AnalyticsService {
   override def mongoFactory(config: ConfigMap) = new blueeyes.persistence.mongo.mock.MockMongo()
   override def auditClientFactory(config: ConfigMap) = ReportGrid(Token.Test.tokenId, Server.Local)
-  override def v1Rewrite(req: HttpRequest[JValue], conf: ForwardingConfig) = None
+  override def v1Rewrite(logger: Logger, req: HttpRequest[JValue], conf: ForwardingConfig) = None
 }
 
 // vim: set ts=4 sw=4 et:

@@ -18,6 +18,7 @@ import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.util.{Clock, ClockSystem, PartialFunctionCombinators}
 
 import net.lag.configgy.{Configgy, ConfigMap}
+import net.lag.logging.Logger
 
 import org.joda.time.Instant
 import org.joda.time.DateTime
@@ -46,7 +47,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
   def mongoFactory(configMap: ConfigMap): Mongo
 
   def auditClientFactory(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
-  def v1Rewrite(req: HttpRequest[JValue], conf: ForwardingConfig): Option[HttpRequest[JValue]]
+  def v1Rewrite(logger: Logger, req: HttpRequest[JValue], conf: ForwardingConfig): Option[HttpRequest[JValue]]
 
   val analyticsService = service("analytics", "0.02") {
     logging { logger =>
@@ -125,13 +126,13 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                 /* Post data to the virtual file system.
                  */
                 //audit("track") {
-                  forwarding(v1Rewrite(_: HttpRequest[JValue], v1ForwardingConfig))(v1ForwardingClient) {
+                  forwarding(v1Rewrite(logger, _: HttpRequest[JValue], v1ForwardingConfig))(v1ForwardingClient) {
                     post { request: HttpRequest[JValue] =>
                       tokenOf(request).map { token =>
                         val path = fullPathOf(token, request)
 
                         request.content.foreach { content =>
-                          logger.debug("Recording event: " + (token, path, compact(render(content))))
+                          logger.debug("V0 recording event: " + (token.tokenId, path, compact(render(content))))
                           val timestamp: Instant = (content \ "timestamp") match {
                             case JNothing => clock.instant()
                             case jvalue   => jvalue.deserialize[Instant]
