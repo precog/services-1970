@@ -131,7 +131,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         val path = fullPathOf(token, request)
 
                         request.content.foreach { content =>
-                          logger.debug("Recording event: " + compact(render(content)))
+                          logger.debug("Recording event: " + (token, path, compact(render(content))))
                           val timestamp: Instant = (content \ "timestamp") match {
                             case JNothing => clock.instant()
                             case jvalue   => jvalue.deserialize[Instant]
