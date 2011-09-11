@@ -38,7 +38,7 @@ trait ReportGridInstrumentation {
             JField("function", function)
           )),
           rollup = true,
-          timestamp = Some(start.toDate)
+          tags = Set(TimeTag[JValue](start.toDate))
         )
       },
       client, 

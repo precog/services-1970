@@ -10,6 +10,7 @@ import blueeyes.core.service.engines.HttpClientXLightWeb
 import blueeyes.json.JsonAST._
 import com.reportgrid.api.ReportGridTrackingClient
 import com.reportgrid.api.blueeyes._
+import com.reportgrid.api.Tag
 import rosetta.json.blueeyes._
 
 import java.net.InetAddress
@@ -17,7 +18,7 @@ import java.util.Date
 import scalaz.Scalaz._
 
 object NoopTrackingClient extends ReportGridTrackingClient[JValue](JsonBlueEyes) {
-  override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = JsonBlueEyes.EmptyObject, rollup: Boolean = false, timestamp: Option[Date] = None, count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
+  override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = JsonBlueEyes.EmptyObject, rollup: Boolean = false, tags: Set[Tag[JValue]] = Set.empty[Tag[JValue]], count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
     //println("Tracked " + path + "; " + name + " - " + properties)
   }
 }
