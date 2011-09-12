@@ -66,7 +66,7 @@ object ServicesBuild extends Build {
         "org.dspace.dependencies" % "dspace-geoip"        % "1.2.3",
         "org.scala-tools.testing" % "specs_2.9.0-1"       % "1.6.8"  % "test",
         "org.scala-tools.testing" % "scalacheck_2.9.0-1"  % "1.9"    % "test"),
-      mainClass := None)
+      mainClass := Some("com.reportgrid.jessup.Server"))
 
     val yggdrasil = Project("yggdrasil", file("yggdrasil"), settings = yggdrasilSettings ) dependsOn(common) dependsOnAlt (blueeyes(base))
 

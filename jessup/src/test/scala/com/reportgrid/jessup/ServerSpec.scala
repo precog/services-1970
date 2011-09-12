@@ -18,10 +18,12 @@ object ServerSpec extends BlueEyesServiceSpecification with Server with ScalaChe
   import Arbitrary.arbitrary
   
   noDetailedDiffs()
+
+  def buildGeoIPComponent(databasePath: String) = this
   
   "GeoIP Service" should {
     "retrieve location by ip" in {
-      skip("There seem to be some JSON encoding issues in BlueEyes that break this test...")
+      //skip("There seem to be some JSON encoding issues in BlueEyes that break this test...")
       
       val prop = forAll { (ip: IPv4, loc: Location) =>
         val ipStr = ip.toString
@@ -75,19 +77,21 @@ object ServerSpec extends BlueEyesServiceSpecification with Server with ScalaChe
   
   implicit val arbIp: Arbitrary[IPv4] = Arbitrary(genIp)
   
+  import Gen._
+
   val genIp = for {
-    a <- Gen.choose(0, 255)
-    b <- Gen.choose(0, 255)
-    c <- Gen.choose(0, 255)
-    d <- Gen.choose(0, 255)
+    a <- choose(0, 255)
+    b <- choose(0, 255)
+    c <- choose(0, 255)
+    d <- choose(0, 255)
   } yield IPv4(a, b, c, d)
   
   val genLocation: Gen[Location] = for {
-    countryCode <- arbitrary[String]
-    countryName <- arbitrary[String]
-    region <- arbitrary[String]
-    city <- arbitrary[String]
-    postalCode <- arbitrary[String]
+    countryCode <- identifier
+    countryName <- identifier
+    region <- identifier
+    city <- identifier
+    postalCode <- identifier
     
     latitude <- arbitrary[Float]
     longitude <- arbitrary[Float]

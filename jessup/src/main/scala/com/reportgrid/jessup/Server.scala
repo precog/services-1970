@@ -14,13 +14,19 @@ import blueeyes.core.http.combinators.HttpRequestCombinators
 import blueeyes.core.http.MimeTypes._
 import blueeyes.core.http.{HttpStatusCodes, HttpStatus, HttpRequest, HttpResponse}
 import blueeyes.core.data.{BijectionsChunkJson, ByteChunk}
+import blueeyes.core.data.Bijection._
 
 import blueeyes.json.JsonAST._
 
-trait Server extends BlueEyesServiceBuilder with HttpRequestCombinators with BijectionsChunkJson with GeoIPComponent {
+trait Service extends BlueEyesServiceBuilder with HttpRequestCombinators {
+  import BijectionsChunkJson.JValueToChunk
+
+  def buildGeoIPComponent(databasePath: String): GeoIPComponent
+
   val geoipService = service("jessup", "1.0") { context =>
     startup {
-      Future sync JessupConfig("")
+      import context._
+      Future sync JessupConfig(buildGeoIPComponent(config.getString("dbpath", "/opt/reportgrid/GeoLiteCity.dat")))
     } ->
     request { config =>
       import config._
@@ -28,9 +34,9 @@ trait Server extends BlueEyesServiceBuilder with HttpRequestCombinators with Bij
       path("/'ip") {
         produce(application/json) {
           get { req: HttpRequest[ByteChunk] =>
-            Future sync {
-              val json = GeoIP.lookup(req.parameters('ip)) map locationToJson
-              HttpResponse(content = json map { JValueToChunk(_): ByteChunk })
+            Future async {
+              val json: Option[JValue] = geoipComponent.GeoIP.lookup(req.parameters('ip)) map locationToJson
+              HttpResponse(content = json.map(_.as[ByteChunk]))
             }
           }
         }
@@ -58,14 +64,10 @@ trait Server extends BlueEyesServiceBuilder with HttpRequestCombinators with Bij
   }
 }
 
-object Server extends BlueEyesServer with Server with MaxMindGeoIPComponent {
-  var DatabasePath = "jessup/src/main/resources/GeoLiteCity.dat"      // we should probably set this in main
-  
-  override val rootConfig = {
-    val back = new Config
-    back.setConfigMap("server", new Config)
-    back
+object Server extends BlueEyesServer with Service {
+  override def buildGeoIPComponent(databasePath: String): GeoIPComponent = new MaxMindGeoIPComponent {
+    override val DatabasePath = databasePath
   }
 }
 
-case class JessupConfig(dbPath: String)
+case class JessupConfig(geoipComponent: GeoIPComponent)
