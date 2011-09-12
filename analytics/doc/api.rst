@@ -104,23 +104,41 @@ ReportGrid's tokens API is located at:
 
 http://api.reportgrid.com/services/analytics/v0/tokens/?tokenId=(guid)
 
+Token Creation
+--------------
+
 Tokens can be created by POSTing to the ReportGrid tokens API with a JSON object that describes the path, permissions, 
-and limits of the token.  A descendent token's permissions and limits cannot exceed (but may equal) the parent's. ::
+and limits of the token.  A descendent token's permissions and limits cannot exceed (but may equal) the parent's. 
+
++--------------------+-------------------------------------------------------+
+| method             | POST                                                  |
++--------------------+-------------------------------------------------------+
+| url pattern        | (API ROOT)/vfs/(path)"                                |
++--------------------+-------------------------------------------------------+
+| body               | A JSON object where each property represents an event |
+|                    | to be tracked. See the `Querying`_ section for an     |
+|                    | example.                                              |
++--------------------+---------+----------------------------------+----------+
+| request parameters | tokenId | (parent token id)                | required |
++--------------------+---------+----------------------------------+----------+
+
+::
 
   {
     "path": "/startups/launches",
     "permissions": {
-        "read": true,
-        "write": true,
-        "share": false
+      "read": true,
+      "write": true,
+      "share": false
     },
     "expires": 9223372036854775807,
     "limits": {
-        "order": 2,
-        "limit": 2,
-        "depth": 2
+      "order": 2,
+      "limit": 2,
+      "depth": 2
     }
   }
+
 
 .. csv-table:: Token API
 
@@ -179,7 +197,7 @@ information that needs to be treated specially by the system. For example, time 
   {"myEvent": {"#location": {"country": "usa", "state": "usa/colorado", "city": "usa/colorado/boulder"}}} 
 
 The "store" call is identical to the base tracking call specified above, with a couple of very minor differences. 
-First, the URL pattern is instead "`API ROOT`_/vfs/store(path)"; second, events sent to the store path are not 
+First, the URL pattern is instead ``(API ROOT)/vfs/store(path)``; second, events sent to the store path are not 
 automatically timestamped if the #timestamp tag is absent.
 
 Querying
@@ -564,7 +582,7 @@ corresponds to the result of an advanced search.
 |                    |                                                                                               |
 |                    | In the case of a series intersection query, the result is a 3-dimensional JSON array similar  | 
 |                    | to the above, but where instead of a count, the final member of each tuple is a time series   |
-|                    | as described in `Value Series`_ above.                                                       |
+|                    | as described in `Value Series`_ above.                                                        |
 +--------------------+-----------------------------------------------------------------------------------------------+
 
 Both examples below could be sent to this url:
