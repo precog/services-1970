@@ -37,7 +37,7 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
     new JessupServiceProxy(
       configMap.getString("host", "api.reportgrid.com"),
       configMap.getInt("port"),
-      configMap.getString("path", "/services/jessup/v0"))
+      configMap.getString("path", "/services/jessup/v1"))
   }
 }
 

@@ -23,27 +23,29 @@ trait Service extends BlueEyesServiceBuilder with HttpRequestCombinators {
 
   def buildGeoIPComponent(databasePath: String): GeoIPComponent
 
-  val geoipService = service("jessup", "1.0") { context =>
-    startup {
-      import context._
-      Future sync JessupConfig(buildGeoIPComponent(config.getString("dbpath", "/opt/reportgrid/GeoLiteCity.dat")))
-    } ->
-    request { config =>
-      import config._
-      
-      path("/'ip") {
-        produce(application/json) {
-          get { req: HttpRequest[ByteChunk] =>
-            Future async {
-              val json: Option[JValue] = geoipComponent.GeoIP.lookup(req.parameters('ip)) map locationToJson
-              HttpResponse(content = json.map(_.as[ByteChunk]))
+  val geoipService = service("jessup", "1.0") { 
+    healthMonitor { monitor => context =>
+      startup {
+        import context._
+        Future sync JessupConfig(buildGeoIPComponent(config.getString("dbpath", "/opt/reportgrid/GeoLiteCity.dat")))
+      } ->
+      request { config =>
+        import config._
+        
+        path("/'ip") {
+          produce(application/json) {
+            get { req: HttpRequest[ByteChunk] =>
+              Future async {
+                val json: Option[JValue] = geoipComponent.GeoIP.lookup(req.parameters('ip)) map locationToJson
+                HttpResponse(content = json.map(_.as[ByteChunk]))
+              }
             }
           }
         }
+      } ->
+      shutdown { config =>
+        Future sync ()
       }
-    } ->
-    shutdown { config =>
-      Future sync ()
     }
   }
   
