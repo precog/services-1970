@@ -363,20 +363,17 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       sys.error("Cannot obtain a histogram of a variable with a potentially infinite number of values.")
     }
 
-    type R = (JValue, CountType)
     getVariableLength(token, path, variable).flatMap { 
       case 0 =>
-        val extractor = extractValues[R](valuesKeyFilter(token, path, variable), variable_values.collection) _
+        val extractor = extractValues[(JValue, CountType)](valuesKeyFilter(token, path, variable), variable_values.collection) _
         extractor((jvalue, count) => (jvalue, count)) map (_.toMap)
 
       case length =>
-        Future((0 until length).map { index =>
+        val futures = for (index <- 0 until length) yield {
           getHistogramInternal(token, path, Variable(variable.name \ JPathIndex(index)))
-        }: _*).map { results =>
-          results.foldLeft(Map.empty[JValue, CountType]) {
-            case (all, cur) => all |+| cur
-          }
         }
+
+        for (results <- Future(futures: _*)) yield results.foldLeft(Map.empty[JValue, CountType])(_ |+| _)
     }    
   }
 

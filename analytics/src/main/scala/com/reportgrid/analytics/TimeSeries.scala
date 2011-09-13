@@ -247,59 +247,55 @@ object TimeSeriesEncoding {
 }
 
 class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
+  import Stream._
+
   def grouped(time: Instant): List[((Periodicity, Period), Instant)] = {
     (for ((k, v) <- grouping) yield (k, v.period(time)) -> k.floor(time))(collection.breakOut)
   }
 
-  def expand(start: Instant, end: Instant): Stream[Period] = {
-    import Stream._
+  def expandFiner(start: Instant, end: Instant, periodicity: Periodicity, 
+                  expansion: (Instant, Instant, Periodicity) => Stream[Period]): Stream[Period] = {
 
-    def expandFiner(start: Instant, end: Instant, periodicity: Periodicity, 
-                    expansion: (Instant, Instant, Periodicity) => Stream[Period]): Stream[Period] = {
+    periodicity.finer.filter(grouping.contains).
+    map(expansion(start, end, _)).
+    getOrElse {
+      val length = end.getMillis - start.getMillis
+      val period = periodicity.period(start)
 
-      periodicity.finer.filter(grouping.contains).
-      map(expansion(start, end, _)).
-      getOrElse {
-        val length = end.getMillis - start.getMillis
-        val period = periodicity.period(start)
-
-        if (length.toDouble / period.size.getMillis >= 0.5) period +: Empty else Empty
-      }
+      if (length.toDouble / period.size.getMillis >= 0.5) period +: Empty else Empty
     }
+  }
 
-    def expandBoth(start: Instant, end: Instant, periodicity: Periodicity): Stream[Period] = {
-      if (start.getMillis >= end.getMillis) Empty 
+  def expand(start: Instant, end: Instant, periodicity: Periodicity = Periodicity.Year): Stream[Period] = {
+    if (start.getMillis >= end.getMillis) Empty 
+    else {
+      val periods = periodicity.period(start) to end
+      val head = periods.head
+      val tail = periods.tail
+
+      if (tail.isEmpty) expandFiner(start, end, periodicity, expand _)
       else {
-        val periods = periodicity.period(start) to end
-        val head = periods.head
-        val tail = periods.tail
-
-        if (tail.isEmpty) expandFiner(start, end, periodicity, expandBoth _)
-        else {
-          expandFiner(start, head.end, periodicity, expandLeft _) ++ 
-          tail.init ++ 
-          expandFiner(tail.last.start, end, periodicity, expandRight _)
-        }
+        expandFiner(start, head.end, periodicity, expandLeft _) ++ 
+        tail.init ++ 
+        expandFiner(tail.last.start, end, periodicity, expandRight _)
       }
     }
+  }
 
-    def expandLeft(start: Instant, end: Instant, periodicity: Periodicity): Stream[Period] = {
-      if (start.getMillis >= end.getMillis) Empty 
-      else {
-        val periods = (periodicity.period(start) until end)
-        expandFiner(start, periods.head.end, periodicity, expandLeft _) ++ periods.tail
-      }
+  def expandLeft(start: Instant, end: Instant, periodicity: Periodicity): Stream[Period] = {
+    if (start.getMillis >= end.getMillis) Empty 
+    else {
+      val periods = (periodicity.period(start) until end)
+      expandFiner(start, periods.head.end, periodicity, expandLeft _) ++ periods.tail
     }
+  }
 
-    def expandRight(start: Instant, end: Instant, periodicity: Periodicity): Stream[Period] = {
-      if (start.getMillis >= end.getMillis) Empty 
-      else {
-        val periods = (periodicity.period(start) to end)
-        periods.init ++ expandFiner(periods.last.start, end, periodicity, expandRight _)
-      }
+  def expandRight(start: Instant, end: Instant, periodicity: Periodicity): Stream[Period] = {
+    if (start.getMillis >= end.getMillis) Empty 
+    else {
+      val periods = (periodicity.period(start) to end)
+      periods.init ++ expandFiner(periods.last.start, end, periodicity, expandRight _)
     }
-
-    expandBoth(start, end, Periodicity.Year)
   }
 
   /**

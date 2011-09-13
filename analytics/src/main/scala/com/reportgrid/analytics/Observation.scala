@@ -143,7 +143,7 @@ object Tag {
     val tagName = tname("location")
     val remainder = JObject(o.fields.filter(_.name != tagName))
     (o \ tagName) match {
-      case JBool(true) => (Tags(auto.map(_.map(Tag("location", _)).toSeq)), remainder)
+      case JBool(true) | JString("auto") => (Tags(auto.map(_.map(Tag("location", _)).toSeq)), remainder)
       case x => extractHierarchyTag(tagName, x) match {
         case tags: Tags => (tags, remainder)
         case other => (other, o)

@@ -62,7 +62,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
           val mongo = mongoFactory(mongoConfig)
 
-          val database = mongo.database(mongoConfig.getString("database", "analytics-v" + version))
+          val database = mongo.database(mongoConfig.getString("database", "analytics-v" + serviceVersion))
 
           val tokensCollection = mongoConfig.getString("tokensCollection", "tokens")
 

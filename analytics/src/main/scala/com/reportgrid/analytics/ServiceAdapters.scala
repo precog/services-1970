@@ -70,7 +70,7 @@ class JessupServiceProxy(host: String, port: Option[Int], path: String) extends 
 
   override def apply(host: Option[InetAddress]): Future[Option[Hierarchy]] = {
     host map { host =>
-      client.get[JValue]("/" + host.getHostAddress) map { response =>
+      client.get[JValue](host.getHostAddress) map { response =>
         response.content flatMap { jvalue =>
           val JString(countryName) = jvalue \ "country-name"
           val JString(region) = jvalue \ "region"
