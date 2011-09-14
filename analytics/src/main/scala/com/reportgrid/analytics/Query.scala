@@ -34,7 +34,7 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   type StorageKeysType = TimeRefKeys
 
   private def docStoragePeriods = span match {
-    case TimeSpan.Eternity => Period.Eternity :: Nil
+    case TimeSpan.Eternity => Nil
     case TimeSpan.Finite(start, end) => 
       val docGranularity = encoding.grouping(resultGranularity)
       val pstart = docGranularity.period(start)
@@ -46,8 +46,7 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   }
 
   private def dataKeyInstants(docStoragePeriod: Period) = span match {
-    case TimeSpan.Eternity => 
-      Stream(Instants.Zero)
+    case TimeSpan.Eternity => Stream.empty[Instant]
 
     case TimeSpan.Finite(start, end) => 
       resultGranularity.period(docStoragePeriod.start max start).datesUntil(docStoragePeriod.end min end)
@@ -74,23 +73,17 @@ object IntervalTerm {
 case class SpanTerm(encoding: TimeSeriesEncoding, span: TimeSpan) extends TagTerm {
   type StorageKeysType = TimeRefKeys
 
-  override def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = {
-    span.finite.map { span => 
-      encoding.queriableExpansion(span).flatMap {
-        case (p, span) => IntervalTerm(encoding, p, span).storageKeys
-      }
-    } getOrElse {
-      IntervalTerm.Eternity(encoding).storageKeys
+  override def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = span match {
+    case TimeSpan.Eternity => IntervalTerm.Eternity(encoding).storageKeys
+    case finite => encoding.queriableExpansion(span).flatMap {
+      case (p, span) => IntervalTerm(encoding, p, span).storageKeys
     }
   }
 
-  override def infiniteValueKeys: Stream[Sig] = {
-    span.finite.map { span => 
-      encoding.queriableExpansion(span).flatMap {
-        case (p, span) => IntervalTerm(encoding, p, span).infiniteValueKeys
-      }
-    } getOrElse {
-      IntervalTerm.Eternity(encoding).infiniteValueKeys
+  override def infiniteValueKeys: Stream[Sig] = span match {
+    case TimeSpan.Eternity => Stream.empty[Sig]
+    case finite => encoding.queriableExpansion(finite).flatMap {
+      case (p, span) => IntervalTerm(encoding, p, span).infiniteValueKeys
     }
   }
 }

@@ -327,7 +327,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
   private def internalSearchSeries[T: AbelianGroup : Extractor](tagTerms: Seq[TagTerm], filter: Sig => MongoFilter, dataPath: JPath, collection: MongoCollection): Future[ResultSet[JObject, T]] = {
 
-    val toQuery = tagTerms.map(_.storageKeys).sequence.map {
+    val toQuery = tagTerms.map(_.storageKeys).filter(!_.isEmpty).sequence.map {
       v => Tuple2(
         v.map(_._1).toSet.sig,
         v.map(_._2).sequence.map(x => (x.map(_._1).toSet.sig, JObject(x.map(_._2).toList)))
