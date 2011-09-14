@@ -35,6 +35,10 @@ import scala.collection.immutable.SortedMap
 import scala.collection.immutable.IndexedSeq
 
 import scalaz.Semigroup
+import scalaz.Validation
+import scalaz.Success
+import scalaz.Failure
+import scalaz.NonEmptyList
 import scalaz.Scalaz._
 
 case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: Yggdrasil[JValue], jessup: Jessup)
@@ -352,10 +356,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                   val periodicity = periodicityOf(request)
                                   val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
                                   val terms = tagTerms(request.parameters, request.content, Some(periodicity))
+                                  val zone = validated(timezone(request))
 
                                   withTokenAndPath(request) { (token, path) => 
                                     aggregationEngine.getObservationSeries(token, path, observation, terms)
-                                    .map(groupTimeSeries(periodicity, seriesGrouping(request)))
+                                    .map(transformTimeSeries(request, periodicity))
                                     .map(_.serialize.ok)
                                   }
                                 //} 
@@ -381,6 +386,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                           (content \ "from").validated[String].map(token.path / _).liftFailNel |@|
                                           (content \ "where").validated[Set[HasValue]].map(JointObservation(_)).liftFailNel
 
+                    val zone = validated(timezone(request))
+
                     val result = queryComponents.apply {
                       case (select, from, observation) => select match {
                         case Count => 
@@ -390,7 +397,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         case Series(periodicity) => 
                           val terms = tagTerms(request.parameters, Some(content), Some(periodicity))
                           aggregationEngine.getObservationSeries(token, from, observation, terms)
-                          .map(groupTimeSeries(periodicity, seriesGrouping(request)))
+                          .map(transformTimeSeries(request, periodicity))
                           .map(_.serialize.ok)
 
                         case Related => 
@@ -420,6 +427,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                           (content \ "from").validated[String].map(token.path / _).liftFailNel |@|
                                           (content \ "properties").validated[List[VariableDescriptor]].liftFailNel
 
+
                     val result = queryComponents.apply {
                       case (select, from, where) => select match {
                         case Count => 
@@ -430,7 +438,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         case Series(periodicity) =>
                           val terms = tagTerms(request.parameters, Some(content), Some(periodicity))
                           aggregationEngine.getIntersectionSeries(token, from, where, terms)
-                          .map(_.map(groupTimeSeries[CountType](periodicity, seriesGrouping(request)).second))
+                          .map(_.map(transformTimeSeries[CountType](request, periodicity).second))
                           .map(serializeIntersectionResult[ResultSet[JObject, CountType]]).map(_.ok)
                       }
                     }
@@ -514,6 +522,31 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   import AnalyticsServiceSerialization._
   import AggregationEngine._
 
+  def validated[A](v: Option[ValidationNEL[Throwable, A]]): Option[A] = v map {
+    case Success(a) => a
+    case Failure(t) => throw new HttpException(BadRequest, t.list.map(_.getMessage).mkString("; "))
+  }
+
+  def transformTimeSeries[V: Semigroup](request: HttpRequest[_], original: Periodicity) = {
+    val zone = validated(timezone(request))
+    shiftTimeSeries[V](zone) andThen groupTimeSeries[V](original, seriesGrouping(request))
+  }
+
+  def shiftTimeSeries[V: Semigroup](zone: Option[DateTimeZone]) = (resultSet: ResultSet[JObject, V]) => {
+    zone map { zone => 
+      val shiftTimeField = (obj: JObject) => JObject(
+        obj.fields.map {
+          case JField("timestamp", instant) => JField("datetime", instant.deserialize[DateTime].withZone(zone).toString)
+          case field => field
+        }
+      )
+
+      resultSet.map(shiftTimeField.first)
+    } getOrElse {
+      resultSet
+    }
+  }
+
   def groupTimeSeries[V: Semigroup](original: Periodicity, grouping: Option[(Periodicity, Set[Int])]) = (resultSet: ResultSet[JObject, V]) => {
     grouping match {
       case Some((grouping, groups)) => 
@@ -573,9 +606,28 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     }
   }
 
-  def grouping(content: JValue) = (content \ "groupBy") match {
-    case JNothing | JNull => None
-    case jvalue   => Periodicity.byName(jvalue)
+  def zoneForId(s: String): ValidationNEL[Throwable, DateTimeZone]  = try {
+    DateTimeZone.forID(s).success
+  } catch {
+    case ex => ex.fail[DateTimeZone].liftFailNel
+  }
+
+  def zoneForOffsetHours(s: String): ValidationNEL[Throwable, DateTimeZone] = s.parseInt.liftFailNel.map(DateTimeZone.forOffsetHours)
+
+  def zoneForOffsetHoursMinutes(h: String, m: String): ValidationNEL[Throwable, DateTimeZone] = {
+    (h.parseInt.liftFailNel <**> m.parseInt.liftFailNel)(DateTimeZone.forOffsetHoursMinutes)
+  } 
+
+  def dateTimeZone(s: String): ValidationNEL[Throwable, DateTimeZone] = {
+    s.replaceAll("\\+", "").split(".").toList match {
+      case h :: m :: Nil => zoneForOffsetHoursMinutes(h, m)
+      case s :: Nil => zoneForOffsetHours(s) <+> zoneForId(s)
+      case _ => failure(new IllegalArgumentException("Not a legal timezone offset or identifier.")).liftFailNel
+    }
+  }
+
+  def timezone(request: HttpRequest[_]): Option[ValidationNEL[Throwable, DateTimeZone]] = {
+    request.parameters.get('utc).map(dateTimeZone)
   }
 
   val timeStartKey = 'start
@@ -649,7 +701,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
         val periodicity = periodicityOf(request)
 
         aggregationEngine.getVariableSeries(token, path, variable, tagTerms(request.parameters, request.content, Some(periodicity))) 
-        .map(groupTimeSeries(periodicity, seriesGrouping(request)))
+        .map(transformTimeSeries(request, periodicity))
         .map(_.map(f.second).serialize.ok)
       }
     //} 
