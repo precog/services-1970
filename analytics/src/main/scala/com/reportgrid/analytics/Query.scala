@@ -33,23 +33,18 @@ sealed trait TagTerm {
 case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodicity, span: TimeSpan) extends TagTerm {
   type StorageKeysType = TimeRefKeys
 
-  private def docStoragePeriods = span match {
-    case TimeSpan.Eternity => Nil
-    case TimeSpan.Finite(start, end) => 
+  private def docStoragePeriods = {
       val docGranularity = encoding.grouping(resultGranularity)
-      val pstart = docGranularity.period(start)
-      val pend = docGranularity.period(end)
+      val pstart = docGranularity.period(span.start)
+      val pend = docGranularity.period(span.end)
 
       if      (pstart == pend)           pstart :: Nil
       else if (pstart.end == pend.start) pstart :: pend :: Nil
       else                               sys.error("Query interval too large - too many results to return.")
   }
 
-  private def dataKeyInstants(docStoragePeriod: Period) = span match {
-    case TimeSpan.Eternity => Stream.empty[Instant]
-
-    case TimeSpan.Finite(start, end) => 
-      resultGranularity.period(docStoragePeriod.start max start).datesUntil(docStoragePeriod.end min end)
+  private def dataKeyInstants(docStoragePeriod: Period) = {
+    resultGranularity.period(docStoragePeriod.start max span.start).datesUntil(docStoragePeriod.end min span.end)
   }
 
   // see AggregationEngine.dataKeySigs._1
@@ -59,30 +54,22 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   }
 
   // see AggregationEngine.dataKeySigs._2
-  override def infiniteValueKeys: Stream[Sig] = span match {
-    case TimeSpan.Eternity => Stream.empty[Sig]
-    case TimeSpan.Finite(start, end) => 
-      resultGranularity.period(start).datesUntil(end).map(instant => Sig(resultGranularity.sig, instant.sig))
+  override def infiniteValueKeys: Stream[Sig] = {
+    resultGranularity.period(span.start).datesUntil(span.end).map(instant => Sig(resultGranularity.sig, instant.sig))
   }
-}
-
-object IntervalTerm {
-  def Eternity(encoding: TimeSeriesEncoding) = IntervalTerm(encoding, Periodicity.Eternity, TimeSpan.Eternity)
 }
 
 case class SpanTerm(encoding: TimeSeriesEncoding, span: TimeSpan) extends TagTerm {
   type StorageKeysType = TimeRefKeys
 
-  override def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = span match {
-    case TimeSpan.Eternity => IntervalTerm.Eternity(encoding).storageKeys
-    case finite => encoding.queriableExpansion(span).flatMap {
+  override def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = {
+    encoding.queriableExpansion(span).flatMap {
       case (p, span) => IntervalTerm(encoding, p, span).storageKeys
     }
   }
 
-  override def infiniteValueKeys: Stream[Sig] = span match {
-    case TimeSpan.Eternity => Stream.empty[Sig]
-    case finite => encoding.queriableExpansion(finite).flatMap {
+  override def infiniteValueKeys: Stream[Sig] = {
+    encoding.queriableExpansion(span).flatMap {
       case (p, span) => IntervalTerm(encoding, p, span).infiniteValueKeys
     }
   }

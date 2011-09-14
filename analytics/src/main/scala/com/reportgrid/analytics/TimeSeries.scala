@@ -24,8 +24,6 @@ import scalaz.Scalaz._
 import scalaz.Semigroup
 
 case class TimeSeriesSpan[T: AbelianGroup] private (series: SortedMap[Period, T]) {
-  def toTimeSeries(periodicity: Periodicity): TimeSeries[T] = sys.error("todo")
-
   def flatten = series.values
 
   def total = series.values.asMA.sum
@@ -44,111 +42,6 @@ object TimeSeriesSpan {
     if (isValidSpan) new TimeSeriesSpan(SortedMap(entries: _*))
     else sys.error("The periods provided do not form a contiguous span")
   }
-}
-
-/** A time series stores an unlimited amount of time series data.
- */
-case class TimeSeries[T] private (periodicity: Periodicity, series: SortedMap[Instant, T])(implicit aggregator: AbelianGroup[T]) {
-  def deltaSet: Option[DeltaSet[Instant, ReadableDuration, T]] = {
-    implicit val periodicitySpace: DeltaSpace[Instant, ReadableDuration] = new PeriodicitySpace(periodicity)
-    implicit val instantSAct: SAct[Instant, ReadableDuration] = InstantSAct
-    DeltaSet(series)
-  }
-
-  def groupBy(grouping: Periodicity): Option[DeltaSet[Int, Int, T]] = {
-    import SAct._
-    (!series.isEmpty).option {
-      implicit val deltaSpace: DeltaSpace[Int, Int] = CountingSpace
-      new DeltaSet(0,
-        series.foldLeft(SortedMap.empty[Int, T]) {
-          case (m, (instant, value)) =>
-            periodicity.indexOf(instant, grouping) map { index => 
-              m + (index -> m.get(index).map(_ |+| value).getOrElse(value))
-            } getOrElse {
-              sys.error("Cannot group time series of periodicity " + periodicity + " by " + grouping)
-            }
-        } 
-      )
-    }
-  }
-
-  /** Fill all gaps in the returned time series -- i.e. any period that does
-   * not exist will be mapped to a count of 0. Note that this function may
-   * behave strangely if the time series contains periods of a different
-   * periodicity.
-   */
-  def fillGaps(start: Option[Instant], end: Option[Instant]): TimeSeries[T] = {
-    import blueeyes.util._
-    val instants = if (periodicity == Eternity) Stream(Instants.Zero)
-                   else if (start.isEmpty || end.isEmpty || series.isEmpty) Stream.empty[Instant]
-                   else periodicity.period(start.getOrElse(series.keys.min)) datesTo end.getOrElse(series.keys.max)
-
-    TimeSeries(
-      periodicity, 
-      instants.foldLeft(series) {
-        (series, date) => series + (date -> (series.getOrElse(date, aggregator.zero)))
-      }
-    )
-  }
-
-  def map[U: AbelianGroup](f: T => U): TimeSeries[U] = TimeSeries(periodicity, series.map(f.second[Instant]))
-
-  def aggregates = {
-    @tailrec def superAggregates(periodicity: Periodicity, acc: List[TimeSeries[T]]): List[TimeSeries[T]] = {
-      periodicity.nextOption match {
-        case Some(p) => superAggregates(p, this.withPeriodicity(p).get :: acc)
-        case None => acc
-      }
-    }
-
-    superAggregates(periodicity, List(this))
-  }
-
-  def withPeriodicity(newPeriodicity: Periodicity): Option[TimeSeries[T]] = {
-    if (newPeriodicity < periodicity) None
-    else if (newPeriodicity == periodicity) Some(this)
-    else Some(
-      TimeSeries(
-        newPeriodicity,
-        series.foldLeft(SortedMap.empty[Instant, T]) {
-          (series, entry) => addToMap(newPeriodicity, series, entry)
-        }
-      )
-    )
-  }
-
-  def slice(start: Instant, end: Instant) = {
-    val minTime = periodicity.floor(start)
-    val maxTime = periodicity.ceil(end)
-    TimeSeries(periodicity, series.filter(t => t._1 >= minTime && t._1 < maxTime))
-  }
-
-  /** Combines the data in this time series with the data in that time series.
-   */
-  def + (that: TimeSeries[T]): TimeSeries[T] = {
-    TimeSeries(periodicity, series |+| that.series)
-  }
-
-  def + (entry: (Instant, T)): TimeSeries[T] = TimeSeries(periodicity, addToMap(periodicity, series, entry))
-
-  def total: T = series.values.asMA.sum
-
-  private def addToMap(p: Periodicity, m: SortedMap[Instant, T], entry: (Instant, T)) = {
-    val countTime = p.floor(entry._1)
-    m + (countTime -> (m.getOrElse(countTime, aggregator.zero) |+| entry._2))
-  }
-}
-
-object TimeSeries {
-  def empty[T: AbelianGroup](periodicity: Periodicity): TimeSeries[T] = {
-    new TimeSeries(periodicity, SortedMap.empty[Instant, T])
-  }
-
-  def point[T: AbelianGroup](periodicity: Periodicity, time: Instant, value: T) = {
-    new TimeSeries(periodicity, SortedMap(periodicity.floor(time) -> value))
-  }
-
-  implicit def Semigroup[T: AbelianGroup] = semigroup[TimeSeries[T]](_ + _)
 }
 
 /**
@@ -302,9 +195,8 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
    * Stream((minutes, t1, t2), (hours, ...), (days, ...), (months, ...), (days, ...), (hours, ...))
    * The objective of this expansion is to make it possible to query the minimal set of documents.
    */
-  def queriableExpansion(span: TimeSpan): Stream[(Periodicity, TimeSpan)] = span match {
-    case TimeSpan.Eternity => Stream((Periodicity.Eternity, TimeSpan.Eternity))
-    case TimeSpan.Finite(start, end) => queriableExpansion(expand(start, end))
+  def queriableExpansion(span: TimeSpan): Stream[(Periodicity, TimeSpan)] = {
+    queriableExpansion(expand(span.start, span.end))
   }
 
   def queriableExpansion(expansion: Stream[Period]) = {
@@ -316,7 +208,7 @@ class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
           case Stream.Empty => 
             qe(expansion.tail, (periodicity, TimeSpan(nstart, nend)) #:: results)
 
-          case (`periodicity`, TimeSpan.Finite(start, `nstart`)) #:: rest => 
+          case (`periodicity`, TimeSpan(start, `nstart`)) #:: rest => 
             qe(expansion.tail, (periodicity, TimeSpan(start, nend)) #:: rest)
 
           case currentHead #:: rest => 

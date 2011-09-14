@@ -297,7 +297,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }
   }
 
-  def findRelatedInfiniteValues(token: Token, path: Path, observation: JointObservation[HasValue], span: TimeSpan.Finite): Future[List[HasValue]] = {
+  def findRelatedInfiniteValues(token: Token, path: Path, observation: JointObservation[HasValue], span: TimeSpan): Future[List[HasValue]] = {
     def find(intervalTerm: IntervalTerm) = Future {
       intervalTerm.infiniteValueKeys.map { timeKey =>
         val refKey = valueSeriesKey(token, path, Set(timeKey).sig, observation).rhs

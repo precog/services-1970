@@ -43,29 +43,29 @@ object MongoSupport extends AnalyticsSerialization {
     )
   }
 
-  implicit def TimeSeriesDecomposer[T](implicit decomposer: Decomposer[T]) = new Decomposer[TimeSeries[T]] {
-    def decompose(value: TimeSeries[T]): JValue = JObject(List(
-      JField("periodicity", JString(value.periodicity.name)),
-      JField("data", JObject(value.series.map { case (time, count) => JField(time.getMillis.toString, count.serialize) }.toList))
-    ))
-  }
-
-  implicit def TimeSeriesExtractor[T](implicit aggregator: AbelianGroup[T], extractor: Extractor[T]) = new Extractor[TimeSeries[T]] {
-    def extract(value: JValue): TimeSeries[T] = {
-      val periodicity = (value \ "periodicity").deserialize[Periodicity]
-      value \ "data" match {
-        case JArray(fields) =>
-          fields.foldLeft(TimeSeries.empty[T](periodicity)) { 
-            case (series, JArray(List(time, value))) =>
-              series + (new Instant(time.deserialize[Instant]) -> value.deserialize[T])
-
-            case (_, err) => sys.error("Not a time series component: " + err)
-          }
-
-        case _ => sys.error("Expected object but found: " + value)
-      }
-    }
-  }
+//  implicit def TimeSeriesDecomposer[T](implicit decomposer: Decomposer[T]) = new Decomposer[TimeSeries[T]] {
+//    def decompose(value: TimeSeries[T]): JValue = JObject(List(
+//      JField("periodicity", JString(value.periodicity.name)),
+//      JField("data", JObject(value.series.map { case (time, count) => JField(time.getMillis.toString, count.serialize) }.toList))
+//    ))
+//  }
+//
+//  implicit def TimeSeriesExtractor[T](implicit aggregator: AbelianGroup[T], extractor: Extractor[T]) = new Extractor[TimeSeries[T]] {
+//    def extract(value: JValue): TimeSeries[T] = {
+//      val periodicity = (value \ "periodicity").deserialize[Periodicity]
+//      value \ "data" match {
+//        case JArray(fields) =>
+//          fields.foldLeft(TimeSeries.empty[T](periodicity)) { 
+//            case (series, JArray(List(time, value))) =>
+//              series + (new Instant(time.deserialize[Instant]) -> value.deserialize[T])
+//
+//            case (_, err) => sys.error("Not a time series component: " + err)
+//          }
+//
+//        case _ => sys.error("Expected object but found: " + value)
+//      }
+//    }
+//  }
 
   implicit val ValueStatsExtractor: Extractor[ValueStats] = new Extractor[ValueStats] {
     def extract(value: JValue): ValueStats = ValueStats(

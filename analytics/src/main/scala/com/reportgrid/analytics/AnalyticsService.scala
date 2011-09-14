@@ -633,7 +633,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
 
   val timeStartKey = 'start
   val timeEndKey   = 'end
-  def timeSpan(parameters: Map[Symbol, String], content: Option[JValue]): Option[TimeSpan.Finite] = {
+  def timeSpan(parameters: Map[Symbol, String], content: Option[JValue]): Option[TimeSpan] = {
     def parseDate(s: String): Option[Instant] = {
       try {
         Some(try { new Instant(s.toLong) } catch { case _ => new DateTime(s, DateTimeZone.UTC).toInstant })

@@ -176,7 +176,6 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
 
       val queryTerms = List[TagTerm](
-        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan.Eternity),
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 
@@ -251,7 +250,6 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val expectedTotals = valueCounts(sampleEvents)
 
       val queryTerms = List[TagTerm](
-        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan.Eternity),
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 
@@ -348,7 +346,6 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
       val queryTerms = List[TagTerm](
-        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan.Eternity),
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 
@@ -360,16 +357,11 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
         case (map, _) => map
       }
 
-      val atemporalQueryTerms = List[TagTerm](
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
-      )
-
       expectedCounts.map {
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
           engine.getObservationCount(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
-          engine.getObservationCount(Token.Benchmark, "/test", observation, atemporalQueryTerms) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -378,7 +370,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val queryTerms = List[TagTerm](
-        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
+        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan(minDate, maxDate)),
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 
@@ -406,7 +398,6 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
       val queryTerms = List[TagTerm](
-        SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan.Eternity),
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 

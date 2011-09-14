@@ -3,6 +3,7 @@ package com.reportgrid.analytics
 import scala.collection.immutable.NumericRange
 
 import org.joda.time.{Instant, Duration}
+import scalaz.Scalaz._
 
 /** A globally unique identifier for a particular period in time (second,
  * minute, hour, day, week, month, year, or eternity).
@@ -21,8 +22,6 @@ sealed class Period private (val periodicity: Periodicity, val start: Instant) e
   def withPeriodicity(p: Periodicity): Period = Period(p, start)
 
   lazy val end = periodicity.increment(start)
-
-  lazy val span = if (periodicity == Periodicity.Eternity) TimeSpan.Eternity else TimeSpan.Finite(start, end)
 
   /** The next period of this periodicity.
     */

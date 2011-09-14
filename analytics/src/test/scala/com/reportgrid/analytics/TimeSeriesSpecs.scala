@@ -12,66 +12,6 @@ import Arbitrary._
 
 import scalaz.Scalaz._
 
-class TimeSeriesSpec extends Specification with ArbitraryTime with ScalaCheck {
-  "TimeSeries.fillGaps" should {
-    "create a time series where there are no gaps" in {
-      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: Instant, time2: Instant, periodicity: Periodicity) => 
-        (periodicity != Second) ==> {
-          val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
-          
-          val allDates = periodicity.period(start).datesTo(end).toSet
-          val someDates = allDates.filter(_ => scala.util.Random.nextBoolean)
-          val testSeries = someDates.foldLeft(TimeSeries.empty[Int](periodicity) + ((start, 0)) + ((end, 0))) {
-            (series, date) => series + ((date, scala.util.Random.nextInt))
-          }
-
-          (someDates.size < allDates.size && allDates.size > 0) ==> {
-            testSeries.fillGaps(Some(start), Some(end)).series.keySet == allDates
-          }
-        }
-      } must pass
-    }
-  }
-
-  "TimeSeries.groupbBy" should {
-    "batch counts over months  by day" in {
-      val startDate = new DateTime()
-      val times = for (i <- 0 to 90) yield (startDate.plusDays(i).toInstant, 2)
-      val testSeries = times.foldLeft(TimeSeries.empty[Int](Day))(_ + _) 
-
-      val result = testSeries.groupBy(Month).get
-      result.total must_== testSeries.total
-      result.data(1) must_== 6
-    }
-  }
-
-//  "TimeSeries.toJValue" should {
-//    "create a JObject with no duplicated timestamps" in {
-//      forAllNoShrink(genTime, genTime, genPeriodicity(Periodicity.All: _*)) { (time1: Instant, time2: Instant, periodicity: Periodicity) => 
-//        (periodicity != Second) ==> {
-//          val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
-//          
-//          val allDates = periodicity.period(start).datesTo(end).toSet
-//          val someDates = allDates.filter(_ => scala.util.Random.nextBoolean)
-//          val testSeries = someDates.foldLeft(TimeSeries.empty[Int](periodicity) + ((start, 0)) + ((end, 0))) {
-//            (series, date) => series + ((date, scala.util.Random.nextInt))
-//          }
-//
-//          (someDates.size < allDates.size && allDates.size > 0) ==> {
-//            val serializedTimes = testSeries.fillGaps(Some(start), Some(end)).toJValue match {
-//              case JObject(List(JField(periodicity.name, JArray(tuples)))) => tuples.map {
-//                case JArray(values) => values(0)
-//              }
-//            }
-//
-//            serializedTimes.toSet.size == serializedTimes.size
-//          }
-//        }
-//      } must pass
-//    }
-//  }
-}
-
 class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with ScalaCheck {
   "TimeSeriesEncoding.expand" should {
     val encoding = TimeSeriesEncoding.Default
@@ -135,7 +75,7 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
         val expectedDuration = new Duration(start, end)
 
         val actualDuration = encoding.queriableExpansion(TimeSpan(start, end)).foldLeft(new Duration(0, 0)) {
-          case (totalSize, (_, TimeSpan.Finite(start, end))) => totalSize.plus(new Duration(start, end))
+          case (totalSize, (_, TimeSpan(start, end))) => totalSize.plus(new Duration(start, end))
         }
 
         actualDuration.getMillis mustEqual (expectedDuration.getMillis)
