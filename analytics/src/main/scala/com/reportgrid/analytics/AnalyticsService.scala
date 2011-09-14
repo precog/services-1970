@@ -559,7 +559,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
                     sys.error("Cannot group time series of periodicity " + original + " by " + grouping)
                   }
                   
-                  (groups.isEmpty || groups.contains(index)) option JField(grouping.name, index)
+                  (groups.isEmpty || groups.contains(index)) option JField(original.name, index)
                   
                 case field => Some(field)
               })
@@ -627,7 +627,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   }
 
   def timezone(request: HttpRequest[_]): Option[ValidationNEL[Throwable, DateTimeZone]] = {
-    request.parameters.get('utc).map(dateTimeZone)
+    request.parameters.get('timeZone).map(dateTimeZone)
   }
 
   val timeStartKey = 'start
@@ -738,6 +738,14 @@ object AnalyticsServiceSerialization extends AnalyticsSerialization {
       JField("variance", v.variance.serialize) ::
       JField("standardDeviation", v.standardDeviation.serialize) ::
       Nil
+    )
+  }
+
+  implicit val VariableDescriptorExtractor: Extractor[VariableDescriptor] = new Extractor[VariableDescriptor] {
+    def extract(jvalue: JValue): VariableDescriptor = VariableDescriptor(
+      variable   = (jvalue \ "property").deserialize[Variable],
+      maxResults = (jvalue \ "limit").deserialize[Int],
+      sortOrder  = (jvalue \ "order").deserialize[SortOrder]
     )
   }
 }
