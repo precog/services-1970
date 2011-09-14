@@ -199,7 +199,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                         val variable = variableOf(request)
 
                         withTokenAndPath(request) { (token, path) => 
-                          val terms = tagTerms(request.parameters, request.content, None)
+                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
                           aggregationEngine.getVariableCount(token, path, variable, terms).map(_.serialize.ok)
                         }
                       //}
@@ -340,7 +340,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                 val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
 
                                 withTokenAndPath(request) { (token, path) => 
-                                  aggregationEngine.getObservationCount(token, path, observation, tagTerms(request.parameters, request.content, None)) map (_.serialize.ok)
+                                  val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
+                                  aggregationEngine.getObservationCount(token, path, observation, terms) map (_.serialize.ok)
                                 }
                               //}
                             }
@@ -355,7 +356,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                 //post { request: HttpRequest[JValue] =>
                                   val periodicity = periodicityOf(request)
                                   val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
-                                  val terms = tagTerms(request.parameters, request.content, Some(periodicity))
+                                  val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
                                   val zone = validated(timezone(request))
 
                                   withTokenAndPath(request) { (token, path) => 
@@ -391,11 +392,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     val result = queryComponents.apply {
                       case (select, from, observation) => select match {
                         case Count => 
-                          val terms = tagTerms(request.parameters, Some(content), None)
+                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
                           aggregationEngine.getObservationCount(token, from, observation, terms) map (_.serialize.ok)
 
                         case Series(periodicity) => 
-                          val terms = tagTerms(request.parameters, Some(content), Some(periodicity))
+                          val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
                           aggregationEngine.getObservationSeries(token, from, observation, terms)
                           .map(transformTimeSeries(request, periodicity))
                           .map(_.serialize.ok)
@@ -431,12 +432,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     val result = queryComponents.apply {
                       case (select, from, where) => select match {
                         case Count => 
-                          val terms = tagTerms(request.parameters, Some(content), None)
+                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
                           aggregationEngine.getIntersectionCount(token, from, where, terms)
                           .map(serializeIntersectionResult[CountType]).map(_.ok)
 
                         case Series(periodicity) =>
-                          val terms = tagTerms(request.parameters, Some(content), Some(periodicity))
+                          val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
                           aggregationEngine.getIntersectionSeries(token, from, where, terms)
                           .map(_.map(transformTimeSeries[CountType](request, periodicity).second))
                           .map(serializeIntersectionResult[ResultSet[JObject, CountType]]).map(_.ok)
@@ -658,39 +659,23 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     (start <**> end)(TimeSpan(_, _))
   }
 
-  def timeSpanTerm(parameters: Map[Symbol, String], content: Option[JValue], p: Option[Periodicity]): Option[TagTerm] = {
-    val periodicity = p orElse {
-      (content.getOrElse(JNothing) \ "periodicity") match {
-        case JNothing | JNull | JBool(true) => Some(Periodicity.Eternity)
-        //only if it is explicitly stated that no timestamp was used on submission do we exclude a time term
-        case JBool(false) | JString("none") => None
-        case jvalue => jvalue.validated[Periodicity].toOption
-      }
-    }
+  type TermF = (Map[Symbol, String], Option[JValue]) => Option[TagTerm]
 
-    periodicity flatMap {
-      case Periodicity.Eternity => 
-        timeSpan(parameters, content).map(SpanTerm(timeSeriesEncoding, _)).orElse(Some(SpanTerm(timeSeriesEncoding, TimeSpan.Eternity)))
-
-      case other => 
-        timeSpan(parameters, content).map(IntervalTerm(timeSeriesEncoding, other, _)).orElse {
-          throw new HttpException(BadRequest, "A periodicity was specified, but no finite time span could be determined.")
-        }
-    }
+  val timeSpanTerm: TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
+    timeSpan(parameters, content).map(SpanTerm(timeSeriesEncoding, _))
   }
 
-  val locationKey = Symbol("location")
-  def locationTerm(parameters: Map[Symbol, String], content: Option[JValue]): Option[TagTerm] = {
-    parameters.get(locationKey) map (p => Hierarchy.AnonLocation(Path(p))) orElse {
-      content.map(_ \ locationKey.name).flatMap { 
+  def intervalTerm(periodicity: Periodicity): TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
+    timeSpan(parameters, content).map(IntervalTerm(timeSeriesEncoding, periodicity, _))
+  }
+
+  val locationTerm: TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
+    parameters.get('location) map (p => Hierarchy.AnonLocation(Path(p))) orElse {
+      content.map(_ \ "location").flatMap { 
         case JNothing | JNull => None
         case jvalue => Some(jvalue.deserialize[Hierarchy.Location])
       }
     } map (HierarchyLocationTerm("location", _))
-  }
-
-  def tagTerms(parameters: Map[Symbol, String], content: Option[JValue], p: Option[Periodicity]): List[TagTerm] = {
-    List(timeSpanTerm(parameters, content, p), locationTerm(parameters, content)).flatten 
   }
 
   def queryVariableSeries[T: Decomposer : AbelianGroup](tokenOf: HttpRequest[_] => Future[Token], f: ValueStats => T, aggregationEngine: AggregationEngine) = {
@@ -699,8 +684,9 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
         val path        = fullPathOf(token, request)
         val variable    = variableOf(request)
         val periodicity = periodicityOf(request)
+        val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
 
-        aggregationEngine.getVariableSeries(token, path, variable, tagTerms(request.parameters, request.content, Some(periodicity))) 
+        aggregationEngine.getVariableSeries(token, path, variable, terms) 
         .map(transformTimeSeries(request, periodicity))
         .map(_.map(f.second).serialize.ok)
       }
