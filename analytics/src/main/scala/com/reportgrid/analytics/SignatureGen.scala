@@ -38,6 +38,8 @@ object Sig {
   def apply(a: Array[Byte]): Sig = Sig(a.length, a.toString) { _.put(a) }
   def apply(length: Int, _message: => String)(write: ByteBuffer => Unit) = new Sig(length, _message)(write)
   def apply(sigs: Sig*): Sig = sigs.reduceLeft(_ :+ _)
+
+  object Empty extends Sig(0, "")(_ => ())
 }
 
 class Signed[T](v: T)(implicit gen: SignatureGen[T]) {
@@ -67,7 +69,7 @@ object SignatureGen {
 
   implicit object PeriodicitySignatureGen extends SignatureGen[Periodicity] {
     final val TypeSig = Sig("Periodicity")
-    override def apply(v: Periodicity) = TypeSig :+ v.byteValue
+    override def apply(v: Periodicity) = v.byteValue.map(TypeSig :+).getOrElse(Sig.Empty)
   }
 
   implicit object ArrayByteSignatureGen extends SignatureGen[Array[Byte]] {
@@ -111,7 +113,7 @@ object SignatureGen {
 
   implicit object PeriodSignatureGen extends SignatureGen[Period] {
     final val TypeSig = Sig("Period") 
-    override def apply(p: Period) = TypeSig :+ p.periodicity.byteValue :+ p.start.getMillis
+    override def apply(p: Period) = p.periodicity.byteValue.map(b => TypeSig :+ b :+ p.start.getMillis).getOrElse(Sig.Empty)
   }
 
   implicit object TokenSignatureGen extends SignatureGen[Token] {

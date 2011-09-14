@@ -54,7 +54,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
   "Analytics Service" should {
     shareVariables()
 
-    val sampleEvents: List[Event] = containerOfN[List, Event](10, eventGen).sample.get ->- {
+    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
     }
 

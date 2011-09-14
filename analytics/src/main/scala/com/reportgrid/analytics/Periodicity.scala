@@ -11,7 +11,7 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
    */
   lazy val name: String = self.productPrefix.toLowerCase
 
-  def byteValue: Byte
+  def byteValue: Option[Byte]
 
   /** Chops off all components of the date time whose periodicities are
    * smaller than this periodicity.
@@ -70,7 +70,7 @@ object Instants {
 
 object Periodicity {
   case object Second extends Periodicity {
-    override final val byteValue = 0: Byte
+    override final val byteValue = Some(0: Byte)
 
     def floor(time: Instant) = time.toDateTime(UTC).withMillisOfSecond(0).toInstant
 
@@ -87,7 +87,7 @@ object Periodicity {
   }
 
   case object Minute extends Periodicity {
-    override final val byteValue = 1: Byte
+    override final val byteValue = Some(1: Byte)
 
     def floor(time: Instant) = Second.floor(time).toDateTime(UTC).withSecondOfMinute(0).toInstant
 
@@ -103,7 +103,7 @@ object Periodicity {
   }
 
   case object Hour extends Periodicity {
-    override final val byteValue = 2: Byte
+    override final val byteValue = Some(2: Byte)
 
     def floor(time: Instant) = Minute.floor(time).toDateTime(UTC).withMinuteOfHour(0).toInstant
 
@@ -121,7 +121,7 @@ object Periodicity {
   }
 
   case object Day extends Periodicity {
-    override final val byteValue = 3: Byte
+    override final val byteValue = Some(3: Byte)
 
     def floor(time: Instant) = Hour.floor(time).toDateTime(UTC).withHourOfDay(0).toInstant
 
@@ -138,7 +138,7 @@ object Periodicity {
   }
 
   case object Week extends Periodicity {
-    override final val byteValue = 4: Byte
+    override final val byteValue = Some(4: Byte)
 
     def floor(time: Instant) = Day.floor(time).toDateTime(UTC).withDayOfWeek(1).toInstant
 
@@ -153,7 +153,7 @@ object Periodicity {
   }
 
   case object Month extends Periodicity {
-    override final val byteValue = 5: Byte
+    override final val byteValue = Some(5: Byte)
 
     def floor(time: Instant) = Day.floor(time).toDateTime(UTC).withDayOfMonth(1).toInstant
 
@@ -168,7 +168,7 @@ object Periodicity {
   }
 
   case object Year extends Periodicity {
-    override final val byteValue = 6: Byte
+    override final val byteValue = Some(6: Byte)
 
     def floor(time: Instant) = Month.floor(time).toDateTime(UTC).withMonthOfYear(1).toInstant
 
@@ -180,7 +180,7 @@ object Periodicity {
   }
 
   case object Eternity extends Periodicity {
-    override final val byteValue = Byte.MaxValue
+    override final val byteValue = None
 
     def floor(time: Instant) = Instants.Zero
 

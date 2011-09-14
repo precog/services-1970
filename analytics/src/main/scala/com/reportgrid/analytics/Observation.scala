@@ -198,7 +198,12 @@ case class NameSet(values: Set[String]) extends TagValue {
 
 case class TimeReference(encoding: TimeSeriesEncoding, time: Instant) extends TagValue {
   type StorageKeysType = TimeRefKeys
-  override def storageKeys = for ((k, v) <- encoding.grouped(time)) yield TimeRefKeys(k, v)
+
+  def grouped(time: Instant): List[((Periodicity, Period), Instant)] = {
+    (for ((k, v) <- encoding.grouping) yield (k, v.period(time)) -> k.floor(time))(collection.breakOut)
+  }
+
+  override def storageKeys = for ((k, v) <- grouped(time)) yield TimeRefKeys(k, v)
 }
 
 case class Hierarchy private (locations: List[Hierarchy.Location]) extends TagValue {

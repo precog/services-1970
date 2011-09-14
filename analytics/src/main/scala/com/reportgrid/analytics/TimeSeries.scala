@@ -249,10 +249,6 @@ object TimeSeriesEncoding {
 class TimeSeriesEncoding(val grouping: Map[Periodicity, Periodicity]) {
   import Stream._
 
-  def grouped(time: Instant): List[((Periodicity, Period), Instant)] = {
-    (for ((k, v) <- grouping) yield (k, v.period(time)) -> k.floor(time))(collection.breakOut)
-  }
-
   def expandFiner(start: Instant, end: Instant, periodicity: Periodicity, 
                   expansion: (Instant, Instant, Periodicity) => Stream[Period]): Stream[Period] = {
 

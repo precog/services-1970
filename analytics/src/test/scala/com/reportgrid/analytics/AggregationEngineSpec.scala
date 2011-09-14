@@ -147,11 +147,11 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
-  "Aggregation engine" should {
+  "Aggregating full events" should {
     shareVariables()
 
     // using the benchmark token for testing because it has order 3
-    val sampleEvents: List[Event] = containerOfN[List, Event](10, eventGen).sample.get ->- {
+    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1))
     }
 
@@ -234,8 +234,8 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     "retrieve the top results of a histogram" in {
       //skip("disabled")
       val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
-        case (map, Event("tweeted", obj, _)) => 
-          val key = obj(".retweet")
+        case (map, Event("tweeted", data, _)) => 
+          val key = data.value(".retweet")
           map + (key -> map.get(key).map(_ + 1).getOrElse(1))
 
         case (map, _) => map
@@ -353,18 +353,23 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       )
 
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event("tweeted", obj, _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+        case (map, Event("tweeted", data, _)) =>
+          val values = variables.map(v => data.value(JPath(v.name.nodes.drop(1))))
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
         case (map, _) => map
       }
+
+      val atemporalQueryTerms = List[TagTerm](
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
 
       expectedCounts.map {
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
           engine.getObservationCount(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
+          engine.getObservationCount(Token.Benchmark, "/test", observation, atemporalQueryTerms) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -380,8 +385,8 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
       val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event("tweeted", obj, _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+        case (map, Event("tweeted", data, _)) =>
+          val values = variables.map(v => data.value(JPath(v.name.nodes.drop(1))))
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
         case (map, _) => map
@@ -406,8 +411,8 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       )
 
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event("tweeted", obj, _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+        case (map, Event("tweeted", data, _)) =>
+          val values = variables.map(v => data.value(JPath(v.name.nodes.drop(1))))
 
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
@@ -416,7 +421,6 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
 
       engine.getIntersectionCount(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
         verify { result => 
-          println(result)
           result.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts
         }
       }
@@ -435,8 +439,8 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
       val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event("tweeted", obj, _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+        case (map, Event("tweeted", data, _)) =>
+          val values = variables.map(v => data.value(JPath(v.name.nodes.drop(1))))
 
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
@@ -461,8 +465,8 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
       val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
-        case (map, Event("tweeted", obj, _)) =>
-          val values = variables.map(v => obj(JPath(v.name.nodes.drop(1))))
+        case (map, Event("tweeted", data, _)) =>
+          val values = variables.map(v => data.value(JPath(v.name.nodes.drop(1))))
           map + (values -> map.get(values).map(_ + 1).getOrElse(1))
 
         case (map, _) => map
@@ -482,17 +486,17 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
-      pendingUntilFixed {
+      //pendingUntilFixed {
         //skip("disabled")
         val granularity = Minute
         val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
         val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), Set[JValue]]) {
-          case (map, Event(eventName, obj, tags)) =>
-            obj.flattenWithPath.foldLeft(map) {
+          case (map, Event(eventName, data, tags)) =>
+            data.flattenWithPath.foldLeft(map) {
               case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
                 val key = (eventName, jpath, value)
-                map + (key -> (map.getOrElse(key, Set.empty[JValue]) + (obj \ "~tweet")))
+                map + (key -> (map.getOrElse(key, Set.empty[JValue]) + (data.value \ "~tweet")))
 
               case (map, _) => map
             }
@@ -510,7 +514,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
               beEqualTo(infiniteValues)
             }
         }
-      }
+      //}
     }
 
     // this test is here because it's testing internals of the analytics service
@@ -539,3 +543,4 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     //}
   }
 }
+

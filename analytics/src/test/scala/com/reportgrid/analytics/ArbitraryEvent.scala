@@ -12,6 +12,7 @@ import org.scalacheck.{Gen, Arbitrary}
 import Gen._
 
 import scala.math.Ordered._
+import scalaz.NewType
 import scalaz.Scalaz._
 
 trait ArbitraryEvent extends ArbitraryTime {
@@ -27,7 +28,9 @@ trait ArbitraryEvent extends ArbitraryTime {
     startups <- containerOfN[List, String](i, oneOf(Startups))
   } yield startups
 
-  case class Event(eventName: String, data: JObject, tags: List[Tag]) {
+  case class EventData(value: JObject) extends NewType[JObject]
+
+  case class Event(eventName: String, data: EventData, tags: List[Tag]) {
     def tagFields = tags.map {
       case Tag(name, TimeReference(_, time)) => 
         JField(Tag.tname(name), time.serialize)
@@ -71,11 +74,20 @@ trait ArbitraryEvent extends ArbitraryTime {
          NamedLocation("city", cityPath),
          NamedLocation("zip", zipPath))
   ) | error("can't happen")
-  
-  implicit val eventGen = for {
+
+  val fullEventGen = for {
     eventName      <- oneOf(EventTypes)
-    location       <- oneOf(Locations)
     time           <- genTime
+    geoloc         <- locGen
+    eventData      <- eventDataGen
+  } yield Event(
+    eventName, 
+    eventData, 
+    List(Tag("timestamp", TimeReference(AggregationEngine.timeSeriesEncoding, time)), Tag("location", geoloc))
+  )
+  
+  implicit val eventDataGen = for {
+    location       <- oneOf(Locations)
     retweet        <- oneOf(true, false)
     recipientCount <- choose(0, 3)
     startup        <- oneOf(Startups)
@@ -83,9 +95,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     otherStartups  <- genOtherStartups
     twitterClient  <- oneOf(TwitterClients)
     tweet          <- identifier
-    geoloc         <- locGen
-  } yield Event(
-    eventName, 
+  } yield EventData(
     JObject(
       JField("location",       location.serialize) ::
       JField("retweet",        retweet.serialize) ::
@@ -96,8 +106,7 @@ trait ArbitraryEvent extends ArbitraryTime {
       JField("twitterClient",  twitterClient) ::
       JField("~tweet",         tweet) ::
       Nil
-    ),
-    List(Tag("timestamp", TimeReference(AggregationEngine.timeSeriesEncoding, time)), Tag("location", geoloc))
+    )
   )
 
   def keysf(granularity: Periodicity): List[PartialFunction[Tag, String]] = List(
