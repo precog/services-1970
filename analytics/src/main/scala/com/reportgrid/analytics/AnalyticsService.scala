@@ -620,10 +620,13 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   } 
 
   def dateTimeZone(s: String): ValidationNEL[Throwable, DateTimeZone] = {
-    s.replaceAll("\\+", "").split(".").toList match {
-      case h :: m :: Nil => zoneForOffsetHoursMinutes(h, m)
-      case s :: Nil => zoneForOffsetHours(s) <+> zoneForId(s)
-      case _ => failure(new IllegalArgumentException("Not a legal timezone offset or identifier.")).liftFailNel
+    val Offset = """([+-]?\d{1,2})(?:.(\d+))?""".r
+    s match {
+      case Offset(hours, minutes) => 
+        val h = hours.replaceAll("\\+", "")
+        Option(minutes).map(zoneForOffsetHoursMinutes(h, _)).getOrElse(zoneForOffsetHours(h))
+
+      case id => zoneForId(id)
     }
   }
 
