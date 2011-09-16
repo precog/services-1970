@@ -181,3 +181,25 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
   }
 }
+
+class AnalyticsServiceCompanionSpec extends Specification {
+  import org.joda.time._
+  import scalaz._
+  import AnalyticsService._
+
+  "dateTimeZone parsing" should {
+    "correctly handle integral zones" in {
+      dateTimeZone("1") must_== Success(DateTimeZone.forOffsetHours(1))
+      dateTimeZone("12") must_== Success(DateTimeZone.forOffsetHours(12))
+    }
+
+    "correctly handle fractional zones" in {
+      dateTimeZone("1.5") must_== Success(DateTimeZone.forOffsetHoursMinutes(1, 30))
+      dateTimeZone("-1.5") must_== Success(DateTimeZone.forOffsetHoursMinutes(-1, 30))
+    }
+
+    "correctly handle named zones" in {
+      dateTimeZone("America/Montreal") must_== Success(DateTimeZone.forID("America/Montreal"))
+    }
+  }
+}

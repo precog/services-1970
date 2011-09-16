@@ -117,7 +117,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             withTokenAndPath(request) { (token, path) => 
               request.content.foreach { 
                 case obj @ JObject(fields) => for (JField(eventName, event: JObject) <- fields) {
-                  logger.debug("Recording event: " + compact(render(obj)))
+                  logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)))
                   val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
                   for (tags <- getTags(tagResults)) {
                     aggregationEngine.aggregate(token, path, eventName, tags, remainder, count)
@@ -358,8 +358,6 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                   val periodicity = periodicityOf(request)
                                   val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
                                   val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
-                                  val zone = validated(timezone(request))
-
                                   withTokenAndPath(request) { (token, path) => 
                                     aggregationEngine.getObservationSeries(token, path, observation, terms)
                                     .map(transformTimeSeries(request, periodicity))
@@ -387,8 +385,6 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     val queryComponents = (content \ "select").validated[String].map(Selection(_)).liftFailNel |@| 
                                           (content \ "from").validated[String].map(token.path / _).liftFailNel |@|
                                           (content \ "where").validated[Set[HasValue]].map(JointObservation(_)).liftFailNel
-
-                    val zone = validated(timezone(request))
 
                     val result = queryComponents.apply {
                       case (select, from, observation) => select match {
@@ -613,11 +609,11 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   }
 
   def dateTimeZone(s: String): ValidationNEL[Throwable, DateTimeZone] = {
-    val Offset = """([+-]?\d{1,2})(\.\d+)?""".r
+    val Offset = """([+-]?\d{1,2})(?:\.(\d+))?""".r
     s match {
       case Offset(hoursText, minutesText) => 
         val hours = hoursText.replaceAll("\\+", "").parseInt.liftFailNel
-        val minutes = Option(minutesText).map(s => ("0"+s).parseFloat.map(f => (f * 60).toInt).liftFailNel)
+        val minutes = Option(minutesText).map(m => ("0."+m).parseFloat.map(f => (f * 60).toInt).liftFailNel)
         minutes.map(m => (hours |@| m).apply(DateTimeZone.forOffsetHoursMinutes))
                .getOrElse(hours.map(DateTimeZone.forOffsetHours))
 
