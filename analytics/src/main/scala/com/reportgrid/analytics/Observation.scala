@@ -135,7 +135,7 @@ object Tag {
   }
 
   def extractTimestampTag(encoding: TimeSeriesEncoding, tagName: String, jvalue: JValue) = jvalue.validated[Instant].fold(
-    error => Errors(ExtractionError(tagName, error) :: Nil), 
+    error => Errors(ExtractionError(tagName, error.message) :: Nil), 
     instant => Tags(Future.sync(Tag(tagName, TimeReference(encoding, instant)) :: Nil))
   )
 

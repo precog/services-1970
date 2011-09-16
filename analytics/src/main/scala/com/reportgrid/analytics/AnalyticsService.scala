@@ -21,6 +21,7 @@ import HttpStatusCodes.{BadRequest, Unauthorized, Forbidden}
 
 import net.lag.configgy.{Configgy, ConfigMap}
 
+import org.joda.time.base.AbstractInstant
 import org.joda.time.Instant
 import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
@@ -530,7 +531,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
 
   def transformTimeSeries[V: Semigroup](request: HttpRequest[_], original: Periodicity) = {
     val zone = validated(timezone(request))
-    shiftTimeSeries[V](zone) andThen groupTimeSeries[V](original, seriesGrouping(request))
+    shiftTimeSeries[V](zone) andThen groupTimeSeries[V](original, seriesGrouping(request), zone)
   }
 
   def shiftTimeSeries[V: Semigroup](zone: Option[DateTimeZone]) = (resultSet: ResultSet[JObject, V]) => {
@@ -548,19 +549,23 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     }
   }
 
-  def groupTimeSeries[V: Semigroup](original: Periodicity, grouping: Option[(Periodicity, Set[Int])]) = (resultSet: ResultSet[JObject, V]) => {
+  def groupTimeSeries[V: Semigroup](original: Periodicity, grouping: Option[(Periodicity, Set[Int])], zone: Option[DateTimeZone]) = (resultSet: ResultSet[JObject, V]) => {
     grouping match {
       case Some((grouping, groups)) => 
+        def newField(instant: AbstractInstant) = {
+          val index = original.indexOf(instant, grouping, zone.getOrElse(DateTimeZone.UTC)).getOrElse {
+            sys.error("Cannot group time series of periodicity " + original + " by " + grouping)
+          }
+          
+          (groups.isEmpty || groups.contains(index)) option JField(original.name, index)
+        }
+
         resultSet.foldLeft(SortedMap.empty[JObject, V](JObjectOrdering)) {
           case (acc, (obj, v)) => 
             val key = JObject(
               obj.fields.flatMap {
-                case JField("timestamp", instant) => 
-                  val index = original.indexOf(instant.deserialize[Instant], grouping).getOrElse {
-                    sys.error("Cannot group time series of periodicity " + original + " by " + grouping)
-                  }
-                  
-                  (groups.isEmpty || groups.contains(index)) option JField(original.name, index)
+                case JField("datetime",  datetime) => newField(datetime.deserialize[DateTime])
+                case JField("timestamp", instant)  => newField(instant.deserialize[Instant])
                   
                 case field => Some(field)
               })
@@ -607,26 +612,21 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     }
   }
 
-  def zoneForId(s: String): ValidationNEL[Throwable, DateTimeZone]  = try {
-    DateTimeZone.forID(s).success
-  } catch {
-    case ex => ex.fail[DateTimeZone].liftFailNel
-  }
-
-  def zoneForOffsetHours(s: String): ValidationNEL[Throwable, DateTimeZone] = s.parseInt.liftFailNel.map(DateTimeZone.forOffsetHours)
-
-  def zoneForOffsetHoursMinutes(h: String, m: String): ValidationNEL[Throwable, DateTimeZone] = {
-    (h.parseInt.liftFailNel <**> m.parseInt.liftFailNel)(DateTimeZone.forOffsetHoursMinutes)
-  } 
-
   def dateTimeZone(s: String): ValidationNEL[Throwable, DateTimeZone] = {
-    val Offset = """([+-]?\d{1,2})(?:.(\d+))?""".r
+    val Offset = """([+-]?\d{1,2})(\.\d+)?""".r
     s match {
-      case Offset(hours, minutes) => 
-        val h = hours.replaceAll("\\+", "")
-        Option(minutes).map(zoneForOffsetHoursMinutes(h, _)).getOrElse(zoneForOffsetHours(h))
+      case Offset(hoursText, minutesText) => 
+        val hours = hoursText.replaceAll("\\+", "").parseInt.liftFailNel
+        val minutes = Option(minutesText).map(s => ("0"+s).parseFloat.map(f => (f * 60).toInt).liftFailNel)
+        minutes.map(m => (hours |@| m).apply(DateTimeZone.forOffsetHoursMinutes))
+               .getOrElse(hours.map(DateTimeZone.forOffsetHours))
 
-      case id => zoneForId(id)
+      case id => 
+        try {
+          DateTimeZone.forID(s).success
+        } catch {
+          case ex => ex.fail[DateTimeZone].liftFailNel
+        }
     }
   }
 
@@ -730,11 +730,9 @@ object AnalyticsServiceSerialization extends AnalyticsSerialization {
     )
   }
 
-  implicit val VariableDescriptorExtractor: Extractor[VariableDescriptor] = new Extractor[VariableDescriptor] {
-    def extract(jvalue: JValue): VariableDescriptor = VariableDescriptor(
-      variable   = (jvalue \ "property").deserialize[Variable],
-      maxResults = (jvalue \ "limit").deserialize[Int],
-      sortOrder  = (jvalue \ "order").deserialize[SortOrder]
-    )
+  implicit val VariableDescriptorExtractor: Extractor[VariableDescriptor] = new Extractor[VariableDescriptor] with ValidatedExtraction[VariableDescriptor] {
+    override def validated(jvalue: JValue) = {
+      ((jvalue \ "property").validated[Variable] |@| (jvalue \ "limit").validated[Int] |@| (jvalue \ "order").validated[SortOrder]).apply(VariableDescriptor(_, _, _))
+    }
   }
 }
