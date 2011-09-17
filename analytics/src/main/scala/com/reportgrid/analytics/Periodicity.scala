@@ -2,7 +2,7 @@ package com.reportgrid.analytics
 
 import scala.collection.immutable.NumericRange
 import org.joda.time.Instant
-import org.joda.time.base.AbstractInstant
+import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
 import org.joda.time.DateTimeZone.UTC
 
@@ -28,7 +28,7 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
 
   def period(time: Instant): Period = Period(this, time)
 
-  def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int]
+  def indexOf(time: DateTime, in: Periodicity): Option[Int]
 
   /** The previous periodicity in the chain.
    */
@@ -71,6 +71,8 @@ object Instants {
 }
 
 object Periodicity {
+  import Instants._
+
   case object Second extends Periodicity {
     override final val byteValue = 0: Byte
 
@@ -78,10 +80,10 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusSeconds(amount).toInstant
 
-    def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int] = in match {
-      case Minute => Some(time.toDateTime(zone).getSecondOfMinute)
-      case Hour   => Some(time.toDateTime(zone) |> {t => t.getSecondOfMinute + (60 * t.getMinuteOfHour)})
-      case Day    => Some(time.toDateTime(zone).getSecondOfDay)
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
+      case Minute => Some(time.getSecondOfMinute)
+      case Hour   => Some(time.getSecondOfMinute + (60 * time.getMinuteOfHour))
+      case Day    => Some(time.getSecondOfDay)
       case _ => None
     }
 
@@ -95,9 +97,9 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusMinutes(amount).toInstant
 
-    def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int] = in match {
-      case Hour => Some(time.toDateTime(zone).getMinuteOfHour)
-      case Day  => Some(time.toDateTime(zone).getMinuteOfDay)
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
+      case Hour => Some(time.getMinuteOfHour)
+      case Day  => Some(time.getMinuteOfDay)
       case _ => None
     }
 
@@ -111,11 +113,11 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusHours(amount).toInstant
 
-    def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int] = in match {
-      case Day   => Some(time.toDateTime(zone).getHourOfDay)
-      case Week  => Some(time.toDateTime(zone) |> {t => t.getHourOfDay + ((t.getDayOfWeek - 1)  * 24)})
-      case Month => Some(time.toDateTime(zone) |> {t => t.getHourOfDay + ((t.getDayOfMonth - 1) * 24)})
-      case Year  => Some(time.toDateTime(zone) |> {t => t.getHourOfDay + ((t.getDayOfYear - 1)  * 24)})
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
+      case Day   => Some(time.getHourOfDay)
+      case Week  => Some(time.getHourOfDay + ((time.getDayOfWeek - 1)  * 24))
+      case Month => Some(time.getHourOfDay + ((time.getDayOfMonth - 1) * 24))
+      case Year  => Some(time.getHourOfDay + ((time.getDayOfYear - 1)  * 24))
       case _ => None
     }
 
@@ -129,10 +131,10 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusDays(amount).toInstant
 
-    def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int] = in match {
-      case Week => Some(time.toDateTime(zone).getDayOfWeek)
-      case Month => Some(time.toDateTime(zone).getDayOfMonth)
-      case Year => Some(time.toDateTime(zone).getDayOfYear)
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
+      case Week =>  Some(time.getDayOfWeek)
+      case Month => Some(time.getDayOfMonth)
+      case Year =>  Some(time.getDayOfYear)
       case _ => None
     }
 
@@ -146,8 +148,8 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusWeeks(amount).toInstant
 
-    def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int] = in match {
-      case Year => Some(time.toDateTime(zone).getWeekOfWeekyear)
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
+      case Year => Some(time.getWeekOfWeekyear)
       case _ => None
     }
 
@@ -161,8 +163,8 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusMonths(amount).toInstant
 
-    def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int] = in match {
-      case Year => Some(time.toDateTime(zone).getMonthOfYear)
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
+      case Year => Some(time.getMonthOfYear)
       case _ => None
     }
 
@@ -176,7 +178,7 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusYears(amount).toInstant
 
-    def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int] = None
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = None
 
     override val finer = Some(Month)
   }
@@ -188,7 +190,7 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = Instants.Inf
 
-    def indexOf(time: AbstractInstant, in: Periodicity, zone: DateTimeZone): Option[Int] = None
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = None
 
     override val finer = Some(Year)
   }

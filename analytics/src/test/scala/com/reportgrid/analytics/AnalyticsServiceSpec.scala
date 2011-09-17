@@ -187,6 +187,9 @@ class AnalyticsServiceCompanionSpec extends Specification {
   import scalaz._
   import AnalyticsService._
 
+  val startTime = new DateTime(DateTimeZone.UTC)
+  val endTime = startTime.plusHours(3)
+
   "dateTimeZone parsing" should {
     "correctly handle integral zones" in {
       dateTimeZone("1") must_== Success(DateTimeZone.forOffsetHours(1))
@@ -200,6 +203,65 @@ class AnalyticsServiceCompanionSpec extends Specification {
 
     "correctly handle named zones" in {
       dateTimeZone("America/Montreal") must_== Success(DateTimeZone.forID("America/Montreal"))
+    }
+  }
+
+  "time span extraction" should {
+    "correctly handle UTC time ranges in parameters" in {
+      val parameters = Map(
+        'start -> startTime.getMillis.toString, 
+        'end ->   endTime.getMillis.toString
+      )
+
+      timeSpan(parameters, None) must beLike {
+        case Some(Success(TimeSpan(start, end))) => 
+          (start must_== startTime.toInstant) && 
+          (end must_== endTime.toInstant)
+      }
+    }
+
+    "correctly handle UTC time ranges in the content" in {
+      val content = JObject(
+        JField("start", startTime.getMillis) ::
+        JField("end", endTime.getMillis) :: Nil
+      )
+
+      timeSpan(Map.empty, Some(content)) must beLike {
+        case Some(Success(TimeSpan(start, end))) => 
+          (start must_== startTime.toInstant) && 
+          (end must_== endTime.toInstant)
+      }
+    }
+
+    "correctly handle offset time ranges in parameters" in {
+      val zone = DateTimeZone.forOffsetHours(-6)
+      val parameters = Map(
+        'start -> startTime.withZoneRetainFields(zone).getMillis.toString, 
+        'end ->   endTime.withZoneRetainFields(zone).getMillis.toString,
+        'timeZone -> "-6.0"
+      )
+
+      timeSpan(parameters, None) must beLike {
+        case Some(Success(TimeSpan(start, end))) => 
+          (start must_== startTime.toInstant) && 
+          (end must_== endTime.toInstant)
+      }
+    }
+
+    "correctly handle offset time ranges in the content" in {
+      val zone = DateTimeZone.forOffsetHours(-6)
+      val content = JObject(
+        JField("start", startTime.withZoneRetainFields(zone).getMillis) ::
+        JField("end", endTime.withZoneRetainFields(zone).getMillis) :: Nil
+      )
+
+      val parameters = Map('timeZone -> "-6.0")
+
+      timeSpan(parameters, Some(content)) must beLike {
+        case Some(Success(TimeSpan(start, end))) => 
+          (start must_== startTime.toInstant) && 
+          (end must_== endTime.toInstant)
+      }
     }
   }
 }

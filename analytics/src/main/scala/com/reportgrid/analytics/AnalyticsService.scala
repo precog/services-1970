@@ -387,10 +387,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                                           (content \ "where").validated[Set[HasValue]].map(JointObservation(_)).liftFailNel
 
                     val result = queryComponents.apply {
-                      case (select, from, observation) => select match {
+                      (select, from, observation) => select match {
                         case Count => 
                           val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
-                          aggregationEngine.getObservationCount(token, from, observation, terms) map (_.serialize.ok)
+                          aggregationEngine.getObservationCount(token, from, observation, terms).map(_.serialize.ok)
 
                         case Series(periodicity) => 
                           val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
@@ -399,11 +399,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           .map(_.serialize.ok)
 
                         case Related => 
-                          val finiteSpan = timeSpan(request.parameters, Some(content)).getOrElse {
-                            throw new HttpException(BadRequest, "Start and end dates must be specified to query for values related to an observation.")
+                          timeSpan(request.parameters, Some(content)) match {
+                            case Some(Success(span)) => aggregationEngine.findRelatedInfiniteValues(token, from, observation, span) map (_.serialize.ok)
+                            case Some(Failure(errors)) => throw new HttpException(BadRequest, errors.list.mkString("; "))
+                            case None => throw new HttpException(BadRequest, "A time span must be specified for related values queries.")
                           }
-
-                          aggregationEngine.findRelatedInfiniteValues(token, from, observation, finiteSpan) map (_.serialize.ok)
                       }
                     }
 
@@ -520,13 +520,13 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   import AnalyticsServiceSerialization._
   import AggregationEngine._
 
-  def validated[A](v: Option[ValidationNEL[Throwable, A]]): Option[A] = v map {
+  def validated[A](v: Option[ValidationNEL[String, A]]): Option[A] = v map {
     case Success(a) => a
-    case Failure(t) => throw new HttpException(BadRequest, t.list.map(_.getMessage).mkString("; "))
+    case Failure(t) => throw new HttpException(BadRequest, t.list.mkString("; "))
   }
 
   def transformTimeSeries[V: Semigroup](request: HttpRequest[_], original: Periodicity) = {
-    val zone = validated(timezone(request))
+    val zone = validated(timezone(request.parameters))
     shiftTimeSeries[V](zone) andThen groupTimeSeries[V](original, seriesGrouping(request), zone)
   }
 
@@ -534,7 +534,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     zone map { zone => 
       val shiftTimeField = (obj: JObject) => JObject(
         obj.fields.map {
-          case JField("timestamp", instant) => JField("datetime", instant.deserialize[DateTime].withZone(zone).toString)
+          case JField("timestamp", instant) => JField("datetime", instant.deserialize[Instant].toDateTime(DateTimeZone.UTC).withZoneRetainFields(zone).toString)
           case field => field
         }
       )
@@ -548,8 +548,8 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   def groupTimeSeries[V: Semigroup](original: Periodicity, grouping: Option[(Periodicity, Set[Int])], zone: Option[DateTimeZone]) = (resultSet: ResultSet[JObject, V]) => {
     grouping match {
       case Some((grouping, groups)) => 
-        def newField(instant: AbstractInstant) = {
-          val index = original.indexOf(instant, grouping, zone.getOrElse(DateTimeZone.UTC)).getOrElse {
+        def newField(dateTime: DateTime) = {
+          val index = original.indexOf(dateTime, grouping).getOrElse {
             sys.error("Cannot group time series of periodicity " + original + " by " + grouping)
           }
           
@@ -561,7 +561,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
             val key = JObject(
               obj.fields.flatMap {
                 case JField("datetime",  datetime) => newField(datetime.deserialize[DateTime])
-                case JField("timestamp", instant)  => newField(instant.deserialize[Instant])
+                case JField("timestamp", instant)  => newField(instant.deserialize[Instant].toDateTime(DateTimeZone.UTC))
                   
                 case field => Some(field)
               })
@@ -608,64 +608,70 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     }
   }
 
-  def dateTimeZone(s: String): ValidationNEL[Throwable, DateTimeZone] = {
+  def dateTimeZone(s: String): ValidationNEL[String, DateTimeZone] = {
     val Offset = """([+-]?\d{1,2})(?:\.(\d+))?""".r
     s match {
       case Offset(hoursText, minutesText) => 
-        val hours = hoursText.replaceAll("\\+", "").parseInt.liftFailNel
-        val minutes = Option(minutesText).map(m => ("0."+m).parseFloat.map(f => (f * 60).toInt).liftFailNel)
-        minutes.map(m => (hours |@| m).apply(DateTimeZone.forOffsetHoursMinutes))
-               .getOrElse(hours.map(DateTimeZone.forOffsetHours))
+        val hours = hoursText.replaceAll("\\+", "").parseInt.fail.map(t => ("Error encountered parsing hours component of time zone: " + t.getMessage).wrapNel).validation
+
+        val minutes = Option(minutesText).map { m => 
+          ("0."+m).parseFloat.map(f => (f * 60).toInt).fail.map(t => ("Error encountered parsing fractional component of time zone: " + t.getMessage).wrapNel).validation
+        }
+
+        minutes match {
+          case Some(m) => (hours |@| m).apply(DateTimeZone.forOffsetHoursMinutes)
+          case None =>     hours.map(DateTimeZone.forOffsetHours)
+        }
 
       case id => 
         try {
           DateTimeZone.forID(s).success
         } catch {
-          case ex => ex.fail[DateTimeZone].liftFailNel
+          case ex => ex.getMessage.fail[DateTimeZone].liftFailNel
         }
     }
   }
 
-  def timezone(request: HttpRequest[_]): Option[ValidationNEL[Throwable, DateTimeZone]] = {
-    request.parameters.get('timeZone).map(dateTimeZone)
+  def timezone(parameters: Map[Symbol, String]): Option[ValidationNEL[String, DateTimeZone]] = {
+    parameters.get('timeZone).map(dateTimeZone)
   }
 
-  val timeStartKey = 'start
-  val timeEndKey   = 'end
-  def timeSpan(parameters: Map[Symbol, String], content: Option[JValue]): Option[TimeSpan] = {
-    def parseDate(s: String): Option[Instant] = {
-      try {
-        Some(try { new Instant(s.toLong) } catch { case _ => new DateTime(s, DateTimeZone.UTC).toInstant })
-      } catch {
-        case _ => None
+  def vtry[A](value: => A): Validation[Throwable, A] = try { value.success } catch { case ex => ex.fail[A] }
+
+  def timeSpan(parameters: Map[Symbol, String], content: Option[JValue]): Option[ValidationNEL[String, TimeSpan]] = {
+    val zone = timezone(parameters).getOrElse(DateTimeZone.UTC.success.liftFailNel)
+
+    def parseDate(s: String) = zone.flatMap { z => 
+      // convert to a DateTime object in the specified zone. If not specified, use UTC.
+      val timestamp = s.parseLong.map(new DateTime(_: Long, z)).fail.map(_.getMessage.wrapNel).validation
+      timestamp <+> vtry(new DateTime(s, z)).fail.map(_.getMessage.wrapNel).validation
+    }
+
+    def extractDate(name: String) = content.map { c => 
+      zone.map(ZonedTimeExtractor).flatMap { ex => 
+        (c \ name).validated[DateTime](ex).fail.map(_.message.wrapNel).validation
       }
     }
 
-    val start = parameters.get(timeStartKey).flatMap(parseDate).orElse {
-      content map (_ \ timeStartKey.name) flatMap {
-        case JNothing | JNull => None
-        case jvalue   => jvalue.validated[Instant].toOption
+    val start = parameters.get('start) map parseDate orElse extractDate("start")
+    val end =   parameters.get('end)   map parseDate orElse extractDate("end")
+
+    val shift = (_: DateTime).withZoneRetainFields(DateTimeZone.UTC).toInstant
+    for (sv <- start; ev <- end) yield { 
+      (sv <**> ev) { 
+        (s, e) => TimeSpan(shift(s), shift(e))
       }
     }
-
-    val end = parameters.get(timeEndKey).flatMap(parseDate).orElse {
-      content map (_ \ timeEndKey.name) flatMap {
-        case JNothing | JNull => None
-        case jvalue  => jvalue.validated[Instant].toOption
-      }
-    }
-
-    (start <**> end)(TimeSpan(_, _))
   }
 
   type TermF = (Map[Symbol, String], Option[JValue]) => Option[TagTerm]
 
   val timeSpanTerm: TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
-    timeSpan(parameters, content).map(SpanTerm(timeSeriesEncoding, _))
+    validated(timeSpan(parameters, content)).map(SpanTerm(timeSeriesEncoding, _))
   }
 
   def intervalTerm(periodicity: Periodicity): TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
-    timeSpan(parameters, content).map(IntervalTerm(timeSeriesEncoding, periodicity, _))
+    validated(timeSpan(parameters, content)).map(IntervalTerm(timeSeriesEncoding, periodicity, _))
   }
 
   val locationTerm: TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
