@@ -647,9 +647,9 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
       timestamp <+> vtry(new DateTime(s, z)).fail.map(_.getMessage.wrapNel).validation
     }
 
-    def extractDate(name: String) = content.map { c => 
+    def extractDate(name: String) = content.flatMap(_ \? name).map { timejv => 
       zone.map(ZonedTimeExtractor).flatMap { ex => 
-        (c \ name).validated[DateTime](ex).fail.map(_.message.wrapNel).validation
+        timejv.validated[DateTime](ex).fail.map(_.message.wrapNel).validation
       }
     }
 
