@@ -10,6 +10,9 @@ import blueeyes.json._
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultOrderings._
 import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.xschema.JodaSerializationImplicits._
+import blueeyes.util.Clock
+import blueeyes.util.ClockSystem
 
 import com.reportgrid.analytics._
 import com.reportgrid.analytics.AggregatorImplicits._
@@ -86,7 +89,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
   }
 }
 
-class AggregationEngine private (config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction) {
+class AggregationEngine private (config: ConfigMap, logger: Logger, database: Database, clock: Clock)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
 
   private def AggregationStage(prefix: String): AggregationStage = {
@@ -121,6 +124,34 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   private val variable_children         = AggregationStage("variable_children")
   private val path_children             = AggregationStage("path_children")
 
+  private val events_collection: MongoCollection = config.getString("events.collection", "events")
+
+  def store(token: Token, path: Path, eventName: String, eventBody: JObject, count: Int) = {
+    val async = Future.async {
+      val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {
+        case Tag.Tags(tags) => tags.map(_.toList)
+        case _ =>              Future.sync(Tag("timestamp", TimeReference(timeSeriesEncoding, clock.instant)) :: Nil)
+      } 
+      
+      tagsFuture.flatMap[Unit] { 
+        case Tag(_, TimeReference(_, instant)) :: Nil => 
+          val record = JObject(
+            JField("token",     token.tokenId.serialize) ::
+            JField("path",      path.serialize) ::
+            JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
+            JField("count",     count.serialize) ::
+            JField("timestamp", instant.serialize) :: Nil
+          )
+        
+          database(MongoInsertQuery(events_collection, List(record))) 
+          
+        case _ => 
+          Future.dead(new IllegalStateException("Unexpected system state; please report error RG-AE0"))
+      }
+    } 
+
+    async.flatten
+  }
 
   /** 
    * Add the event data for the specified event to the database
@@ -509,7 +540,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       _.sig
     )
   }
-        
+
   private def variableValueSeriesPatches(token: Token, path: Path, finiteReport: Report[HasValue], infiniteObs: Set[HasValue], count: CountType): (MongoPatches, MongoPatches) = {
     val (finitePatches, refKeys) = finiteReport.storageKeysets.foldLeft((MongoPatches.empty, List.empty[MongoPrimitive])) {
       case ((finitePatches, refKeys), (storageKeys, finiteObservation)) => 
@@ -653,11 +684,11 @@ object AggregationEngine {
   }
 
   def apply(config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
-    createIndices(database).map(_ => new AggregationEngine(config, logger, database))
+    createIndices(database).map(_ => new AggregationEngine(config, logger, database, ClockSystem.realtimeClock))
   }
 
   def forConsole(config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction) = {
-    new AggregationEngine(config, logger, database)
+    new AggregationEngine(config, logger, database, ClockSystem.realtimeClock)
   }
 
   def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[JValue, T])]): scala.math.Ordering[JArray] = {

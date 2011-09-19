@@ -87,8 +87,8 @@ object Tag {
   def tname(s: String) = s.replaceAll(pattern, Prefix)
 
   sealed trait ExtractionResult
-  case class Tags(tags: Future[Seq[Tag]]) extends ExtractionResult
   case object Skipped extends ExtractionResult
+  case class Tags(tags: Future[Seq[Tag]]) extends ExtractionResult
   case class Errors(errors: Seq[ExtractionError]) extends ExtractionResult
 
   case class ExtractionError(fieldName: String, message: String) {
@@ -117,12 +117,14 @@ object Tag {
 
   implicit def richTagExtractor(ex: TagExtractor) = new RichTagExtractor(ex)
 
+  val TimestampProperty = tname("timestamp")
+
   def timeTagExtractor(encoding: TimeSeriesEncoding, auto: => Instant, alwaysTrack: Boolean): TagExtractor = (o: JObject) => {
-    val remainder = JObject(o.fields.filter(_.name != tname("timestamp")))
+    val remainder = JObject(o.fields.filter(_.name != TimestampProperty))
     def skippedResult = (Skipped, remainder)
     def autoResult = (Tags(Future.sync(Tag("timestamp", TimeReference(encoding, auto)) :: Nil)), remainder)
 
-    (o \ tname("timestamp")) match {
+    (o \ TimestampProperty) match {
       case JBool(false)     => skippedResult
       case JBool(true)      => autoResult
       case JNothing | JNull => if (alwaysTrack) autoResult else skippedResult
@@ -139,12 +141,14 @@ object Tag {
     instant => Tags(Future.sync(Tag(tagName, TimeReference(encoding, instant)) :: Nil))
   )
 
+  val LocationProperty = tname("location")
+
   def locationTagExtractor(auto: => Future[Option[Hierarchy]]) = (o: JObject) => {
-    val tagName = tname("location")
-    val remainder = JObject(o.fields.filter(_.name != tagName))
-    (o \ tagName) match {
+    val remainder = JObject(o.fields.filter(_.name != LocationProperty))
+    (o \ LocationProperty) match {
+      case JNothing | JNull | JBool(false) => (Skipped, o)
       case JBool(true) | JString("auto") => (Tags(auto.map(_.map(Tag("location", _)).toSeq)), remainder)
-      case x => extractHierarchyTag(tagName, x) match {
+      case x => extractHierarchyTag(LocationProperty, x) match {
         case tags: Tags => (tags, remainder)
         case other => (other, o)
       }

@@ -115,9 +115,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             val count: Int = request.parameters.get('count).map(_.toInt).getOrElse(1)
 
             withTokenAndPath(request) { (token, path) => 
+              logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + request.content.map(o => compact(render(o))))
               request.content.foreach { 
                 case obj @ JObject(fields) => for (JField(eventName, event: JObject) <- fields) {
-                  logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)))
+                  aggregationEngine.store(token, path, eventName, event, count)
+
                   val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
                   for (tags <- getTags(tagResults)) {
                     aggregationEngine.aggregate(token, path, eventName, tags, remainder, count)
@@ -131,7 +133,6 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
               Future.sync(HttpResponse[JValue](content = None))
             }
           }
-
 
           jsonp {
             /* The virtual file system, which is used for storing data,
