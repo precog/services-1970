@@ -7,7 +7,7 @@ import sbt.NameFilter._
 
 object ServicesSettings {
   val buildOrganization = "com.reportgrid"
-  val buildVersion = "1.0.1"
+  val buildVersion = "1.0.3"
   val buildScalaVersion = "2.9.1"
   
   val serviceSettings = Defaults.defaultSettings ++ Seq (
@@ -33,9 +33,9 @@ object ServicesBuild extends Build {
     val analyticsSettings = serviceSettings ++ Seq( 
       libraryDependencies ++= Seq(
         "joda-time"               % "joda-time"    % "1.6.2",
-        "org.scalaz"              % "scalaz-core_2.9.0-1" % "6.0.1",
-        "org.scala-tools.testing" % "specs_2.9.0-1"       % "1.6.8"  % "test",
-        "org.scala-tools.testing" % "scalacheck_2.9.0-1"  % "1.9"    % "test"),
+        "org.scalaz"              %% "scalaz-core" % "6.0.2",
+        "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
+        "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
     )
 
@@ -55,7 +55,7 @@ object ServicesBuild extends Build {
         "org.apache.hbase"        % "hbase"        % "0.90.1-cdh3u0",
         "org.slf4j"               % "slf4j-api"    % "1.6.1", 
         "joda-time"               % "joda-time"    % "1.6.2",
-        "org.scalaz"              % "scalaz-core_2.9.0-1" % "6.0.1"
+        "org.scalaz"              %% "scalaz-core" % "6.0.2"
       ),
       mainClass := Some("com.reportgrid.yggdrasil.Yggdrasil"),
       oneJarExcludeJars := ((_: String).contains("slf4j-api-1.5.11.jar"))
@@ -63,9 +63,9 @@ object ServicesBuild extends Build {
 
     val jessupSettings = serviceSettings ++ oneJarSettings ++ Seq(
       libraryDependencies ++= Seq(
-        "org.dspace.dependencies" % "dspace-geoip"        % "1.2.3",
-        "org.scala-tools.testing" % "specs_2.9.0-1"       % "1.6.8"  % "test",
-        "org.scala-tools.testing" % "scalacheck_2.9.0-1"  % "1.9"    % "test"),
+        "org.dspace.dependencies" % "dspace-geoip" % "1.2.3",
+        "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
+        "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"),
       mainClass := Some("com.reportgrid.jessup.Server"))
 
     val yggdrasil = Project("yggdrasil", file("yggdrasil"), settings = yggdrasilSettings ) dependsOn(common) dependsOnAlt (blueeyes(base))
@@ -73,7 +73,7 @@ object ServicesBuild extends Build {
     val jessup = Project("jessup", file("jessup"), settings = jessupSettings) dependsOnAlt blueeyes(base)
 
     val benchmarkSettings = serviceSettings ++ Seq(
-      libraryDependencies += "org.scala-tools.testing" % "scalacheck_2.9.0-1"  % "1.9" % "compile",
+      libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile",
       mainClass := Some("com.reportgrid.benchmark.AnalyticsTool")
     )
 

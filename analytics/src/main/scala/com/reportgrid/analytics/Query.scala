@@ -57,6 +57,10 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   override def infiniteValueKeys: Stream[Sig] = {
     resultGranularity.period(span.start).datesUntil(span.end).map(instant => Sig(resultGranularity.sig, instant.sig))
   }
+
+  def extendForInterpolation: IntervalTerm = {
+    this.copy(span = TimeSpan(resultGranularity.decrement(span.start), span.end))
+  }
 }
 
 case class SpanTerm(encoding: TimeSeriesEncoding, span: TimeSpan) extends TagTerm {

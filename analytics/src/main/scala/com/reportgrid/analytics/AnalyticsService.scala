@@ -1,5 +1,5 @@
-package com.reportgrid.analytics
-import  external._
+package com.reportgrid
+package analytics
 
 import blueeyes._
 import blueeyes.concurrent.Future
@@ -29,18 +29,23 @@ import org.joda.time.DateTimeZone
 import java.net.URL
 import java.util.concurrent.TimeUnit
 
-import com.reportgrid.analytics.AggregatorImplicits._
-import com.reportgrid.blueeyes.ReportGridInstrumentation
-import com.reportgrid.api.ReportGridTrackingClient
 import scala.collection.immutable.SortedMap
 import scala.collection.immutable.IndexedSeq
 
-import scalaz.Semigroup
+import scalaz.Monoid
 import scalaz.Validation
 import scalaz.Success
 import scalaz.Failure
 import scalaz.NonEmptyList
 import scalaz.Scalaz._
+
+import com.reportgrid.analytics.external._
+import com.reportgrid.ct._
+import com.reportgrid.ct.Mult._
+import com.reportgrid.ct.Mult.MDouble._
+
+import com.reportgrid.instrumentation.blueeyes.ReportGridInstrumentation
+import com.reportgrid.api.ReportGridTrackingClient
 
 case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: Yggdrasil[JValue], jessup: Jessup)
 
@@ -521,32 +526,81 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   import AnalyticsServiceSerialization._
   import AggregationEngine._
 
+  type Endo[A] = A => A
+
   def validated[A](v: Option[ValidationNEL[String, A]]): Option[A] = v map {
     case Success(a) => a
     case Failure(t) => throw new HttpException(BadRequest, t.list.mkString("; "))
   }
 
-  def transformTimeSeries[V: Semigroup](request: HttpRequest[_], original: Periodicity) = {
+  def transformTimeSeries[V: AbelianGroup : MDouble](request: HttpRequest[_], periodicity: Periodicity): Endo[ResultSet[JObject, V]] = {
     val zone = validated(timezone(request.parameters))
-    shiftTimeSeries[V](zone) andThen groupTimeSeries[V](original, seriesGrouping(request), zone)
+    shiftTimeSeries[V](periodicity, zone) andThen groupTimeSeries[V](periodicity, seriesGrouping(request), zone)
   }
 
-  def shiftTimeSeries[V: Semigroup](zone: Option[DateTimeZone]) = (resultSet: ResultSet[JObject, V]) => {
-    zone map { zone => 
-      val shiftTimeField = (obj: JObject) => JObject(
-        obj.fields.map {
-          case JField("timestamp", instant) => JField("datetime", instant.deserialize[Instant].toDateTime(DateTimeZone.UTC).withZoneRetainFields(zone).toString)
-          case field => field
-        }
-      )
-
-      resultSet.map(shiftTimeField.first)
-    } getOrElse {
-      resultSet
+  val TimeOrder: Ordering[JObject] = new Ordering[JObject] {
+    override def compare(k1: JObject, k2: JObject) = {
+      (timeField(k1) |@| timeField(k2)) { _ compare _ } getOrElse 0
     }
   }
 
-  def groupTimeSeries[V: Semigroup](original: Periodicity, grouping: Option[(Periodicity, Set[Int])], zone: Option[DateTimeZone]) = (resultSet: ResultSet[JObject, V]) => {
+  val timeField = (o: JObject) => {
+    o.fields.collect { case JField("timestamp", t) => t.deserialize[Instant] }.headOption
+  }
+
+  def shiftTimeField = (obj: JObject, zone: DateTimeZone) => JObject(
+    obj.fields.map {
+      case JField("timestamp", instant) => JField("datetime", instant.deserialize[Instant].toDateTime(DateTimeZone.UTC).withZone(zone).toString)
+
+      case field => field
+    }
+  )
+    
+  def shiftTimeSeries[V: AbelianGroup : MDouble](periodicity: Periodicity, zone: Option[DateTimeZone]): Endo[ResultSet[JObject, V]] = {
+    import SAct._
+
+    (resultSet: ResultSet[JObject, V]) => {
+      val shifted = zone filter (_ != DateTimeZone.UTC) map { zone => 
+        // check whether the offset from UTC with respect to the periodicity is fractional - if so, we will need
+        // to interpolate.
+
+        val offsetFraction = resultSet.headOption.map(_._1) >>= timeField >>= (periodicity.offsetFraction(zone, _))
+        if (offsetFraction.exists(_ == 0.0)) {
+          // no partial offset from UTC is necessary - this will be the case when using a periodicity such as 
+          // hours or minutes and a time zone that is shifted in hour increments.
+          resultSet.map((shiftTimeField(_: JObject, zone)).first)
+        } else {
+          // Use cubic interpolation to interpolate values; this makes the assumption (based upon the behavior
+          // of AggregationEngine) that series are regularly spaced in time.
+          val (_, results) = resultSet.sortBy(_._1)(TimeOrder).foldLeft((mzero[V], Vector.empty[(JObject, V)])) { 
+            case ((rem, results), (k, v)) => 
+               val adjustments = for (time <- timeField(k); offset <- periodicity.offsetFraction(zone, time)) yield {
+                // The time zone offset fraction needs to be adjusted to be a value between 0 and 1
+                // for the purposes of interpolation. 
+                if (offset > 0) {
+                  // time series is being shifted into the past
+                  (v |+| offset, v |+| (1.0 - offset))
+                } else {
+                  // time series is being shifted into the future
+                  (v |+| (1.0d + offset), v |+| -offset)
+                }
+              }
+
+              val (resultValue, remainder) = adjustments.getOrElse((v, mzero[V]))
+              (remainder, results :+ ((shiftTimeField(k, zone), resultValue |+| rem)))
+          }
+
+          results
+        }
+      } getOrElse {
+        resultSet
+      }
+      
+      shifted.tail //since intervalTerm extends the query interval back in time
+    }
+  }
+
+  def groupTimeSeries[V: Monoid](original: Periodicity, grouping: Option[(Periodicity, Set[Int])], zone: Option[DateTimeZone]) = (resultSet: ResultSet[JObject, V]) => {
     grouping match {
       case Some((grouping, groups)) => 
         def newField(dateTime: DateTime) = {
@@ -672,7 +726,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   }
 
   def intervalTerm(periodicity: Periodicity): TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
-    validated(timeSpan(parameters, content)).map(IntervalTerm(timeSeriesEncoding, periodicity, _))
+    validated(timeSpan(parameters, content)).map(IntervalTerm(timeSeriesEncoding, periodicity, _).extendForInterpolation)
   }
 
   val locationTerm: TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
@@ -693,7 +747,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
         val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
 
         aggregationEngine.getVariableSeries(token, path, variable, terms) 
-        .map(transformTimeSeries(request, periodicity))
+        .map(transformTimeSeries[ValueStats](request, periodicity))
         .map(_.map(f.second).serialize.ok)
       }
     //} 

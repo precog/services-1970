@@ -1,4 +1,4 @@
-package com.reportgrid
+package com.reportgrid.instrumentation
 package blueeyes 
 
 import _root_.blueeyes._

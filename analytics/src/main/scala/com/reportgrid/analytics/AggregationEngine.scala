@@ -15,7 +15,6 @@ import blueeyes.util.Clock
 import blueeyes.util.ClockSystem
 
 import com.reportgrid.analytics._
-import com.reportgrid.analytics.AggregatorImplicits._
 import com.reportgrid.analytics.persistence.MongoSupport._
 import com.reportgrid.ct._
 
@@ -27,8 +26,7 @@ import net.lag.logging.Logger
 import org.joda.time.Instant
 
 import scala.collection.SortedMap
-import scalaz.{Ordering => _, _}
-import Scalaz._
+import scalaz.Scalaz._
 import Future._
 import SignatureGen._
 

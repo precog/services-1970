@@ -2,7 +2,7 @@ package com.reportgrid.analytics
 
 import blueeyes._
 import blueeyes.core.data.Bijection.identity
-import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
+import blueeyes.core.http.{HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test._
@@ -12,17 +12,14 @@ import MimeTypes._
 
 import blueeyes.json._
 import blueeyes.json.JsonAST._
-import blueeyes.json.JsonDSL
 import blueeyes.json.JsonDSL._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
 import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo}
 
-import com.reportgrid.api.ReportGridTrackingClient
-
-import java.util.Date
-import net.lag.configgy.{Configgy, ConfigMap}
+import org.joda.time._
+import net.lag.configgy.ConfigMap
 
 import org.specs._
 import org.scalacheck.Gen._
@@ -31,8 +28,11 @@ import scalaz.Scalaz._
 import rosetta.json.blueeyes._
 
 import Periodicity._
+import AggregationEngine.ResultSet
 import persistence.MongoSupport._
-import org.joda.time.Instant
+import com.reportgrid.ct._
+import com.reportgrid.ct.Mult._
+import com.reportgrid.ct.Mult.MDouble._
 
 trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsService with LocalMongo {
   override val configuration = "services{analytics{v0{" + mongoConfigFileData + "}}}"
@@ -262,6 +262,44 @@ class AnalyticsServiceCompanionSpec extends Specification {
           (start must_== startTime.toInstant) && 
           (end must_== endTime.toInstant)
       }
+    }
+  }
+
+  "shifting a time series" should {
+    val baseDate = new DateTime(DateTimeZone.UTC)
+    val testResults: ResultSet[JObject, Long] = List(
+      (JObject(JField("timestamp", baseDate.toInstant.serialize) :: Nil), 10L),
+      (JObject(JField("timestamp", baseDate.plusHours(1).serialize) :: Nil), 20L),
+      (JObject(JField("timestamp", baseDate.plusHours(2).serialize) :: Nil), 30L),
+      (JObject(JField("timestamp", baseDate.plusHours(3).serialize) :: Nil), 20L)
+    )
+
+    "not shift if the time zone is UTC" in {
+      val shifted = shiftTimeSeries[Long](Periodicity.Hour, Some(DateTimeZone.UTC)).apply(testResults).toList 
+      shifted must_== testResults.tail
+    }
+
+    "shift, but not interpolate, hours with even time zone offsets" in {
+      val zone = DateTimeZone.forOffsetHours(1)
+      val shifted = shiftTimeSeries[Long](Periodicity.Hour, Some(zone)).apply(testResults).toList 
+      val expected = testResults.map((shiftTimeField(_: JObject, zone)).first).tail 
+      shifted must_== expected
+    }
+
+    "interpolate hours with fractional time zone offsets" in {
+      val zone = DateTimeZone.forOffsetHoursMinutes(1, 30)
+      val shifted = shiftTimeSeries[Long](Periodicity.Hour, Some(zone)).apply(testResults).toList 
+      val expected = List(
+        (JObject(JField("datetime", baseDate.plusHours(1).withZone(zone).toString) :: Nil), 15L),
+        (JObject(JField("datetime", baseDate.plusHours(2).withZone(zone).toString) :: Nil), 25L),
+        (JObject(JField("datetime", baseDate.plusHours(3).withZone(zone).toString) :: Nil), 25L)
+      )
+
+      println(shifted.mkString("\n"))
+      println("expected")
+      println(expected.mkString("\n"))
+
+      shifted must_== expected
     }
   }
 }

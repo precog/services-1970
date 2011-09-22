@@ -3,7 +3,7 @@ package com.reportgrid.ct
 import scalaz._
 
 /** Semigroup Action */
-trait SAct[A, B] { outer =>
+trait SAct[A, -B] { outer =>
   def append(a: A, b: => B): A
   def xappend(b: B, a: => A): A = append(a, b)
 }
@@ -14,10 +14,18 @@ trait SActs {
   }
 }
 
-object SAct extends SActs
+object SAct extends SActs {
+  def append[A, B](a: A, b: => B)(implicit sa: SAct[A, B]) = sa.append(a, b)
+
+  implicit def a2w[A](a: A): SActW[A] = SActW(a)
+
+  case class SActW[A](a: A) {
+    def |+|[B](b: => B)(implicit sa: SAct[A, B]): A = sa.append(a, b)
+  }
+}
 
 /** Monoid Action */
-trait MAct[A, B] extends Zero[A] with SAct[A, B] 
+trait MAct[A, -B] extends Zero[A] with SAct[A, B] 
 
 trait MActs {
   implicit def m2mact[A](implicit monoid: Monoid[A]): MAct[A, A] = new MAct[A, A] {
@@ -40,8 +48,14 @@ trait Actions[M[_], A] {
   }
 }
 
-class PF[A](a: A) {
-  def option[B](pf: PartialFunction[A, B]): Option[B] = pf.lift.apply(a)
+object Mult {
+  type MDouble[A] = SAct[A, Double]
+  
+  object MDouble {
+    implicit object MLongDouble extends MDouble[Long] {
+      override def append(l: Long, d: => Double) = (l * d).toLong
+    }
+  }
 }
 
 

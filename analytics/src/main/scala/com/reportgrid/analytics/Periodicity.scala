@@ -5,6 +5,8 @@ import org.joda.time.Instant
 import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
 import org.joda.time.DateTimeZone.UTC
+import org.joda.time.Duration
+import org.joda.time.{Period => JPeriod}
 
 import scalaz.Scalaz._
 
@@ -25,6 +27,8 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   /** Advances the date time by this periodicity.
    */
   def increment(time: Instant, amount: Int = 1): Instant
+
+  def decrement(time: Instant, amount: Int = 1): Instant
 
   def period(time: Instant): Period = Period(this, time)
 
@@ -63,11 +67,14 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
   /** Compares this periodicity to that periodicity based on length.
    */
   def compare(that: Periodicity): Int = Periodicity.All.indexOf(this).compare(Periodicity.All.indexOf(that))
+
+  def offsetFraction(zone: DateTimeZone, time: Instant): Option[Double]
 }
 
 object Instants {
   val Zero = new Instant(0)
   val Inf = new Instant(Long.MaxValue)
+  def shift(time: Instant, zone: DateTimeZone) = time.toDateTime(UTC).withZoneRetainFields(zone)
 }
 
 object Periodicity {
@@ -80,6 +87,8 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusSeconds(amount).toInstant
 
+    def decrement(time: Instant, amount: Int = 1) = time.toDateTime(UTC).minusSeconds(amount).toInstant
+
     def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
       case Minute => Some(time.getSecondOfMinute)
       case Hour   => Some(time.getSecondOfMinute + (60 * time.getMinuteOfHour))
@@ -88,6 +97,8 @@ object Periodicity {
     }
 
     override val finer = None
+
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = Some(0.0d)
   }
 
   case object Minute extends Periodicity {
@@ -97,6 +108,8 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusMinutes(amount).toInstant
 
+    def decrement(time: Instant, amount: Int = 1) = time.toDateTime(UTC).minusMinutes(amount).toInstant
+
     def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
       case Hour => Some(time.getMinuteOfHour)
       case Day  => Some(time.getMinuteOfDay)
@@ -104,6 +117,8 @@ object Periodicity {
     }
 
     override val finer = Some(Second)
+
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = Some(0.0d)
   }
 
   case object Hour extends Periodicity {
@@ -112,6 +127,8 @@ object Periodicity {
     def floor(time: Instant) = Minute.floor(time).toDateTime(UTC).withMinuteOfHour(0).toInstant
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusHours(amount).toInstant
+
+    def decrement(time: Instant, amount: Int = 1) = time.toDateTime(UTC).minusHours(amount).toInstant
 
     def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
       case Day   => Some(time.getHourOfDay)
@@ -122,6 +139,11 @@ object Periodicity {
     }
 
     override val finer = Some(Minute)
+
+    private val secondsPerHour = 1000 * 60 * 60
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = {
+      Some((zone.getOffset(time) % secondsPerHour).toDouble / secondsPerHour)
+    }
   }
 
   case object Day extends Periodicity {
@@ -131,6 +153,8 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusDays(amount).toInstant
 
+    def decrement(time: Instant, amount: Int = 1) = time.toDateTime(UTC).minusDays(amount).toInstant
+
     def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
       case Week =>  Some(time.getDayOfWeek)
       case Month => Some(time.getDayOfMonth)
@@ -139,14 +163,23 @@ object Periodicity {
     }
 
     override val finer = Some(Hour)
+
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = {
+      val lengthOfDay = JPeriod.days(1).toDurationFrom(shift(time, zone)).getMillis
+
+      Some(zone.getOffset(time).toDouble / lengthOfDay)
+    }
   }
 
   case object Week extends Periodicity {
     override final val byteValue = 4: Byte
 
-    def floor(time: Instant) = Day.floor(time).toDateTime(UTC).withDayOfWeek(1).toInstant
+    def floor(time: Instant) = floorDate(time).toInstant
+    def floorDate(time: Instant) = Day.floor(time).toDateTime(UTC).withDayOfWeek(1)
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusWeeks(amount).toInstant
+
+    def decrement(time: Instant, amount: Int = 1) = time.toDateTime(UTC).minusWeeks(amount).toInstant
 
     def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
       case Year => Some(time.getWeekOfWeekyear)
@@ -154,14 +187,25 @@ object Periodicity {
     }
 
     override val finer = Some(Day)
+
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = {
+      val utcWeekStart = floorDate(time)
+      val weekStart = shift(utcWeekStart.toInstant, zone)
+      val lengthOfWeek = JPeriod.weeks(1).toDurationFrom(weekStart).getMillis
+
+      Some((new Duration(utcWeekStart, shift(time, zone)).getMillis.toDouble / lengthOfWeek))
+    }
   }
 
   case object Month extends Periodicity {
     override final val byteValue = 5: Byte
 
-    def floor(time: Instant) = Day.floor(time).toDateTime(UTC).withDayOfMonth(1).toInstant
+    def floor(time: Instant) = floorDate(time).toInstant
+    def floorDate(time: Instant) = Day.floor(time).toDateTime(UTC).withDayOfMonth(1)
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusMonths(amount).toInstant
+
+    def decrement(time: Instant, amount: Int = 1) = time.toDateTime(UTC).minusMonths(amount).toInstant
 
     def indexOf(time: DateTime, in: Periodicity): Option[Int] = in match {
       case Year => Some(time.getMonthOfYear)
@@ -169,18 +213,37 @@ object Periodicity {
     }
 
     override val finer = Some(Day)
+
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = {
+      val utcStart = floorDate(time)
+      val start = shift(utcStart.toInstant, zone)
+      val periodLength = JPeriod.months(1).toDurationFrom(start).getMillis
+
+      Some((new Duration(utcStart, shift(time, zone)).getMillis.toDouble / periodLength))
+    }
   }
 
   case object Year extends Periodicity {
     override final val byteValue = 6: Byte
 
-    def floor(time: Instant) = Month.floor(time).toDateTime(UTC).withMonthOfYear(1).toInstant
+    def floor(time: Instant) = floorDate(time).toInstant
+    def floorDate(time: Instant) = Month.floor(time).toDateTime(UTC).withMonthOfYear(1)
 
     def increment(time: Instant, amount: Int = 1) = time.toDateTime(UTC).plusYears(amount).toInstant
+
+    def decrement(time: Instant, amount: Int = 1) = time.toDateTime(UTC).minusYears(amount).toInstant
 
     def indexOf(time: DateTime, in: Periodicity): Option[Int] = None
 
     override val finer = Some(Month)
+
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = {
+      val utcStart = floorDate(time)
+      val start = shift(utcStart.toInstant, zone)
+      val periodLength = JPeriod.years(1).toDurationFrom(start).getMillis
+
+      Some((new Duration(utcStart, shift(time, zone)).getMillis.toDouble / periodLength))
+    }
   }
 
   case object Eternity extends Periodicity {
@@ -190,9 +253,13 @@ object Periodicity {
 
     def increment(time: Instant, amount: Int = 1) = Instants.Inf
 
+    def decrement(time: Instant, amount: Int = 1) = Instants.Zero
+
     def indexOf(time: DateTime, in: Periodicity): Option[Int] = None
 
     override val finer = Some(Year)
+
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = None
   }
 
   val All = Second   ::
