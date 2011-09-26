@@ -53,7 +53,7 @@ object Mult {
   
   object MDouble {
     implicit object MLongDouble extends MDouble[Long] {
-      override def append(l: Long, d: => Double) = (l * d).toLong
+      override def append(l: Long, d: => Double) = (l * d).round
     }
   }
 }

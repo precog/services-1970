@@ -31,7 +31,7 @@ object ValueStats {
 
   implicit object ValueStatsMDouble extends ct.Mult.MDouble[ValueStats] {
     override def append(a: ValueStats, b: => Double) = ValueStats(
-      count = (a.count * b).toLong,
+      count = (a.count * b).round,
       sum = a.sum.map(_ * b),
       sumsq = a.sumsq.map(_ * b)
     )

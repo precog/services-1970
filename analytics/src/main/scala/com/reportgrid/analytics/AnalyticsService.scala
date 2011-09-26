@@ -596,7 +596,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
         resultSet
       }
       
-      shifted.tail //since intervalTerm extends the query interval back in time
+      if (shifted.isEmpty) shifted else shifted.tail //since intervalTerm extends the query interval back in time
     }
   }
 
