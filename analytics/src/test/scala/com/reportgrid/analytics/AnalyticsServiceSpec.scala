@@ -179,127 +179,32 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         }
       }
     }
-  }
-}
 
-class AnalyticsServiceCompanionSpec extends Specification {
-  import org.joda.time._
-  import scalaz._
-  import AnalyticsService._
+    "grouping in intersection queries" >> {
+      "timezone shifting must not discard data" in {
+        val granularity = Hour
+        val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
-  val startTime = new DateTime(DateTimeZone.UTC)
-  val endTime = startTime.plusHours(3)
+        val servicePath1 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-5.0&groupBy=week"
+        val servicePath2 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-4.0&groupBy=week"
+        val queryTerms = JsonParser.parse(
+          """{
+            "select":"series/hour",
+            "from":"/test/",
+            "properties":[{"property":".tweeted.recipientCount","limit":10,"order":"descending"}]
+          }"""
+        )
 
-  "dateTimeZone parsing" should {
-    "correctly handle integral zones" in {
-      dateTimeZone("1") must_== Success(DateTimeZone.forOffsetHours(1))
-      dateTimeZone("12") must_== Success(DateTimeZone.forOffsetHours(12))
-    }
+        val q1Results = jsonTestService.post[JValue](servicePath1)(queryTerms) 
+        val q2Results = jsonTestService.post[JValue](servicePath2)(queryTerms) 
 
-    "correctly handle fractional zones" in {
-      dateTimeZone("1.5") must_== Success(DateTimeZone.forOffsetHoursMinutes(1, 30))
-      dateTimeZone("-1.5") must_== Success(DateTimeZone.forOffsetHoursMinutes(-1, 30))
-    }
-
-    "correctly handle named zones" in {
-      dateTimeZone("America/Montreal") must_== Success(DateTimeZone.forID("America/Montreal"))
-    }
-  }
-
-  "time span extraction" should {
-    "correctly handle UTC time ranges in parameters" in {
-      val parameters = Map(
-        'start -> startTime.getMillis.toString, 
-        'end ->   endTime.getMillis.toString
-      )
-
-      timeSpan(parameters, None) must beLike {
-        case Some(Success(TimeSpan(start, end))) => 
-          (start must_== startTime.toInstant) && 
-          (end must_== endTime.toInstant)
+        (q1Results zip q2Results) must whenDelivered {
+          beLike { 
+            case (r1, r2) => 
+              r2.content must be_!=(r1.content)
+          }
+        }
       }
-    }
-
-    "correctly handle UTC time ranges in the content" in {
-      val content = JObject(
-        JField("start", startTime.getMillis) ::
-        JField("end", endTime.getMillis) :: Nil
-      )
-
-      timeSpan(Map.empty, Some(content)) must beLike {
-        case Some(Success(TimeSpan(start, end))) => 
-          (start must_== startTime.toInstant) && 
-          (end must_== endTime.toInstant)
-      }
-    }
-
-    "correctly handle offset time ranges in parameters" in {
-      val zone = DateTimeZone.forOffsetHours(-6)
-      val parameters = Map(
-        'start -> startTime.withZoneRetainFields(zone).getMillis.toString, 
-        'end ->   endTime.withZoneRetainFields(zone).getMillis.toString,
-        'timeZone -> "-6.0"
-      )
-
-      timeSpan(parameters, None) must beLike {
-        case Some(Success(TimeSpan(start, end))) => 
-          (start must_== startTime.toInstant) && 
-          (end must_== endTime.toInstant)
-      }
-    }
-
-    "correctly handle offset time ranges in the content" in {
-      val zone = DateTimeZone.forOffsetHours(-6)
-      val content = JObject(
-        JField("start", startTime.withZoneRetainFields(zone).getMillis) ::
-        JField("end", endTime.withZoneRetainFields(zone).getMillis) :: Nil
-      )
-
-      val parameters = Map('timeZone -> "-6.0")
-
-      timeSpan(parameters, Some(content)) must beLike {
-        case Some(Success(TimeSpan(start, end))) => 
-          (start must_== startTime.toInstant) && 
-          (end must_== endTime.toInstant)
-      }
-    }
-  }
-
-  "shifting a time series" should {
-    val baseDate = new DateTime(DateTimeZone.UTC)
-    val testResults: ResultSet[JObject, Long] = List(
-      (JObject(JField("timestamp", baseDate.toInstant.serialize) :: Nil), 10L),
-      (JObject(JField("timestamp", baseDate.plusHours(1).serialize) :: Nil), 20L),
-      (JObject(JField("timestamp", baseDate.plusHours(2).serialize) :: Nil), 30L),
-      (JObject(JField("timestamp", baseDate.plusHours(3).serialize) :: Nil), 20L)
-    )
-
-    "not shift if the time zone is UTC" in {
-      val shifted = shiftTimeSeries[Long](Periodicity.Hour, Some(DateTimeZone.UTC)).apply(testResults).toList 
-      shifted must_== testResults.tail
-    }
-
-    "shift, but not interpolate, hours with even time zone offsets" in {
-      val zone = DateTimeZone.forOffsetHours(1)
-      val shifted = shiftTimeSeries[Long](Periodicity.Hour, Some(zone)).apply(testResults).toList 
-      val expected = testResults.map((shiftTimeField(_: JObject, zone)).first).tail 
-      shifted must_== expected
-    }
-
-    "interpolate hours with fractional time zone offsets" in {
-      val zone = DateTimeZone.forOffsetHoursMinutes(1, 30)
-      val shifted = shiftTimeSeries[Long](Periodicity.Hour, Some(zone)).apply(testResults).toList 
-      val expected = List(
-        (JObject(JField("datetime", baseDate.plusHours(1).withZone(zone).toString) :: Nil), 15L),
-        (JObject(JField("datetime", baseDate.plusHours(2).withZone(zone).toString) :: Nil), 25L),
-        (JObject(JField("datetime", baseDate.plusHours(3).withZone(zone).toString) :: Nil), 25L)
-      )
-
-      println(shifted.mkString("\n"))
-      println("expected")
-      println(expected.mkString("\n"))
-
-      shifted must_== expected
     }
   }
 }
