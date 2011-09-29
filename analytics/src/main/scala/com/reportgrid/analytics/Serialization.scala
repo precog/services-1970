@@ -8,6 +8,8 @@ import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 
 import org.joda.time.DateTime
+import scalaz.Scalaz._
+import scalaz.Validation
 
 /**
  * Extractors and decomposers for types where the same serialization format is shared
@@ -95,13 +97,26 @@ trait AnalyticsSerialization {
     )
   }
 
-  final implicit val LimitsExtractor = new Extractor[Limits] {
-    def extract(jvalue: JValue): Limits = Limits(
-      order = (jvalue \ "order").deserialize[Int],
-      limit = (jvalue \ "limit").deserialize[Int],
-      depth = (jvalue \ "depth").deserialize[Int],
-      tags  = (jvalue \ "tags").deserialize[Int]
-    )
+  final implicit val LimitsExtractor = new Extractor[Limits] with ValidatedExtraction[Limits] {
+    override def validated(jvalue: JValue) = {
+      (
+        (jvalue \ "order").validated[Int] |@|
+        (jvalue \ "limit").validated[Int] |@|
+        (jvalue \ "depth").validated[Int] |@|
+        (jvalue \ "tags").validated[Int]  
+      ) {
+        Limits(_, _, _, _)
+      }
+    }
+  }
+
+  def limitsExtractor(default: Limits) = new Extractor[Limits] {
+    override def extract(jvalue: JValue) = Limits(
+      (jvalue \ "order").validated[Int] | default.order,
+      (jvalue \ "limit").validated[Int] | default.limit,
+      (jvalue \ "depth").validated[Int] | default.depth,
+      (jvalue \ "tags").validated[Int]  | default.tags
+    ) 
   }
 
   final implicit val PathDecomposer = new Decomposer[Path] {

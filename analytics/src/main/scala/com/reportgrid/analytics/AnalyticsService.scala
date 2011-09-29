@@ -474,7 +474,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
                     val permissions = (content \ "permissions").deserialize[Option[Permissions]].getOrElse(token.permissions)
                     val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(token.expires)
-                    val limits      = (content \ "limits").deserialize[Option[Limits]].getOrElse(token.limits)
+                    val limits      = (content \ "limits").deserialize[Limits](limitsExtractor(token.limits))
 
                     tokenManager.issueNew(token, path, permissions, expires, limits).map { newToken =>
                       HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
