@@ -146,6 +146,15 @@ trait AnalyticsSerialization {
     )
   }
 
+  def permissionsExtractor(default: Permissions) = new Extractor[Permissions] {
+    override def extract(jvalue: JValue): Permissions = Permissions(
+      read  = (jvalue \ "read").validated[Boolean]      | default.read,
+      write = (jvalue \ "write").validated[Boolean]     | default.write,
+      share = (jvalue \ "share").validated[Boolean]     | default.share,
+      explore = (jvalue \ "explore").validated[Boolean] | default.explore
+    )
+  }
+
   final implicit val TokenDecomposer = new Decomposer[Token] {
     def decompose(token: Token): JValue = JObject(
       JField("tokenId",         token.tokenId.serialize)  ::

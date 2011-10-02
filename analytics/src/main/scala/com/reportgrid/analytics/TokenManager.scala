@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit._
 
 import scala.util.matching.Regex
 import scala.math._
+import scalaz.Scalaz._
 
 import com.reportgrid.analytics.persistence.MongoSupport._
 
@@ -87,7 +88,7 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
 
   /** Issue a new token from the specified token.
    */
-  def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Token] = {
+  def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Validation[String, Token]] = {
     if (parent.canShare) {
       val newToken = if (parent == Token.Root) {
         // This is the root token being used to create a new account:
@@ -98,9 +99,9 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
       }
 
       val tokenJ = newToken.serialize.asInstanceOf[JObject]
-      database(insert(tokenJ).into(tokensCollection)) map (_ => newToken)
+      database(insert(tokenJ).into(tokensCollection)) map (_ => newToken.success)
     } else {
-      Future.dead(new Exception("Token " + parent + " does not have permission to share"))
+      Future.sync(("Token " + parent + " does not allow creation of child tokens.").fail)
     }
   }
 

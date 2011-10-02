@@ -143,7 +143,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             /* The virtual file system, which is used for storing data,
              * retrieving data, and querying for metadata.
              */
-            path("""/vfs/store/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])+)/?)?)""") { 
+            path("""/store/vfs/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])+)/?)?)""") { 
               $ {
                 audit("store") {
                   state.yggdrasil {
@@ -466,18 +466,23 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                   }
                 } ~
                 post { request: HttpRequest[JValue] =>
-                  tokenOf(request).flatMap { token =>
+                  tokenOf(request).flatMap { parent =>
                     val content: JValue = request.content.getOrElse {
                       throw new HttpException(BadRequest, "New token must be contained in POST content")
                     }
 
                     val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
-                    val permissions = (content \ "permissions").deserialize[Option[Permissions]].getOrElse(token.permissions)
-                    val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(token.expires)
-                    val limits      = (content \ "limits").deserialize[Limits](limitsExtractor(token.limits))
+                    val permissions = (content \ "permissions").deserialize(permissionsExtractor(parent.permissions))
+                    val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
+                    val limits      = (content \ "limits").deserialize(limitsExtractor(parent.limits))
 
-                    tokenManager.issueNew(token, path, permissions, expires, limits).map { newToken =>
-                      HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
+                    if (expires < clock.now()) {
+                      throw new HttpException(BadRequest, "Your are attempting to create an expired token. Such a token will not be usable.")
+                    } else {
+                      tokenManager.issueNew(parent, path, permissions, expires, limits) map {
+                        case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
+                        case Failure(message) => throw new HttpException(BadRequest, message)
+                      }
                     }
                   }
                 } ~
