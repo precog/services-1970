@@ -3,6 +3,7 @@ package com.reportgrid.analytics
 import blueeyes._
 import blueeyes.concurrent._
 import blueeyes.persistence.mongo._
+import blueeyes.persistence.mongo.MongoFilterImplicits._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
@@ -140,7 +141,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
             JField("count",     count.serialize) ::
             JField("timestamp", instant.serialize) :: Nil
           )
-        
+
           database(MongoInsertQuery(events_collection, List(record))) 
           
         case _ => 
@@ -263,10 +264,14 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
    *  over the given time period.
    */
   def getObservationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
-    internalSearchSeries[CountType](
-      tagTerms,
-      valueSeriesKey(token, path, _, observation), 
-      CountsPath, variable_value_series.collection)
+    if (observation.order <= token.limits.order) {
+      internalSearchSeries[CountType](
+        tagTerms,
+        valueSeriesKey(token, path, _, observation), 
+        CountsPath, variable_value_series.collection)
+    } else {
+      countEvents(token, path, observation, tagTerms)
+    }
   }
 
   def getIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, CountType]] = {
@@ -378,6 +383,76 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       }.toSeq: _*
     ) map {
       _.flatten
+    }
+  }
+
+  def countEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
+    val baseFilter: MongoFilter = JPath(".token") === token.tokenId.serialize & JPath(".path") === path.serialize 
+
+    val obsFilter = observation.obs.foldLeft(baseFilter) {
+      case (acc, HasValue(variable, value)) => 
+        val eventName = variable.name.head.flatMap {
+          case JPathField(name) => Some(name)
+          case _ => None
+        }
+
+        acc &
+        ((JPath(".event.data") \ (variable.name.tail)) === value) &
+        eventName.map(JPath(".event.name") === _)
+    }
+
+    val tagsFilters: Seq[MongoFilter]  = tagTerms.collect {
+      case IntervalTerm(_, _, span) => 
+        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
+        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
+
+      case SpanTerm(_, span) =>
+        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
+        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
+
+      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) =>
+        MongoFilterBuilder(JPath(".event.data") \ ("#"+ tagName)).contains[MongoPrimitiveString](path.path)
+
+      case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) =>
+        MongoFilterBuilder(JPath(".event.data") \ ("#" + tagName) \ name) === path.path
+    }
+
+    val filter = tagsFilters.foldLeft(obsFilter)(_ & _)
+
+    database {
+      selectAll.from(events_collection).where(filter)
+    } map { results => 
+      val retrieved = results.foldLeft(SortedMap.empty[JObject, CountType](JObjectOrdering)) { (acc, event) =>
+        val eventObj = event --> classOf[JObject]
+
+        val key = JObject(
+          tagTerms.collect {
+            case IntervalTerm(_, periodicity, _) => JField(periodicity.name, periodicity.period(event \ "timestamp"))
+            case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => JField(tagName, path.path)
+            case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
+          }.toList
+        )
+
+        acc + (key -> (acc.getOrElse(key, 0L) + 1))
+      }
+
+      val intervalPeriods = tagTerms.collect {
+        case IntervalTerm(_, periodicity, span) => periodicity.period(span.start).until(span.end)
+        case _ => Stream.empty[Period]
+      }
+
+      intervalPeriods.toStream.flatten.foldLeft(retrieved) {
+        case (acc, period) =>
+          val key = JObject(
+            JField(period.periodicity.name, period) ::
+            tagTerms.collect {
+              case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => JField(tagName, path.path)
+              case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
+            }.toList
+          )
+          
+          if (acc.contains(key)) acc else acc + (key -> 0)
+      }.toSeq
     }
   }
 

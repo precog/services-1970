@@ -22,6 +22,7 @@ import org.joda.time._
 import net.lag.configgy.ConfigMap
 
 import org.specs._
+import org.specs.specification.PendingUntilFixed
 import org.scalacheck.Gen._
 import scalaz.Scalaz._
 
@@ -50,7 +51,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(40, 1000L.milliseconds)
 }
 
-class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
   "Analytics Service" should {
     shareVariables()
 
@@ -182,28 +183,30 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
     "grouping in intersection queries" >> {
       "timezone shifting must not discard data" in {
-        val granularity = Hour
-        val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+        //pendingUntilFixed {
+          val granularity = Hour
+          val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
-        val servicePath1 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-5.0&groupBy=week"
-        val servicePath2 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-4.0&groupBy=week"
-        val queryTerms = JsonParser.parse(
-          """{
-            "select":"series/hour",
-            "from":"/test/",
-            "properties":[{"property":".tweeted.recipientCount","limit":10,"order":"descending"}]
-          }"""
-        )
+          val servicePath1 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-5.0&groupBy=week"
+          val servicePath2 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-4.0&groupBy=week"
+          val queryTerms = JsonParser.parse(
+            """{
+              "select":"series/hour",
+              "from":"/test/",
+              "properties":[{"property":".tweeted.recipientCount","limit":10,"order":"descending"}]
+            }"""
+          )
 
-        val q1Results = jsonTestService.post[JValue](servicePath1)(queryTerms) 
-        val q2Results = jsonTestService.post[JValue](servicePath2)(queryTerms) 
+          val q1Results = jsonTestService.post[JValue](servicePath1)(queryTerms) 
+          val q2Results = jsonTestService.post[JValue](servicePath2)(queryTerms) 
 
-        (q1Results zip q2Results) must whenDelivered {
-          beLike { 
-            case (r1, r2) => 
-              r2.content must be_!=(r1.content)
+          (q1Results zip q2Results) must whenDelivered {
+            beLike { 
+              case (r1, r2) => 
+                r2.content must be_!=(r1.content)
+            }
           }
-        }
+        //}
       }
     }
   }

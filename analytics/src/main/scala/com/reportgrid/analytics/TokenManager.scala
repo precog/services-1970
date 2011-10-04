@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit._
 import scala.util.matching.Regex
 import scala.math._
 import scalaz.Scalaz._
+import scalaz.Validation
 
 import com.reportgrid.analytics.persistence.MongoSupport._
 

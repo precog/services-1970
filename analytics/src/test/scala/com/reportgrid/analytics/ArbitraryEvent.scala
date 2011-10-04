@@ -36,11 +36,12 @@ trait ArbitraryEvent extends ArbitraryTime {
         JField(Tag.tname(name), time.serialize)
 
       case Tag(name, Hierarchy(locations)) => 
-        JField(Tag.tname(name), 
-               JObject(locations.collect { case Hierarchy.NamedLocation(name, path) => JField(name, path.path.serialize) }))
+        JField(Tag.tname(name), JObject(locations.collect { case Hierarchy.NamedLocation(name, path) => JField(name, path.path.serialize) }))
     }
+    
+    lazy val messageData = JObject(data.fields ::: tagFields)
 
-    lazy val message = JObject(JField(eventName, JObject(data.fields ::: tagFields)) :: Nil)
+    lazy val message = JObject(JField(eventName, messageData) :: Nil)
   }
 
   val locations = List(

@@ -152,7 +152,10 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
 
     // using the benchmark token for testing because it has order 3
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
-      _.foreach(event => engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1))
+      _.foreach { event => 
+        engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1)
+        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1)
+      }
     }
 
     "retrieve path children" in {
@@ -316,7 +319,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
 
     "retrieve a time series for occurrences of a value of a variable" in {      
-      ////skip("disabled")
+      //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events)
@@ -340,6 +343,33 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
           }
       }
     }
+
+    "retrieve a time series for occurrences of a value of a variable via the raw events" in {      
+      ////skip("disabled")
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val expectedTotals = valueCounts(events)
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
+      )
+
+      expectedTotals.foreach {
+        case ((jpath, value), count) =>
+          val variable = Variable(jpath)
+          if (!variable.name.endsInInfiniteValueSpace) {
+            val observation = JointObservation(HasValue(variable, value))
+
+            engine.countEvents(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered {
+              verify { results => 
+                (results.total must_== count.toLong) && 
+                (results must haveSize((granularity.period(minDate) until maxDate).size))
+              }
+            }
+          }
+      }
+    }
+
 
     "count observations of a given value" in {
       //skip("disabled")
