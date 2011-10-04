@@ -1,7 +1,7 @@
 import sbt._
 object PluginDef extends Build {
-  lazy val root = Project("plugins", file(".")) dependsOn (oneJar, altDep)
-  lazy val oneJar = RootProject(file("../../../xsbt-one-jar")) //uri("git://github.com/reportgrid/xsbt-one-jar")) 
+  lazy val root = Project("plugins", file(".")) dependsOn (assembly, altDep)
+  lazy val assembly = RootProject(uri("git://github.com/eed3si9n/sbt-assembly.git#070"))
   lazy val altDep = RootProject(uri("git://github.com/reportgrid/xsbt-alt-deps")) 
 }
 

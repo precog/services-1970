@@ -1,8 +1,7 @@
 import sbt._
 import Keys._
-//import ProguardPlugin._
-import OneJarPlugin._
 import AltDependency._
+import sbtassembly.Plugin.AssemblyKeys._
 import sbt.NameFilter._
 
 object ServicesSettings {
@@ -36,13 +35,14 @@ object ServicesBuild extends Build {
         "org.scalaz"              %% "scalaz-core" % "6.0.2",
         "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
         "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"),
-      mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
+      mainClass := Some("com.reportgrid.analytics.AnalyticsServer"),
+      jarName in assembly := "analytics-v1.jar"
     )
 
-    val analytics = Project("analytics", file("analytics"), settings = analyticsSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))
+    val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))
 
 
-    val yggdrasilSettings = serviceSettings ++ oneJarSettings ++ Seq(
+    val yggdrasilSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
       resolvers ++= Seq(
         //"riptano" at "http://mvn.riptano.com/content/repositories/public",
         //"Scale7 Maven Repo" at "https://github.com/s7/mvnrepo/raw/master"
@@ -57,11 +57,10 @@ object ServicesBuild extends Build {
         "joda-time"               % "joda-time"    % "1.6.2",
         "org.scalaz"              %% "scalaz-core" % "6.0.2"
       ),
-      mainClass := Some("com.reportgrid.yggdrasil.Yggdrasil"),
-      oneJarExcludeJars := ((_: String).contains("slf4j-api-1.5.11.jar"))
+      mainClass := Some("com.reportgrid.yggdrasil.Yggdrasil")
     )
 
-    val jessupSettings = serviceSettings ++ oneJarSettings ++ Seq(
+    val jessupSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
       libraryDependencies ++= Seq(
         "org.dspace.dependencies" % "dspace-geoip" % "1.2.3",
         "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
@@ -77,7 +76,7 @@ object ServicesBuild extends Build {
       mainClass := Some("com.reportgrid.benchmark.AnalyticsTool")
     )
 
-    val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ oneJarSettings) dependsOn(common) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
+    val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ sbtassembly.Plugin.assemblySettings) dependsOn(common) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
 
     val services = Project("services", file(".")) aggregate (common, analytics, benchmark, yggdrasil) 
     common :: analytics :: benchmark :: yggdrasil :: jessup :: services :: Nil
