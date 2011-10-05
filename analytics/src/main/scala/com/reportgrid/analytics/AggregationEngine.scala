@@ -119,7 +119,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   private val variable_value_series     = AggregationStage("variable_value_series")
 
   private val variable_values           = AggregationStage("variable_values")
-  private val variable_values_infinite  = AggregationStage("variable_values_infinite")
   private val variable_children         = AggregationStage("variable_children")
   private val path_children             = AggregationStage("path_children")
 
@@ -170,9 +169,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
     variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches
 
-    val (vvSeriesPatches, vvInfinitePatches) = variableValueSeriesPatches(token, path, Report(tags, finiteObs), infiniteObs, count)
+    val vvSeriesPatches = variableValueSeriesPatches(token, path, Report(tags, finiteObs), count)
     variable_value_series    putAll vvSeriesPatches.patches
-    variable_values_infinite putAll vvInfinitePatches.patches 
 
     val childObservations = JointObservations.ofChildren(event, 1)
     variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches
@@ -270,7 +268,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         valueSeriesKey(token, path, _, observation), 
         CountsPath, variable_value_series.collection)
     } else {
-      countEvents(token, path, observation, tagTerms)
+      getRawEvents(token, path, observation, tagTerms).map(countByTerms(_, tagTerms))
     }
   }
 
@@ -331,24 +329,57 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }
   }
 
-  def findRelatedInfiniteValues(token: Token, path: Path, observation: JointObservation[HasValue], span: TimeSpan): Future[List[HasValue]] = {
-    def find(intervalTerm: IntervalTerm) = Future {
-      intervalTerm.infiniteValueKeys.map { timeKey =>
-        val refKey = valueSeriesKey(token, path, Set(timeKey).sig, observation).rhs
-        database(
-          select(".variable", ".value")
-          .from(variable_values_infinite.collection)
-          .where(".ids" === refKey) //array comparison in Mongo uses equality for set inclusion. Go figure.
-        ) 
-      }: _*
-    } 
+  def findRelatedInfiniteValues(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[Iterable[HasValue]] = {
+    def findInfiniteValues(fields: List[JField], path: JPath): List[HasValue] = fields.flatMap {
+      case JField(name, value) if name startsWith "~" => List(HasValue(Variable(path \ name), value))
+      case JField(name, JObject(fields)) => findInfiniteValues(fields, path \ name)
+      case _ => Nil
+    }
 
-    searchQueriableExpansion(span, find) map {
-      _.flatten.flatMap { 
-        _.map(jobj => HasValue((jobj \ "variable").deserialize[Variable], (jobj \ "value")))
+    getRawEvents(token, path, observation, tagTerms) map { 
+      _.flatMap {
+        case JObject(fields) => findInfiniteValues(fields, JPath.Identity)
+        case _ => Nil
       }
     }
   }
+
+  def getRawEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]) : Future[MongoSelectQuery#QueryResult] = {
+    val baseFilter: MongoFilter = JPath(".token") === token.tokenId.serialize & JPath(".path") === path.serialize 
+
+    val obsFilter = observation.obs.foldLeft(baseFilter) {
+      case (acc, HasValue(variable, value)) => 
+        val eventName = variable.name.head.flatMap {
+          case JPathField(name) => Some(name)
+          case _ => None
+        }
+
+        acc &
+        ((JPath(".event.data") \ (variable.name.tail)) === value) &
+        eventName.map(JPath(".event.name") === _)
+    }
+
+    val tagsFilters: Seq[MongoFilter]  = tagTerms.collect {
+      case IntervalTerm(_, _, span) => 
+        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
+        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
+
+      case SpanTerm(_, span) =>
+        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
+        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
+
+      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) =>
+        MongoFilterBuilder(JPath(".event.data") \ ("#"+ tagName)).contains[MongoPrimitiveString](path.path)
+
+      case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) =>
+        MongoFilterBuilder(JPath(".event.data") \ ("#" + tagName) \ name) === path.path
+    }
+
+    val filter = tagsFilters.foldLeft(obsFilter)(_ & _)
+
+    database(selectAll.from(events_collection).where(filter))
+  }
+
 
   private def searchQueriableExpansion[T](span: TimeSpan, f: (IntervalTerm) => Future[T]): Future[List[T]] = {
     import TimeSpan._
@@ -386,75 +417,6 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     }
   }
 
-  def countEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
-    val baseFilter: MongoFilter = JPath(".token") === token.tokenId.serialize & JPath(".path") === path.serialize 
-
-    val obsFilter = observation.obs.foldLeft(baseFilter) {
-      case (acc, HasValue(variable, value)) => 
-        val eventName = variable.name.head.flatMap {
-          case JPathField(name) => Some(name)
-          case _ => None
-        }
-
-        acc &
-        ((JPath(".event.data") \ (variable.name.tail)) === value) &
-        eventName.map(JPath(".event.name") === _)
-    }
-
-    val tagsFilters: Seq[MongoFilter]  = tagTerms.collect {
-      case IntervalTerm(_, _, span) => 
-        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
-        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
-
-      case SpanTerm(_, span) =>
-        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
-        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
-
-      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) =>
-        MongoFilterBuilder(JPath(".event.data") \ ("#"+ tagName)).contains[MongoPrimitiveString](path.path)
-
-      case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) =>
-        MongoFilterBuilder(JPath(".event.data") \ ("#" + tagName) \ name) === path.path
-    }
-
-    val filter = tagsFilters.foldLeft(obsFilter)(_ & _)
-
-    database {
-      selectAll.from(events_collection).where(filter)
-    } map { results => 
-      val retrieved = results.foldLeft(SortedMap.empty[JObject, CountType](JObjectOrdering)) { (acc, event) =>
-        val eventObj = event --> classOf[JObject]
-
-        val key = JObject(
-          tagTerms.collect {
-            case IntervalTerm(_, periodicity, _) => JField(periodicity.name, periodicity.period(event \ "timestamp"))
-            case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => JField(tagName, path.path)
-            case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
-          }.toList
-        )
-
-        acc + (key -> (acc.getOrElse(key, 0L) + 1))
-      }
-
-      val intervalPeriods = tagTerms.collect {
-        case IntervalTerm(_, periodicity, span) => periodicity.period(span.start).until(span.end)
-        case _ => Stream.empty[Period]
-      }
-
-      intervalPeriods.toStream.flatten.foldLeft(retrieved) {
-        case (acc, period) =>
-          val key = JObject(
-            JField(period.periodicity.name, period) ::
-            tagTerms.collect {
-              case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => JField(tagName, path.path)
-              case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
-            }.toList
-          )
-          
-          if (acc.contains(key)) acc else acc + (key -> 0)
-      }.toSeq
-    }
-  }
 
   private def valuesKeyFilter(token: Token, path: Path, variable: Variable) = {
     JPath("." + valuesId) === Sig(token.sig, path.sig, variable.sig).hashSignature
@@ -614,7 +576,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     )
   }
 
-  private def variableValueSeriesPatches(token: Token, path: Path, finiteReport: Report[HasValue], infiniteObs: Set[HasValue], count: CountType): (MongoPatches, MongoPatches) = {
+  private def variableValueSeriesPatches(token: Token, path: Path, finiteReport: Report[HasValue], count: CountType): MongoPatches = {
     val (finitePatches, refKeys) = finiteReport.storageKeysets.foldLeft((MongoPatches.empty, List.empty[MongoPrimitive])) {
       case ((finitePatches, refKeys), (storageKeys, finiteObservation)) => 
 
@@ -633,20 +595,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
         )
     } 
 
-    //build infinite patches by adding the finite key id to the list of locations that the infinite value
-    //was observed in conjunction with.
-    val infinitePatches = infiniteObs.foldLeft(MongoPatches.empty) {
-      case (patches, hasValue) => patches + (
-        infiniteSeriesKey(token, path, hasValue) -> {
-          (MongoUpdateBuilder(".ids")      pushAll(refKeys: _*)) |+| 
-          (MongoUpdateBuilder(".variable") set  hasValue.variable.serialize) |+| 
-          (MongoUpdateBuilder(".value")    set  hasValue.value.serialize) |+| 
-          (MongoUpdateBuilder(".count")    inc  count)
-        }
-      )
-    }
-
-    (finitePatches, infinitePatches)
+    finitePatches
   }
 
   private def variableSeriesPatches(token: Token, path: Path, report: Report[Observation], count: CountType): MongoPatches = {
@@ -782,5 +731,39 @@ object AggregationEngine {
         if (valuesOrder == 0) JArrayOrdering.compare(l1, l2) else valuesOrder
       }
     }   
+  }
+
+  def countByTerms(results: Iterable[JValue], tagTerms: Seq[TagTerm]) = {
+    val retrieved = results.foldLeft(SortedMap.empty[JObject, CountType](JObjectOrdering)) { (acc, event) =>
+      val eventObj = event --> classOf[JObject]
+
+      val key = JObject(
+        tagTerms.collect {
+          case IntervalTerm(_, periodicity, _) => JField(periodicity.name, periodicity.period(event \ "timestamp"))
+          case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => JField(tagName, path.path)
+          case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
+        }.toList
+      )
+
+      acc + (key -> (acc.getOrElse(key, 0L) + 1))
+    }
+
+    val intervalPeriods = tagTerms.collect {
+      case IntervalTerm(_, periodicity, span) => periodicity.period(span.start).until(span.end)
+      case _ => Stream.empty[Period]
+    }
+
+    intervalPeriods.toStream.flatten.foldLeft(retrieved) {
+      case (acc, period) =>
+        val key = JObject(
+          JField(period.periodicity.name, period) ::
+          tagTerms.collect {
+            case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => JField(tagName, path.path)
+            case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
+          }.toList
+        )
+        
+        if (acc.contains(key)) acc else acc + (key -> 0)
+    }.toSeq
   }
 }

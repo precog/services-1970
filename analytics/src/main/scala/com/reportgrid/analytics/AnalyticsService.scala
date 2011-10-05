@@ -405,11 +405,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                           .map(_.serialize.ok)
 
                         case Related => 
-                          timeSpan(request.parameters, Some(content)) match {
-                            case Some(Success(span)) => aggregationEngine.findRelatedInfiniteValues(token, from, observation, span) map (_.serialize.ok)
-                            case Some(Failure(errors)) => throw new HttpException(BadRequest, errors.list.mkString("; "))
-                            case None => throw new HttpException(BadRequest, "A time span must be specified for related values queries.")
-                          }
+                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
+                          aggregationEngine.findRelatedInfiniteValues(token, from, observation, terms) map (_.toList.serialize.ok)
                       }
                     }
 

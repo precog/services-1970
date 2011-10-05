@@ -360,7 +360,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
           if (!variable.name.endsInInfiniteValueSpace) {
             val observation = JointObservation(HasValue(variable, value))
 
-            engine.countEvents(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered {
+            engine.getRawEvents(Token.Benchmark, "/test", observation, queryTerms).map(AggregationEngine.countByTerms(_, queryTerms)) must whenDelivered {
               verify { results => 
                 (results.total must_== count.toLong) && 
                 (results must haveSize((granularity.period(minDate) until maxDate).size))
@@ -528,7 +528,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
             engine.findRelatedInfiniteValues(
               Token.Benchmark, "/test", 
               JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
-              TimeSpan(minDate, maxDate)
+              List(SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan(minDate, maxDate)))
             ) map {
               _.map(_.value).toSet
             } must whenDelivered {
