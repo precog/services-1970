@@ -93,6 +93,7 @@ trait AnalyticsSerialization {
       JField("limit", limits.limit.serialize) ::
       JField("depth", limits.depth.serialize) ::
       JField("tags",  limits.tags.serialize) ::
+      JField("lossless",  limits.lossless.serialize) ::
       Nil
     )
   }
@@ -105,7 +106,7 @@ trait AnalyticsSerialization {
         (jvalue \ "depth").validated[Int] |@|
         (jvalue \ "tags").validated[Int]  
       ) {
-        Limits(_, _, _, _)
+        Limits(_, _, _, _, (jvalue \ "lossless").validated[Boolean] | true)
       }
     }
   }
@@ -115,7 +116,8 @@ trait AnalyticsSerialization {
       (jvalue \ "order").validated[Int] | default.order,
       (jvalue \ "limit").validated[Int] | default.limit,
       (jvalue \ "depth").validated[Int] | default.depth,
-      (jvalue \ "tags").validated[Int]  | default.tags
+      (jvalue \ "tags").validated[Int]  | default.tags,
+      (jvalue \ "lossless").validated[Boolean]  | default.lossless
     ) 
   }
 

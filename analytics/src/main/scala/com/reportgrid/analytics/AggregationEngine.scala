@@ -125,30 +125,34 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   private val events_collection: MongoCollection = config.getString("events.collection", "events")
 
   def store(token: Token, path: Path, eventName: String, eventBody: JObject, count: Int) = {
-    val async = Future.async {
-      val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {
-        case Tag.Tags(tags) => tags.map(_.toList)
-        case _ =>              Future.sync(Tag("timestamp", TimeReference(timeSeriesEncoding, clock.instant)) :: Nil)
+    if (token.limits.lossless) {
+      val async = Future.async {
+        val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {
+          case Tag.Tags(tags) => tags.map(_.toList)
+          case _ =>              Future.sync(Tag("timestamp", TimeReference(timeSeriesEncoding, clock.instant)) :: Nil)
+        } 
+        
+        tagsFuture.flatMap[Unit] { 
+          case Tag(_, TimeReference(_, instant)) :: Nil => 
+            val record = JObject(
+              JField("token",     token.tokenId.serialize) ::
+              JField("path",      path.serialize) ::
+              JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
+              JField("count",     count.serialize) ::
+              JField("timestamp", instant.serialize) :: Nil
+            )
+
+            database(MongoInsertQuery(events_collection, List(record))) 
+            
+          case _ => 
+            Future.dead(new IllegalStateException("Unexpected system state; please report error RG-AE0"))
+        }
       } 
-      
-      tagsFuture.flatMap[Unit] { 
-        case Tag(_, TimeReference(_, instant)) :: Nil => 
-          val record = JObject(
-            JField("token",     token.tokenId.serialize) ::
-            JField("path",      path.serialize) ::
-            JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
-            JField("count",     count.serialize) ::
-            JField("timestamp", instant.serialize) :: Nil
-          )
 
-          database(MongoInsertQuery(events_collection, List(record))) 
-          
-        case _ => 
-          Future.dead(new IllegalStateException("Unexpected system state; please report error RG-AE0"))
-      }
-    } 
-
-    async.flatten
+      async.flatten
+    } else {
+      Future.sync(())
+    }
   }
 
   /** 
@@ -690,6 +694,9 @@ object AggregationEngine {
     "path_children" -> Map(
       "path_query" -> (List("path", "accountTokenId"), false),
       "path_child_query" -> (List("path", "accountTokenId", "child"), false)
+    ),
+    "events" -> Map(
+      "raw_events_query" -> (List("token", "timestamp", "path"), false)
     )
   )
 

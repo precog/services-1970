@@ -5,7 +5,7 @@ package com.reportgrid.analytics
  * the customer signs up for. Higher limits imply more power in aggregation
  * but more resource utilization on the backend.
  */
-case class Limits(order: Int, limit: Int, depth: Int, tags: Int = 1) {
+case class Limits(order: Int, limit: Int, depth: Int, tags: Int = 1, lossless: Boolean = true) {
   def limitTo(that: Limits) = Limits(
     order = this.order.min(that.order),
     limit = this.limit.min(that.limit),
