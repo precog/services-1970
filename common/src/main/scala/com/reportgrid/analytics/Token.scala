@@ -1,5 +1,15 @@
 package com.reportgrid.analytics
 
+import blueeyes.json._
+import blueeyes.json.JsonAST._
+import blueeyes.json.xschema._
+import blueeyes.json.xschema.DefaultSerialization._
+import blueeyes.json.xschema.JodaSerializationImplicits._
+
+import org.joda.time.DateTime
+import scalaz.Scalaz._
+import scalaz.Validation
+
 import org.joda.time.{DateTime, DateTimeZone}
 
 /** A token gives a user access to a path in the ReportGrid virtual file
@@ -38,7 +48,34 @@ case class Token(tokenId: String, parentTokenId: Option[String], accountTokenId:
   def absoluteFrom(owner: Token) = copy(path = owner.path + this.path)
 }
 
-object Token {
+trait TokenSerialization {
+    final implicit val TokenDecomposer = new Decomposer[Token] {
+    def decompose(token: Token): JValue = JObject(
+      JField("tokenId",         token.tokenId.serialize)  ::
+      JField("parentTokenId",   token.parentTokenId.serialize) ::
+      JField("accountTokenId",  token.accountTokenId.serialize) ::
+      JField("path",            token.path.serialize) ::
+      JField("permissions",     token.permissions.serialize) ::
+      JField("expires",         token.expires.serialize) ::
+      JField("limits",          token.limits.serialize) ::
+      Nil
+    )
+  }
+
+  final implicit val TokenExtractor = new Extractor[Token] {
+    def extract(jvalue: JValue): Token = Token(
+      tokenId         = (jvalue \ "tokenId").deserialize[String],
+      parentTokenId   = (jvalue \ "parentTokenId").deserialize[Option[String]],
+      accountTokenId  = (jvalue \ "accountTokenId").deserialize[String],
+      path            = (jvalue \ "path").deserialize[Path],
+      permissions     = (jvalue \ "permissions").deserialize[Permissions],
+      expires         = (jvalue \ "expires").deserialize[DateTime],
+      limits          = (jvalue \ "limits").deserialize[Limits]
+    )
+  }
+}
+
+object Token extends TokenSerialization {
   private def newUUID() = java.util.UUID.randomUUID().toString.toUpperCase
 
   val Never = new DateTime(java.lang.Long.MAX_VALUE, DateTimeZone.UTC)

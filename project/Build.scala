@@ -25,10 +25,14 @@ object ServicesBuild extends Build {
   val blueeyes = GitAltDependency(_: java.io.File, file("../blueeyes"), RootProject(uri("git://github.com/jdegoes/blueeyes")))
 
   override def projectDefinitions(base: File) = {
-    val common = Project("common", file("common"), 
-      settings = serviceSettings ++ Seq(libraryDependencies += "joda-time" % "joda-time" % "1.6.2")
-    )
+    val commonSettings = serviceSettings ++ Seq(
+        libraryDependencies ++= Seq(
+          "joda-time" % "joda-time" % "1.6.2",
+          "org.scalaz" %% "scalaz-core" % "6.0.2"
+        )
+      )
 
+    val common = Project("common", file("common"), settings = commonSettings) dependsOnAlt(blueeyes(base)) 
 
     val analyticsSettings = serviceSettings ++ Seq( 
       libraryDependencies ++= Seq(
@@ -53,7 +57,7 @@ object ServicesBuild extends Build {
       jarName in assembly := "billing-v1.jar"
     )
 
-    val billing = Project("billing", file("billing"), settings = billingSettings) dependsOnAlt blueeyes(base)
+    val billing = Project("billing", file("billing"), settings = billingSettings) dependsOn(common) dependsOnAlt blueeyes(base)
 
 
     val jessupSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(

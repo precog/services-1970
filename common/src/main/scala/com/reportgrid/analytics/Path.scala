@@ -1,5 +1,10 @@
 package com.reportgrid.analytics
 
+import blueeyes.json._
+import blueeyes.json.JsonAST._
+import blueeyes.json.xschema._
+import blueeyes.json.xschema.DefaultSerialization._
+
 class Path private (private val _path : String) {
   val path = cleanPath(_path)
 
@@ -48,7 +53,17 @@ class Path private (private val _path : String) {
   private def cleanPath(string: String): String = ("/" + string + "/").replaceAll("/+", "/")
 }
 
-object Path {
+trait PathSerialization {
+    final implicit val PathDecomposer = new Decomposer[Path] {
+    def decompose(v: Path): JValue = JString(v.toString)
+  }
+
+  final implicit val PathExtractor = new Extractor[Path] {
+    def extract(v: JValue): Path = Path(v.deserialize[String])
+  }
+}
+
+object Path extends PathSerialization {
   val Root = Path("/")
 
   implicit def stringToPath(string: String): Path = apply(string)

@@ -15,3 +15,8 @@ nbproject
 tmp
 **/.ensime
 *sublime-project
+.project
+.settings
+.cache
+.target
+.classpath

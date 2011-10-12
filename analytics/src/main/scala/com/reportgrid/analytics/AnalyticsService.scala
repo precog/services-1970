@@ -469,9 +469,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }
 
                     val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
-                    val permissions = (content \ "permissions").deserialize(permissionsExtractor(parent.permissions))
+                    val permissions = (content \ "permissions").deserialize(Permissions.permissionsExtractor(parent.permissions))
                     val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
-                    val limits      = (content \ "limits").deserialize(limitsExtractor(parent.limits))
+                    val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
 
                     if (expires < state.clock.now()) {
                       throw new HttpException(BadRequest, "Your are attempting to create an expired token. Such a token will not be usable.")
