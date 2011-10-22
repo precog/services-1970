@@ -124,7 +124,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
   private val events_collection: MongoCollection = config.getString("events.collection", "events")
 
-  def store(token: Token, path: Path, eventName: String, eventBody: JObject, count: Int) = {
+  def store(token: Token, path: Path, eventName: String, eventBody: JObject, count: Int, reprocess: Boolean) = {
     if (token.limits.lossless) {
       val async = Future.async {
         val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {
@@ -139,7 +139,8 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
               JField("path",      path.serialize) ::
               JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
               JField("count",     count.serialize) ::
-              JField("timestamp", instant.serialize) :: Nil
+              JField("timestamp", instant.serialize) :: 
+              (if (reprocess) JField("reprocess", true.serialize) :: Nil else Nil)
             )
 
             database(MongoInsertQuery(events_collection, List(record))) 
@@ -581,22 +582,18 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   private def variableValueSeriesPatches(token: Token, path: Path, finiteReport: Report[HasValue], count: CountType): MongoPatches = {
-    val (finitePatches, refKeys) = finiteReport.storageKeysets.foldLeft((MongoPatches.empty, List.empty[MongoPrimitive])) {
-      case ((finitePatches, refKeys), (storageKeys, finiteObservation)) => 
+    val finitePatches = finiteReport.storageKeysets.foldLeft(MongoPatches.empty) {
+      case (finitePatches, (storageKeys, finiteObservation)) => 
 
         // When we query for associated infinite values, we will use the queriable expansion (heap shaped) 
         // of the specified time series so here we need to construct a value series key that records where 
         // the observation was made(as described by the data keys of the storage keys), not where it is 
         // being stored. We will then construct an identical key when we query, and the fact that we have 
         // built aggregated documents will mean that we query for the minimal set of infinite value documents.
-        val (dataKeySig, refSig) = dataKeySigs(storageKeys)
-        val referenceKey = valueSeriesKey(token, path, refSig, finiteObservation).rhs
+        val (dataKeySig, _) = dataKeySigs(storageKeys)
         val docKey = valueSeriesKey(token, path, docKeySig(storageKeys), finiteObservation)
 
-        Tuple2(
-          finitePatches + (docKey -> ((CountsPath \ dataKeySig.hashSignature) inc count)),
-          referenceKey :: refKeys
-        )
+        finitePatches + (docKey -> ((CountsPath \ dataKeySig.hashSignature) inc count))
     } 
 
     finitePatches

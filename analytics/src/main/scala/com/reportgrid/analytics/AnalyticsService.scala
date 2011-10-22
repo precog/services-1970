@@ -123,11 +123,13 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
               logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + request.content.map(o => compact(render(o))))
               request.content.foreach { 
                 case obj @ JObject(fields) => for (JField(eventName, event: JObject) <- fields) {
-                  aggregationEngine.store(token, path, eventName, event, count)
+                  aggregationEngine.store(token, path, eventName, event, count, token.tokenId == "87984064-827D-4C42-8BAF-42A748BA6DCA")
 
-                  val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
-                  for (tags <- getTags(tagResults)) {
-                    aggregationEngine.aggregate(token, path, eventName, tags, remainder, count)
+                  if (token.tokenId != "87984064-827D-4C42-8BAF-42A748BA6DCA") {
+                    val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
+                    for (tags <- getTags(tagResults)) {
+                      aggregationEngine.aggregate(token, path, eventName, tags, remainder, count)
+                    }
                   }
                 }
 

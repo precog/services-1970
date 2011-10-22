@@ -154,7 +154,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1)
-        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1)
+        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, false)
       }
     }
 
