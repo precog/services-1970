@@ -42,7 +42,6 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
 
   def auditClient(config: ConfigMap) = external.NoopTrackingClient
-  def yggdrasil(configMap: ConfigMap) = external.Yggdrasil.Noop[JValue]
   def jessup(configMap: ConfigMap) = external.Jessup.Noop
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
@@ -158,6 +157,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "group variable value series counts" in {
+      //skip("disabled")
       val granularity = Hour
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events)
@@ -183,6 +183,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
     "grouping in intersection queries" >> {
       "timezone shifting must not discard data" in {
+        //skip("disabled")
         //pendingUntilFixed {
           val granularity = Hour
           val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)

@@ -26,13 +26,6 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
 //    ReportGrid(auditToken, environment)
   }
 
-  def yggdrasil(configMap: ConfigMap): Yggdrasil[JValue] = {
-    new YggdrasilServiceProxy[JValue](
-      configMap.getString("host", "api.reportgrid.com"),
-      configMap.getInt("port"),
-      configMap.getString("path", "/services/yggdrasil/v0"))
-  }
-
   def jessup(configMap: ConfigMap): Jessup = {
     new JessupServiceProxy(
       configMap.getString("host", "api.reportgrid.com"),
@@ -48,7 +41,6 @@ object TestAnalyticsServer extends BlueEyesServer with AnalyticsService {
   }
 
   def auditClient(config: ConfigMap) = NoopTrackingClient
-  def yggdrasil(configMap: ConfigMap) = Yggdrasil.Noop[JValue]
   def jessup(configMap: ConfigMap) = Jessup.Noop
 }
 

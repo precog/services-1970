@@ -41,8 +41,11 @@ trait AnalyticsSerialization {
     def decompose(periodicity: Periodicity): JValue = periodicity.name
   }
 
-  final implicit val PeriodicityExtractor = new Extractor[Periodicity] {
-    def extract(value: JValue): Periodicity = Periodicity(value.deserialize[String])
+  final implicit val PeriodicityExtractor = new Extractor[Periodicity] with ValidatedExtraction[Periodicity] {
+    override def validated(value: JValue): Validation[Extractor.Error, Periodicity] = {
+      val strValue = value.deserialize[String]
+      Periodicity.byName(strValue).toSuccess(Extractor.Invalid(strValue + " is not a recognized periodicity."))
+    }
   }
 
   implicit val VariableDecomposer = new Decomposer[Variable] {

@@ -276,7 +276,5 @@ object Periodicity {
 
   def byName(name: String): Option[Periodicity] = All.find(_.name == name.toLowerCase)
 
-  def apply(name: String): Periodicity = byName(name).getOrElse(sys.error("Invalid periodicity name: " + name))
-
   def unapply(periodicity: Periodicity): Option[String] = Some(periodicity.name)
 }

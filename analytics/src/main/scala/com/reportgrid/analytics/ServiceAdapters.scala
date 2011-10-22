@@ -24,38 +24,6 @@ object NoopTrackingClient extends ReportGridTrackingClient[JValue](JsonBlueEyes)
   }
 }
 
-trait Yggdrasil[T] {
-  def apply(handler: HttpRequestHandler[T]): HttpRequestHandler[T]
-}
-
-object Yggdrasil {
-  def Noop[T] = new Yggdrasil[T] {
-    override def apply(handler: HttpRequestHandler[T]) = handler
-  }
-}
-
-class YggdrasilServiceProxy[T:({type B[X] = Bijection[X,ByteChunk]})#B](host: String, port: Option[Int], path: String)
-extends Yggdrasil[T] with ReportGridInstrumentation with HttpRequestHandlerCombinators {
-  val client: HttpClient[T] = new HttpClientXLightWeb().translate[T]
-
-  def yggdrasilRewrite(req: HttpRequest[T]): Option[HttpRequest[T]] = {
-    import HttpHeaders._
-    (!req.headers.header[`User-Agent`].exists(_.value == ReportGridUserAgent)).option {
-      val prefixPath = req.parameters.get('prefixPath).getOrElse("")
-      req.copy(
-        uri = req.uri.copy(
-          host = Some(host), 
-          port = port, 
-          path = Some(path + "/vfs/" + prefixPath)
-        ),
-        parameters = req.parameters - 'prefixPath
-      ) 
-    }
-  }
-
-  override def apply(handler: HttpRequestHandler[T]) = forwarding[T, T](yggdrasilRewrite, client)(handler)
-}
-
 trait Jessup {
   def apply(host: Option[InetAddress]): Future[Option[Hierarchy]]
 }

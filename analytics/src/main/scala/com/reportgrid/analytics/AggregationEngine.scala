@@ -81,10 +81,15 @@ import SignatureGen._
  */
 
 case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
-  def put(filter: MongoFilter, update: MongoUpdate): Unit = stage.put(filter & collection, update)
-  def put(t: (MongoFilter, MongoUpdate)): Unit = this.put(t._1, t._2)
-  def putAll(filters: Iterable[(MongoFilter, MongoUpdate)]): Unit = {
+  def put(t: (MongoFilter, MongoUpdate)): Int = this.put(t._1, t._2)
+  def put(filter: MongoFilter, update: MongoUpdate): Int = {
+    stage.put(filter & collection, update)
+    1
+  }
+
+  def putAll(filters: Iterable[(MongoFilter, MongoUpdate)]): Int = {
     stage.putAll(filters.map(((_: MongoFilter).&(collection)).first[MongoUpdate]))
+    filters.size
   }
 }
 
@@ -124,7 +129,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
   private val events_collection: MongoCollection = config.getString("events.collection", "events")
 
-  def store(token: Token, path: Path, eventName: String, eventBody: JObject, count: Int) = {
+  def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int) = {
     if (token.limits.lossless) {
       val async = Future.async {
         val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {
@@ -158,29 +163,25 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   /** 
    * Add the event data for the specified event to the database
    */
-  def aggregate(token: Token, path: Path, eventName: String, allTags: Seq[Tag], eventBody: JObject, count: Int) = Future.async {
+  def aggregate(token: Token, path: Path, eventName: String, allTags: Seq[Tag], eventBody: JObject, count: Int): Future[Long] = Future.async {
     import token.limits.{order, depth, limit}
 
     val tags = allTags.take(token.limits.tags)
     val event = JObject(JField(eventName, eventBody) :: Nil)
 
-    // Keep track of parent/child relationships:
-    path_children putAll addPathChildrenOfPath(token, path).patches
-    path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)
-
     val (finiteObs, infiniteObs) = JointObservations.ofValues(event, order, depth, limit)
     val finiteOrder1 = finiteObs.filter(_.order == 1)
-
-    variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches
-
     val vvSeriesPatches = variableValueSeriesPatches(token, path, Report(tags, finiteObs), count)
-    variable_value_series    putAll vvSeriesPatches.patches
-
     val childObservations = JointObservations.ofChildren(event, 1)
-    variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches
-
     val childSeriesReport = Report(tags, (JointObservations.ofInnerNodes(event, 1) ++ finiteOrder1 ++ infiniteObs.map(JointObservation(_))).map(_.of[Observation]))
-    variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches
+
+    // Keep track of parent/child relationships:
+    (path_children putAll addPathChildrenOfPath(token, path).patches) +
+    (path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)) + 
+    (variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches) + 
+    (variable_value_series putAll vvSeriesPatches.patches) + 
+    (variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches) + 
+    (variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches)
   }
 
   /** Retrieves children of the specified path &amp; variable.  */

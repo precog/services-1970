@@ -1,5 +1,6 @@
-package com.reportgrid
-package analytics
+package com.reportgrid.analytics
+
+import com.reportgrid.analytics.service._
 
 import blueeyes._
 import blueeyes.concurrent.Future
@@ -47,9 +48,10 @@ import com.reportgrid.ct.Mult.MDouble._
 import com.reportgrid.instrumentation.blueeyes.ReportGridInstrumentation
 import com.reportgrid.api.ReportGridTrackingClient
 
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], yggdrasil: Yggdrasil[JValue], jessup: Jessup)
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
 
-trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString with ReportGridInstrumentation {
+trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString 
+with AnalyticsServiceCombinators with ReportGridInstrumentation {
   import AggregationEngine._
   import AnalyticsService._
   import AnalyticsServiceSerialization._
@@ -58,11 +60,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
 
   def auditClient(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
 
-  def yggdrasil(configMap: ConfigMap): Yggdrasil[JValue]
-
   def jessup(configMap: ConfigMap): Jessup
 
-  val analyticsService = service("analytics", "1.0") {
+  val analyticsService = this.service("analytics", "1.0") {
     logging { logger =>
       healthMonitor { monitor => context =>
         startup {
@@ -83,293 +83,155 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
             AnalyticsState(
               aggregationEngine, tokenManager, ClockSystem.realtimeClock, 
               auditClient(config.configMap("audit")),
-              yggdrasil(config.configMap("yggdrasil")),
               jessup(config.configMap("jessup")))
           }
         } ->
         request { (state: AnalyticsState) =>
           import state.{aggregationEngine, tokenManager}
 
-          def tokenOf(request: HttpRequest[_]): Future[Token] = {
-            request.parameters.get('tokenId) match {
-              case None =>
-                throw HttpException(BadRequest, "A tokenId query parameter is required to access this URL")
-
-              case Some(tokenId) =>
-                tokenManager.lookup(tokenId).map { token =>
-                  token match {
-                    case None =>
-                      throw HttpException(BadRequest, "The specified token does not exist")
-
-                    case Some(token) =>
-                      if (token.expired) throw HttpException(Unauthorized, "The specified token has expired")
-
-                      token
-                  }
-                }
-            }
-          }
-
-          def withTokenAndPath[T](request: HttpRequest[_])(f: (Token, Path) => Future[T]): Future[T] = {
-            tokenOf(request) flatMap { token => f(token, fullPathOf(token, request)) }
-          }
-
-          val audit = auditor[JValue, JValue](state.auditClient, state.clock, tokenOf)
-
-          def aggregate(request: HttpRequest[JValue], tagExtractors: List[Tag.TagExtractor]) = {
-            val count: Int = request.parameters.get('count).map(_.toInt).getOrElse(1)
-
-            withTokenAndPath(request) { (token, path) => 
-              logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + request.content.map(o => compact(render(o))))
-              request.content.foreach { 
-                case obj @ JObject(fields) => for (JField(eventName, event: JObject) <- fields) {
-                  aggregationEngine.store(token, path, eventName, event, count)
-
-                  val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
-                  for (tags <- getTags(tagResults)) {
-                    aggregationEngine.aggregate(token, path, eventName, tags, remainder, count)
-                  }
-                }
-
-                case err => 
-                  throw new HttpException(BadRequest, "Expected a JSON object but got " + pretty(render(err)))
-              }
-
-              Future.sync(HttpResponse[JValue](content = None))
-            }
-          }
+          val audit = auditor(state.auditClient, state.clock, tokenManager)
+          import audit._
 
           jsonp {
-            /* The virtual file system, which is used for storing data,
-             * retrieving data, and querying for metadata.
-             */
-            path("""/store/vfs/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])+)/?)?)""") { 
-              $ {
-                audit("store") {
-                  state.yggdrasil {
-                    post { request: HttpRequest[JValue] =>
-                      val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, state.clock.instant(), false) ::
-                                          Tag.locationTagExtractor(state.jessup(request.remoteHost))      :: Nil
-
-                      aggregate(request, tagExtractors)
-                    }
-                  }
+            token(tokenManager) {
+              /* The virtual file system, which is used for storing data,
+               * retrieving data, and querying for metadata.
+               */
+              path("/store") {
+                vfsPath {
+                  post(new TrackingService(aggregationEngine, timeSeriesEncoding, state.clock, state.jessup, false)).audited("store")
                 }
-              }
-            } ~
-            path("""/vfs/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])+)/?)?)""") { 
-              $ {
-                /* Post data to the virtual file system.
-                 */
-                audit("track") {
-                  state.yggdrasil {
-                    post { request: HttpRequest[JValue] =>
-                      val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, state.clock.instant(), true) ::
-                                          Tag.locationTagExtractor(state.jessup(request.remoteHost))      :: Nil
-
-                      aggregate(request, tagExtractors)
-                    }
-                  }
-                } ~
-                audit("explore paths") {
-                  get { request: HttpRequest[JValue] =>
-                    withTokenAndPath(request) { (token, path) => 
-                      if (token.permissions.explore) {
-                        aggregationEngine.getPathChildren(token, path).map(_.serialize.ok)
-                      } else {
-                        throw new HttpException(Unauthorized, "The specified token does not permit exploration of the virtual filesystem.")
-                      }
-                    }
-                  }
-                }
-              } ~
-              path("""(?<variable>\.[^\n/]+)""") {
-                $ {
-                  //audit("explore variables") {
-                    get { request: HttpRequest[JValue] =>
-                      val variable = variableOf(request)
-
-                      withTokenAndPath(request) { (token, path) => 
-                        if (token.permissions.explore) {
-                          aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_.child).serialize.ok)
-                        } else {
-                          throw new HttpException(Unauthorized, "The specified token does not permit exploration of the virtual filesystem.")
-                        }
-                      }
-                    }
-                  //}
-                } ~
-                path("/") {
-                  path("count") {
-                    audit("variable occurrence count") { request: HttpRequest[JValue] =>
-                      //post { request: HttpRequest[JValue] =>
-                        val variable = variableOf(request)
-
-                        withTokenAndPath(request) { (token, path) => 
-                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
-                          aggregationEngine.getVariableCount(token, path, variable, terms).map(_.serialize.ok)
-                        }
-                      //}
-                    }
+              } ~ 
+              vfsPath {
+                post(new TrackingService(aggregationEngine, timeSeriesEncoding, state.clock, state.jessup, true)).audited("track") ~
+                get(new ExplorePathService[JValue](aggregationEngine)).audited("explore paths") ~
+                variable {
+                  get {
+                    new ExploreVariableService[JValue](aggregationEngine).audited("explore variable children") 
                   } ~
-                  path("statistics") {
-                    audit("variable statistics") {
-                      get { request: HttpRequest[JValue] =>
-                        val variable = variableOf(request)
-
-                        withTokenAndPath(request) { (token, path) => 
-                          aggregationEngine.getVariableStatistics(token, path, variable).map(_.serialize.ok)
-                        }
-                      }
-                    }
-                  } ~
-                  path("series/") {
-                    audit("variable occurrence series") {
-                      path('periodicity) {
-                        $ {
-                          queryVariableSeries(tokenOf, _.count, aggregationEngine)
-                        } ~ 
-                        path("/") {
-                          path("means") {
-                            queryVariableSeries(tokenOf, _.mean, aggregationEngine)
-                          } ~ 
-                          path("standardDeviations") {
-                            queryVariableSeries(tokenOf, _.standardDeviation, aggregationEngine) 
-                          } 
-                        }
-                      }
-                    }
-                  } ~
-                  path("histogram") {
-                    $ {
-                      audit("variable histogram") {
-                        get { request: HttpRequest[JValue] =>
-                          val variable = variableOf(request)
-
-                          withTokenAndPath(request) { (token, path) => 
-                            aggregationEngine.getHistogram(token, path, variable).map(_.serialize.ok)
+                  path("/") { 
+                    commit {
+                      path("count") {
+                        audited("count occurrences of a variable") {
+                          (request: HttpRequest[JValue]) => {
+                            val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
+                            aggregationEngine.getVariableCount(_: Token, _: Path, _: Variable, terms).map(_.serialize.ok)
                           }
                         }
-                      }
-                    } ~
-                    path("/") {
-                      path("top/'limit") {
-                        audit("variable histogram top") {
-                          get { request: HttpRequest[JValue] =>
-                            val variable = variableOf(request)
-                            val limit    = request.parameters('limit).toInt
-
-                            withTokenAndPath(request) { (token, path) => 
-                              aggregationEngine.getHistogramTop(token, path, variable, limit).map(_.serialize.ok)
-                            }
+                      } ~ 
+                      path("statistics") {
+                        get { 
+                          audited("variable statistics") {
+                            (_: HttpRequest[JValue]) => 
+                              aggregationEngine.getVariableStatistics(_: Token, _: Path, _: Variable).map(_.serialize.ok)
                           }
                         }
                       } ~
-                      path("bottom/'limit") {
-                        audit("variable histogram bottom") {
-                          get { request: HttpRequest[JValue] =>
-                            val variable = variableOf(request)
-                            val limit    = request.parameters('limit).toInt
-                            
-                            withTokenAndPath(request) { (token, path) => 
-                              aggregationEngine.getHistogramBottom(token, path, variable, limit).map(_.serialize.ok)
+                      path("series") {
+                        commit {
+                          get { 
+                            // simply return the names of valid periodicities that can be used for series queries
+                            (_: HttpRequest[JValue]) => (_: Token, _: Path, _: Variable) => 
+                              Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
+                          } ~
+                          path("/'periodicity") {
+                            get {
+                              new VariableSeriesService(aggregationEngine, _.count).audited("variable count series")
+                            } ~ 
+                            path("/") {
+                              path("means") {
+                                new VariableSeriesService(aggregationEngine, _.mean).audited("variable mean series")
+                              } ~ 
+                              path("standardDeviations") {
+                                new VariableSeriesService(aggregationEngine, _.standardDeviation).audited("variable mean series")
+                              } 
                             }
                           }
                         }
-                      }
-                    }
-                  } ~
-                  path("length") {
-                    audit("count of variable values") {
-                      get { request: HttpRequest[JValue] =>
-                        val variable = variableOf(request)
-
-                        withTokenAndPath(request) { (token, path) => 
-                          aggregationEngine.getVariableLength(token, path, variable).map(_.serialize.ok)
-                        }
-                      }
-                    }
-                  } ~
-                  path("values") {
-                    $ {
-                      audit("list of variable values") {
-                        get { request: HttpRequest[JValue] =>
-                          val variable = variableOf(request)
-
-                          withTokenAndPath(request) { (token, path) => 
-                            if (token.permissions.explore) {
-                              aggregationEngine.getValues(token, path, variable).map(_.toList.serialize.ok)
-                            } else {
-                              throw new HttpException(Unauthorized, "The specified token does not permit exploration of the virtual filesystem.")
-                            }
-                          }
-                        }
-                      }
-                    } ~
-                    path("/") {
-                      path("top/'limit") {
-                        audit("list of top variable values") {
-                          get { request: HttpRequest[JValue] =>
-                            val variable = variableOf(request)
-                            val limit    = request.parameters('limit).toInt
-
-                            withTokenAndPath(request) { (token, path) => 
-                              aggregationEngine.getValuesTop(token, path, variable, limit).map(_.serialize.ok)
-                            }
-                          }
-                        }
-                      } ~
-                      path("bottom/'limit") {
-                        audit("list of bottom variable values") {
-                          get { request: HttpRequest[JValue] =>
-                            val variable = variableOf(request)
-                            val limit    = request.parameters('limit).toInt
-
-                            withTokenAndPath(request) { (token, path) => 
-                              aggregationEngine.getValuesBottom(token, path, variable, limit).map(_.serialize.ok)
-                            }
-                          }
-                        }
-                      } ~
-                      path('value) {
-                        $ {
-                          audit("explore a variable value") {
-                            get { request: HttpRequest[JValue] =>
-                              // return a list of valid subpaths
-                              Future.sync(JArray(JString("count") :: JString("series/") :: Nil).ok[JValue])
-                            }
+                      } ~ 
+                      path("histogram") {
+                        get { 
+                          audited("Return a histogram of values of a variable.") { 
+                            (_: HttpRequest[JValue]) => aggregationEngine.getHistogram(_: Token, _: Path, _: Variable).map(_.serialize.ok)
                           }
                         } ~
-                        path("/") {
-                          path("count") {
-                            audit("count occurrences of a variable value") { request: HttpRequest[JValue] =>
-                              //post { request: HttpRequest[JValue] =>
-                                val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
-
-                                withTokenAndPath(request) { (token, path) => 
-                                  val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
-                                  aggregationEngine.getObservationCount(token, path, observation, terms) map (_.serialize.ok)
-                                }
-                              //}
+                        commit {
+                          pathData("/top/'limit", 'limit, parsePathInt("limit")) {
+                            get { 
+                              audited("Return a histogram of the top 'limit values of a variable, by count.") { 
+                                (_: HttpRequest[JValue]) => 
+                                  (limit: Int) => aggregationEngine.getHistogramTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok) 
+                              }
                             }
                           } ~
-                          path("series/") {
-                            get { request: HttpRequest[JValue] =>
-                              // simply return the names of valid periodicities that can be used for series queries
-                              Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
+                          pathData("/bottom/'limit", 'limit, parsePathInt("limit")) {
+                            get { 
+                              audited("Return a histogram of the bottom 'limit values of a variable, by count.") { 
+                                (_: HttpRequest[JValue]) => 
+                                  (limit: Int) => aggregationEngine.getHistogramBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                              }
+                            }
+                          }
+                        }
+                      } ~
+                      path("length") {
+                        get { 
+                          audited("Count the number of values for a variable.") {
+                            (_: HttpRequest[JValue]) => 
+                              aggregationEngine.getVariableLength(_: Token, _: Path, _: Variable).map(_.serialize.ok)
+                          }
+                        }
+                      } ~
+                      path("values") {
+                        get { 
+                          new ExploreValuesService[JValue](aggregationEngine).audited("list of variable values") 
+                        } ~
+                        path("/") {
+                          pathData("top/'limit", 'limit, parsePathInt("limit")) {
+                            get { 
+                              audited("List the top n variable values") {
+                                (_: HttpRequest[JValue]) => 
+                                  (limit: Int) => aggregationEngine.getValuesTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                              }
+                            }
+                          } ~
+                          pathData("bottom/'limit", 'limit, parsePathInt("limit")) {
+                            get { 
+                              audited("list of bottom variable values") {
+                                (_: HttpRequest[JValue]) => 
+                                  (limit: Int) => aggregationEngine.getValuesBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                              }
+                            }
+                          } ~
+                          pathData('value, 'value, ((e: Exception) => DispatchError(HttpException(BadRequest, e))) <-: JsonParser.parseValidated(_)) {
+                            get { 
+                              // return a list of valid subpaths
+                              (_: HttpRequest[JValue]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
+                                Future.sync(JArray(JString("count") :: JString("series/") :: Nil).ok[JValue])
                             } ~
-                            path('periodicity) { 
-                              audit("variable value series") { request: HttpRequest[JValue] =>
-                                //post { request: HttpRequest[JValue] =>
-                                  val periodicity = periodicityOf(request)
-                                  val observation = JointObservation(HasValue(variableOf(request), valueOf(request)))
-                                  val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
-                                  withTokenAndPath(request) { (token, path) => 
-                                    aggregationEngine.getObservationSeries(token, path, observation, terms)
-                                    .map(transformTimeSeries(request, periodicity))
-                                    .map(_.serialize.ok)
+                            path("/") {
+                              commit {
+                                path("count") {
+                                  get {
+                                    audited("count occurrences of a variable value") { 
+                                      (request: HttpRequest[JValue]) => (value: JValue) => (token: Token, path: Path, variable: Variable) => {
+                                        val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
+                                        aggregationEngine.getObservationCount(token, path, JointObservation(HasValue(variable, value)), terms)
+                                        .map(_.serialize.ok)
+                                      }
+                                    }
                                   }
-                                //} 
+                                } ~
+                                path("series") {
+                                  get { 
+                                    // simply return the names of valid periodicities that can be used for series queries
+                                    (_: HttpRequest[JValue]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
+                                      Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
+                                  } ~
+                                  path("/'periodicity") { 
+                                    new ValueSeriesService(aggregationEngine).audited("Returns a time series of variable values.")
+                                  }
+                                }
                               }
                             }
                           }
@@ -378,143 +240,78 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
                     }
                   }
                 }
-              }
-            } ~
-            path("/search") {
-              audit("count or series query") {
-                post { request: HttpRequest[JValue] =>
-                  tokenOf(request).flatMap { token =>
-                    val content = request.content.getOrElse {
-                      throw new HttpException(BadRequest, """request body was empty. "select", "from", and "where" fields must be specified.""")
-                    }
-                      
-                    val queryComponents = (content \ "select").validated[String].map(Selection(_)).liftFailNel |@| 
-                                          (content \ "from").validated[String].map(token.path / _).liftFailNel |@|
-                                          (content \ "where").validated[Set[HasValue]].map(JointObservation(_)).liftFailNel
-
-                    val result = queryComponents.apply {
-                      (select, from, observation) => select match {
-                        case Count => 
-                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
-                          aggregationEngine.getObservationCount(token, from, observation, terms).map(_.serialize.ok)
-
-                        case Series(periodicity) => 
-                          val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
-                          aggregationEngine.getObservationSeries(token, from, observation, terms)
-                          .map(transformTimeSeries(request, periodicity))
-                          .map(_.serialize.ok)
-
-                        case Related => 
-                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
-                          aggregationEngine.findRelatedInfiniteValues(token, from, observation, terms) map (_.toList.serialize.ok)
-                      }
-                    }
-
-                    result.fold(errors => throw new HttpException(BadRequest, errors.list.mkString("; ")), success => success)
-                  }
+              } ~
+              path("/search") {
+                post { 
+                  new SearchService(aggregationEngine).audited("Adavanced count and series queries.") 
                 }
-              }
-            } ~
-            path("/intersect") {
-              audit("intersection query") {
-                post { request: HttpRequest[JValue] => 
-                  tokenOf(request).flatMap { token => 
-                    import VariableDescriptor._
-                    val content = request.content.getOrElse {
-                      throw new HttpException(BadRequest, """request body was empty. "select", "from", and "properties" fields must be specified.""")
-                    }
-                      
-                    val queryComponents = (content \ "select").validated[String].map(Selection(_)).liftFailNel |@| 
-                                          (content \ "from").validated[String].map(token.path / _).liftFailNel |@|
-                                          (content \ "properties").validated[List[VariableDescriptor]].liftFailNel
-
-
-                    val result = queryComponents.apply {
-                      case (select, from, where) => select match {
-                        case Count => 
-                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
-                          aggregationEngine.getIntersectionCount(token, from, where, terms)
-                          .map(serializeIntersectionResult[CountType]).map(_.ok)
-
-                        case Series(periodicity) =>
-                          val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
-                          aggregationEngine.getIntersectionSeries(token, from, where, terms)
-                          .map(_.map(transformTimeSeries[CountType](request, periodicity).second))
-                          .map(serializeIntersectionResult[ResultSet[JObject, CountType]]).map(_.ok)
-                      }
-                    }
-
-                    result.fold(errors => throw new HttpException(BadRequest, errors.list.mkString("; ")), success => success)
-                  }
+              } ~
+              path("/intersect") {
+                post { 
+                  new IntersectionService(aggregationEngine).audited("intersection query")
                 } 
-              }
-            } ~ 
-            path("/tokens/") {
-              audit("token") {
-                get { request: HttpRequest[JValue] =>
-                  tokenOf(request) flatMap { token =>
-                    tokenManager.listDescendants(token) map { descendants =>
-                      descendants.map { descendantToken =>
-                        descendantToken.tokenId.serialize
-                      }
-                    } map { 
-                      JArray(_).ok[JValue]
+              } ~ 
+              path("/tokens") {
+                get { 
+                  (request: HttpRequest[JValue]) => (token: Token) => {
+                    tokenManager.listDescendants(token) map { 
+                      _.map(_.tokenId).serialize.ok
                     }
                   }
                 } ~
-                post { request: HttpRequest[JValue] =>
-                  tokenOf(request).flatMap { parent =>
-                    val content: JValue = request.content.getOrElse {
-                      throw new HttpException(BadRequest, "New token must be contained in POST content")
-                    }
+                post { 
+                  (request: HttpRequest[JValue]) => (parent: Token) => {
+                    request.content map { content => 
+                      val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
+                      val permissions = (content \ "permissions").deserialize(Permissions.permissionsExtractor(parent.permissions))
+                      val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
+                      val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
 
-                    val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
-                    val permissions = (content \ "permissions").deserialize(Permissions.permissionsExtractor(parent.permissions))
-                    val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
-                    val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
-
-                    if (expires < state.clock.now()) {
-                      throw new HttpException(BadRequest, "Your are attempting to create an expired token. Such a token will not be usable.")
-                    } else {
-                      tokenManager.issueNew(parent, path, permissions, expires, limits) map {
+                      if (expires < state.clock.now()) {
+                        Future.sync(HttpResponse[JValue](BadRequest, content = Some("Your are attempting to create an expired token. Such a token will not be usable.")))
+                      } else tokenManager.issueNew(parent, path, permissions, expires, limits) map {
                         case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
                         case Failure(message) => throw new HttpException(BadRequest, message)
                       }
+                    } getOrElse {
+                      Future.sync(HttpResponse[JValue](BadRequest, content = Some("New token must be contained in POST content")))
                     }
                   }
                 } ~
-                path('descendantTokenId) {
-                  get { request: HttpRequest[JValue] =>
-                    tokenOf(request).flatMap { token =>
-                      if (token.tokenId == request.parameters('descendantTokenId)) {
-                        token.parentTokenId.map { parTokenId =>
-                          tokenManager.lookup(parTokenId).map { parent => 
-                            val sanitized = parent.map(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
-                            HttpResponse[JValue](content = sanitized.map(_.serialize))
+                path("/") {
+                  path('descendantTokenId) {
+                    get { 
+                      (request: HttpRequest[JValue]) => (token: Token) => {
+                        if (token.tokenId == request.parameters('descendantTokenId)) {
+                          token.parentTokenId.map { parTokenId =>
+                            tokenManager.lookup(parTokenId).map { parent => 
+                              val sanitized = parent.map(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
+                              HttpResponse[JValue](content = sanitized.map(_.serialize))
+                            }
+                          } getOrElse {
+                            Future.sync(HttpResponse[JValue](Forbidden))
                           }
-                        } getOrElse {
-                          Future.sync(HttpResponse[JValue](status = Forbidden))
-                        }
-                      } else {
-                        tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
-                          _.map { _.relativeTo(token).copy(accountTokenId = "").serialize }
-                        } map { descendantToken =>
-                          HttpResponse[JValue](content = descendantToken)
+                        } else {
+                          tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
+                            _.map { _.relativeTo(token).copy(accountTokenId = "").serialize }
+                          } map { descendantToken =>
+                            HttpResponse[JValue](content = descendantToken)
+                          }
                         }
                       }
-                    }
-                  } ~
-                  delete { (request: HttpRequest[JValue]) =>
-                    tokenOf(request).flatMap { token =>
-                      tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
-                        HttpResponse[JValue](content = None)
+                    } ~
+                    delete { 
+                      (request: HttpRequest[JValue]) => (token: Token) => {
+                        tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
+                          HttpResponse[JValue](content = None)
+                        }
                       }
                     }
                   }
                 }
               }
             }
-          } 
+          }
         } ->
         shutdown { state =>
           state.aggregationEngine.stop
@@ -529,6 +326,9 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   import AggregationEngine._
 
   type Endo[A] = A => A
+
+  def parsePathInt(name: String) = 
+    ((err: NumberFormatException) => DispatchError(BadRequest, "Illegal value for path parameter " + name + ": " + err.getMessage)) <-: (_: String).parseInt
 
   def validated[A](v: Option[ValidationNEL[String, A]]): Option[A] = v map {
     case Success(a) => a
@@ -630,35 +430,6 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     }
   }
 
-  def fullPathOf(token: Token, request: HttpRequest[_]): Path = {
-    val prefixPath = request.parameters.get('prefixPath) match {
-      case None | Some(null) => ""
-      case Some(s) => s
-    }
-
-    token.path + "/" + prefixPath
-  }
-
-  def variableOf(request: HttpRequest[_]): Variable = Variable(JPath(request.parameters.get('variable).getOrElse("")))
-
-  def valueOf(request: HttpRequest[_]): JValue = {
-    import java.net.URLDecoder
-
-    val value = request.parameters('value) // URLDecoder.decode(request.parameters('value), "UTF-8")
-
-    try JsonParser.parse(value)
-    catch {
-      case _ => JString(value)
-    }
-  }
-
-  def periodicityOf(request: HttpRequest[_]): Periodicity = {
-    try Periodicity(request.parameters('periodicity))
-    catch {
-      case _ => throw HttpException(BadRequest, "Unknown or unspecified periodicity")
-    }
-  }
-
   def seriesGrouping(request: HttpRequest[_]): Option[(Periodicity, Set[Int])] = {
     request.parameters.get('groupBy).flatMap(Periodicity.byName).map { grouping =>
       (grouping, request.parameters.get('groups).toSet.flatMap((_:String).split(",").map(_.toInt)))
@@ -740,22 +511,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     } map (HierarchyLocationTerm("location", _))
   }
 
-  def queryVariableSeries[T: Decomposer : AbelianGroup](tokenOf: HttpRequest[_] => Future[Token], f: ValueStats => T, aggregationEngine: AggregationEngine) = {
-    //post { request: HttpRequest[JValue] =>
-      (request: HttpRequest[JValue]) => tokenOf(request).flatMap { token =>
-        val path        = fullPathOf(token, request)
-        val variable    = variableOf(request)
-        val periodicity = periodicityOf(request)
-        val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
-
-        aggregationEngine.getVariableSeries(token, path, variable, terms) 
-        .map(transformTimeSeries[ValueStats](request, periodicity))
-        .map(_.map(f.second).serialize.ok)
-      }
-    //} 
-  }
-
-  def getTags(result: Tag.ExtractionResult) = result match {
+  def getTags(result: Tag.ExtractionResult): Future[Seq[Tag]] = result match {
     case Tag.Tags(tags) => tags
     case Tag.Skipped => Future.sync(Nil)
     case Tag.Errors(errors) =>
