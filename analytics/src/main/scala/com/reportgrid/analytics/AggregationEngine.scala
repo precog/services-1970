@@ -1,5 +1,7 @@
 package com.reportgrid.analytics
 
+import external.Jessup
+
 import blueeyes._
 import blueeyes.concurrent._
 import blueeyes.persistence.mongo._
@@ -153,6 +155,36 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       async.flatten
     } else {
       Future.sync(())
+    }
+  }
+
+  def aggregateFromStorage(tokenManager: TokenStorage, obj: JObject) = {
+    tokenManager.lookup(obj \ "token") foreach { 
+      _.map { token => 
+        val path = (obj \ "path").deserialize[Path]
+        val count = (obj \ "count").deserialize[Int]
+        val timestamp = (obj \ "timestamp").deserialize[Instant]
+        val eventName = (obj \ "event" \ "name").deserialize[String]
+        val eventBody = (obj \ "event" \ "data")
+
+        val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, timestamp, false) ::
+                            Tag.locationTagExtractor(Future.sync(None))      :: Nil
+
+        val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
+
+        def getTags(result: Tag.ExtractionResult) = result match {
+          case Tag.Tags(tags) => tags
+          case Tag.Skipped => Future.sync(Nil)
+          case Tag.Errors(errors) => 
+            Future.sync(Nil)
+        }
+        
+        getTags(tagResults) flatMap { tags => 
+          aggregate(token, path, eventName, tags, remainder, count).map(_.success[Seq[Tag.ExtractionError]])
+        }
+      } getOrElse {
+        Future.sync(Seq.empty[Tag.ExtractionError].fail)
+      }
     }
   }
 

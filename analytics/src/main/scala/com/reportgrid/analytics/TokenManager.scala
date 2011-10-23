@@ -42,8 +42,12 @@ object TokenManager {
   }
 }
 
+trait TokenStorage {
+  def lookup(tokenId: String): Future[Option[Token]]
+}
 
-class TokenManager private (database: Database, tokensCollection: MongoCollection) {
+
+class TokenManager private (database: Database, tokensCollection: MongoCollection) extends TokenStorage {
   //TODO: Add expiry settings.
   val tokenCache = Cache.concurrent[String, Token](CacheSettings(ExpirationPolicy(None, None, MILLISECONDS)))
   tokenCache.put(Token.Root.tokenId, Token.Root)

@@ -16,7 +16,8 @@ import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
-import blueeyes.util.{Clock, ClockSystem, PartialFunctionCombinators}
+import blueeyes.util.{Clock, ClockSystem, PartialFunctionCombinators, InstantOrdering}
+import scala.math.Ordered._
 import HttpStatusCodes.{BadRequest, Unauthorized, Forbidden}
 
 import net.lag.configgy.{Configgy, ConfigMap}
@@ -123,14 +124,17 @@ trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson w
               logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + request.content.map(o => compact(render(o))))
               request.content.foreach { 
                 case obj @ JObject(fields) => for (JField(eventName, event: JObject) <- fields) {
-                  aggregationEngine.store(token, path, eventName, event, count, token.tokenId == "87984064-827D-4C42-8BAF-42A748BA6DCA")
+                    val offset = state.clock.now().minusDays(1).toInstant
+                    val archival = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
 
-                  if (token.tokenId != "87984064-827D-4C42-8BAF-42A748BA6DCA") {
-                    val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
-                    for (tags <- getTags(tagResults)) {
-                      aggregationEngine.aggregate(token, path, eventName, tags, remainder, count)
+                    aggregationEngine.store(token, path, eventName, event, count, archival)
+
+                    if (!archival) {
+                      val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
+                      for (tags <- getTags(tagResults)) {
+                          aggregationEngine.aggregate(token, path, eventName, tags, remainder, count)
+                      }
                     }
-                  }
                 }
 
                 case err => 
@@ -756,6 +760,8 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
       }
     //} 
   }
+
+  def tagTime(tags: Seq[Tag]): Option[Instant] = tags collect { case Tag(_, TimeReference(_, time)) => time } headOption
 
   def getTags(result: Tag.ExtractionResult) = result match {
     case Tag.Tags(tags) => tags

@@ -128,7 +128,30 @@ object FutureUtils {
   }
 }
 
-class AggregationEngineSpec extends Specification with ArbitraryEvent with FutureMatchers with LocalMongo with PendingUntilFixed {
+trait AggregationEngineTests extends Specification with FutureMatchers with ArbitraryEvent {
+  def countStoredEvents(sampleEvents: List[Event], engine: AggregationEngine) = {
+    //skip("disabled")
+    def countEvents(eventName: String) = sampleEvents.count {
+      case Event(`eventName`, _, tags) => true
+      case _ => false
+    }
+
+    val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
+
+    val queryTerms = List[TagTerm](
+      HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+    )
+
+    eventCounts.foreach {
+      case (eventName, count) =>
+        engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName), queryTerms) must whenDelivered {
+          beEqualTo(count)
+        }
+    }
+  }
+}
+
+class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with PendingUntilFixed {
   import AggregationEngine._
   import FutureUtils._
 
@@ -170,24 +193,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
  
     "count events" in {
-      //skip("disabled")
-      def countEvents(eventName: String) = sampleEvents.count {
-        case Event(`eventName`, _, tags) => true
-        case _ => false
-      }
-
-      val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
-
-      val queryTerms = List[TagTerm](
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
-      )
-
-      eventCounts.foreach {
-        case (eventName, count) =>
-          engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName), queryTerms) must whenDelivered {
-            beEqualTo(count)
-          }
-      }
+      countStoredEvents(sampleEvents, engine)
     }
  
     "retrieve values" in {
@@ -563,5 +569,47 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     //  }
     //}
   }
+
 }
 
+/*
+
+class ReaggregationSpec extends AggregationEngineTests with LocalMongo {
+  import AggregationEngine._
+  import FutureUtils._
+
+  val config = (new Config()) ->- (_.load(mongoConfigFileData))
+
+  val mongo = new RealMongo(config.configMap("mongo")) 
+
+  val database = mongo.database(dbName)
+
+  val engine = get(AggregationEngine(config, Logger.get, database))
+
+  override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
+
+  object TestTokenStorage extends TokenStorage {
+    def lookup(tokenId: String) = Future.sync(Some(Token.Benchmark))
+  }
+
+  "Re-storing aggregated events" should {
+    shareVariables()
+    
+    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+      _.foreach { event => 
+        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, true)
+      }
+    }
+
+    "retrieve and re-aggregate data" in {
+      database(selectAll.from(MongoCollectionReference("events")).where("reprocess" === true)) foreach {
+        _ foreach {
+          engine.aggregateFromStorage(TestTokenStorage, _)
+        }
+      }
+
+      countStoredEvents(sampleEvents, engine)
+    }
+  }
+}
+*/
