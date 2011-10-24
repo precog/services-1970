@@ -88,7 +88,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
   }
 }
 
-class AggregationEngine private (config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database, clock: Clock)(implicit hashFunction: HashFunction = Sha1HashFunction) {
+class AggregationEngine private (config: ConfigMap, logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
 
   private def AggregationStage(prefix: String): AggregationStage = {
@@ -122,7 +122,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, eventsdb: Da
   private val variable_children         = AggregationStage("variable_children")
   private val path_children             = AggregationStage("path_children")
 
-  private val events_collection: MongoCollection = config.getString("events.collection", "events")
+  val events_collection: MongoCollection = config.getString("events.collection", "events")
 
   def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int, reprocess: Boolean) = {
     if (token.limits.lossless) {
@@ -157,7 +157,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, eventsdb: Da
   }
 
   def aggregateFromStorage(tokenManager: TokenStorage, obj: JObject) = {
-    tokenManager.lookup(obj \ "token") foreach { 
+    tokenManager.lookup(obj \ "token") flatMap { 
       _.map { token => 
         val path = (obj \ "path").deserialize[Path]
         val count = (obj \ "count").deserialize[Int]
@@ -181,7 +181,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, eventsdb: Da
           aggregate(token, path, eventName, tags, remainder, count).map(_.success[Seq[Tag.ExtractionError]])
         }
       } getOrElse {
-        Future.sync(Seq.empty[Tag.ExtractionError].fail)
+        Future.sync(Seq.empty[Tag.ExtractionError].fail[Long])
       }
     }
   }

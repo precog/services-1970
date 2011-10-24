@@ -41,8 +41,7 @@ object ServicesBuild extends Build {
         "org.scala-tools.testing" %% "specs"              % "1.6.9"  % "test",
         "org.scala-tools.testing" %% "scalacheck"         % "1.9"    % "test"
       ),
-      mainClass := Some("com.reportgrid.analytics.AnalyticsServer"),
-      jarName in assembly := "analytics-v1.jar"//, test in assembly := {}
+      mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
     )
 
     val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))
@@ -58,8 +57,7 @@ object ServicesBuild extends Build {
         "org.scala-tools.testing" %% "specs"              % "1.6.9"     % "test",
         "org.scala-tools.testing" %% "scalacheck"         % "1.9"       % "test"
       ),
-      mainClass := Some("com.reportgrid.billing.BillingServer"),
-      jarName in assembly := "billing-v1.jar"
+      mainClass := Some("com.reportgrid.billing.BillingServer")
     )
 
     val billing = Project("billing", file("billing"), settings = billingSettings) dependsOn(common) dependsOnAlt blueeyes(base)

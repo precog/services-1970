@@ -107,29 +107,6 @@ trait LocalMongo {
   """.format(eventsName, indexName)
 }
 
-object Console {
-  import FutureUtils._
-  def apply(file: java.io.File): Console = {
-    apply((new Config()) ->- (_.loadFile(file.getPath)))
-  }
-
-  def apply(config: ConfigMap): Console = {
-    val eventsdbConfig = config.configMap("services.analytics.v1.eventsdb")
-    val eventsMongo = new RealMongo(eventsdbConfig)
-    val eventsdb = eventsMongo.database(eventsdbConfig("database"))
-
-    val indexdbConfig = config.configMap("services.analytics.v1.indexdb")
-    val indexMongo = new RealMongo(indexdbConfig)
-    val indexdb = indexMongo.database(indexdbConfig("database"))
-    Console(
-      AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb),
-      get(TokenManager(indexdb, "tokens"))
-    )
-  }
-}
-
-case class Console(engine: AggregationEngine, tokenManager: TokenManager)
-
 object FutureUtils {
   def get[A](f: Future[A]): A = {
     val latch = new java.util.concurrent.CountDownLatch(1)
