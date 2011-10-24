@@ -42,6 +42,8 @@ trait ArbitraryEvent extends ArbitraryTime {
     lazy val messageData = JObject(data.fields ::: tagFields)
 
     lazy val message = JObject(JField(eventName, messageData) :: Nil)
+
+    def timestamp: Option[Instant] = tags collect { case Tag(name, TimeReference(_, time)) => time } headOption
   }
 
   val locations = List(
@@ -177,4 +179,6 @@ trait ArbitraryEvent extends ArbitraryTime {
   }
 }
 
-object ArbitraryEvent extends ArbitraryEvent
+object ArbitraryEvent extends ArbitraryEvent {
+  val genTimeClock = Clock.System
+}

@@ -1,5 +1,6 @@
 package com.reportgrid.analytics
 
+import blueeyes.util.Clock
 import org.joda.time.Instant
 import org.specs.{Specification, ScalaCheck}
 import org.specs.specification.PendingUntilFixed
@@ -10,9 +11,9 @@ import Periodicity._
 import Arbitrary._
 
 trait ArbitraryTime {
-  val Now = new Instant()
+  val genTimeClock: Clock
 
-  val genTime = for (i <- choose(0, 1000 * 60 * 60 * 24)) yield Now.plus(i)
+  val genTime = for (i <- choose(0, 1000 * 60 * 60 * 48)) yield genTimeClock.now().plus(i).toInstant
   implicit val arbTime = Arbitrary(genTime)
 
   def genPeriodicity(pers: Periodicity*) = oneOf[Periodicity](pers)

@@ -17,7 +17,8 @@ import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
-import blueeyes.util.{Clock, ClockSystem, PartialFunctionCombinators}
+import blueeyes.util.{Clock, ClockSystem, PartialFunctionCombinators, InstantOrdering}
+import scala.math.Ordered._
 import HttpStatusCodes.{BadRequest, Unauthorized, Forbidden}
 
 import net.lag.configgy.{Configgy, ConfigMap}
@@ -48,7 +49,7 @@ import com.reportgrid.ct.Mult.MDouble._
 import com.reportgrid.instrumentation.blueeyes.ReportGridInstrumentation
 import com.reportgrid.api.ReportGridTrackingClient
 
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, clock: Clock, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString 
 with AnalyticsServiceCombinators with ReportGridInstrumentation {
@@ -62,26 +63,30 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
 
   def jessup(configMap: ConfigMap): Jessup
 
+  val clock: Clock
+
   val analyticsService = this.service("analytics", "1.0") {
     logging { logger =>
       healthMonitor { monitor => context =>
         startup {
           import context._
 
-          val mongoConfig = config.configMap("mongo")
+          val eventsdbConfig = config.configMap("eventsdb")
+          val eventsMongo = mongoFactory(eventsdbConfig)
+          val eventsdb = eventsMongo.database(eventsdbConfig.getString("database", "events-v" + serviceVersion))
 
-          val mongo = mongoFactory(mongoConfig)
+          val indexdbConfig = config.configMap("indexdb")
+          val indexMongo = mongoFactory(indexdbConfig)
+          val indexdb  = indexMongo.database(indexdbConfig.getString("database", "analytics-v" + serviceVersion))
 
-          val database = mongo.database(mongoConfig.getString("database", "analytics-v" + serviceVersion))
-
-          val tokensCollection = mongoConfig.getString("tokensCollection", "tokens")
+          val tokensCollection = config.getString("tokens.collection", "tokens")
 
           for {
-            tokenManager      <- TokenManager(database, tokensCollection)
-            aggregationEngine <- AggregationEngine(config, logger, database)
+            tokenManager      <- TokenManager(indexdb, tokensCollection)
+            aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb)
           } yield {
             AnalyticsState(
-              aggregationEngine, tokenManager, ClockSystem.realtimeClock, 
+              aggregationEngine, tokenManager, 
               auditClient(config.configMap("audit")),
               jessup(config.configMap("jessup")))
           }
@@ -89,7 +94,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
         request { (state: AnalyticsState) =>
           import state.{aggregationEngine, tokenManager}
 
-          val audit = auditor(state.auditClient, state.clock, tokenManager)
+          val audit = auditor(state.auditClient, clock, tokenManager)
           import audit._
 
           jsonp {
@@ -99,11 +104,11 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                */
               path("/store") {
                 vfsPath {
-                  post(new TrackingService(aggregationEngine, timeSeriesEncoding, state.clock, state.jessup, false)).audited("store")
+                  post(new TrackingService(aggregationEngine, timeSeriesEncoding, clock, state.jessup, false)).audited("store")
                 }
               } ~ 
               vfsPath {
-                post(new TrackingService(aggregationEngine, timeSeriesEncoding, state.clock, state.jessup, true)).audited("track") ~
+                post(new TrackingService(aggregationEngine, timeSeriesEncoding, clock, state.jessup, true)).audited("track") ~
                 get(new ExplorePathService[JValue](aggregationEngine)).audited("explore paths") ~
                 variable {
                   get {
@@ -267,7 +272,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                       val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
                       val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
 
-                      if (expires < state.clock.now()) {
+                      if (expires < clock.now()) {
                         Future.sync(HttpResponse[JValue](BadRequest, content = Some("Your are attempting to create an expired token. Such a token will not be usable.")))
                       } else tokenManager.issueNew(parent, path, permissions, expires, limits) map {
                         case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))

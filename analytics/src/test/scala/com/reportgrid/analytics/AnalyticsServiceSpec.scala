@@ -7,6 +7,7 @@ import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test._
 import blueeyes.util.metrics.Duration._
+import blueeyes.util.Clock
 
 import MimeTypes._
 
@@ -35,8 +36,15 @@ import com.reportgrid.ct._
 import com.reportgrid.ct.Mult._
 import com.reportgrid.ct.Mult.MDouble._
 
+case class PastClock(duration: Duration) extends Clock {
+  def now() = new DateTime().minus(duration)
+  def instant() = now().toInstant
+  def nanoTime = sys.error("nanotime not available in the past")
+}
+
 trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsService with LocalMongo {
-  override val configuration = "services{analytics{v0{" + mongoConfigFileData + "}}}"
+  override val clock = Clock.System
+  override val configuration = "services{analytics{v1{" + mongoConfigFileData + "}}}"
 
   //override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
   override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
@@ -49,8 +57,9 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
 
   override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(40, 1000L.milliseconds)
 }
-
 class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
+  override val genTimeClock = clock 
+
   "Analytics Service" should {
     shareVariables()
 
@@ -212,3 +221,33 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
   }
 }
+
+class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
+  override val genTimeClock = PastClock(Days.TWO.toStandardDuration)
+
+  "Analytics Service" should {
+    shareVariables()
+
+    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+      _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
+    }
+
+    "store events in the events database, but not in the index." in {
+      val (beforeCutoff, afterCutoff) = sampleEvents.partition(_.timestamp.exists(_ <= clock.now.minusDays(1)))
+
+      lazy val tweetedCount = afterCutoff.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      beforeCutoff must notBeEmpty
+      afterCutoff must notBeEmpty
+      jsonTestService.get[JValue]("/vfs/test/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+        }
+      } 
+    }
+  }
+}
+

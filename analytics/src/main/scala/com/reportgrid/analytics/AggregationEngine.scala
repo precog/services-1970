@@ -1,5 +1,7 @@
 package com.reportgrid.analytics
 
+import external.Jessup
+
 import blueeyes._
 import blueeyes.concurrent._
 import blueeyes.persistence.mongo._
@@ -56,13 +58,6 @@ import SignatureGen._
  *   }
  * }
  *
- * variable_values_infinite: {
- *   _id: mongo-generated,
- *   id: hashSig(tokenId, path, variable),
- *   value: "John Doe"
- *   count: 42
- * }
- * 
  * path_children: {
  *   _id: mongo-generated,
  *   accountTokenId: "foobar"
@@ -93,7 +88,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
   }
 }
 
-class AggregationEngine private (config: ConfigMap, logger: Logger, database: Database, clock: Clock)(implicit hashFunction: HashFunction = Sha1HashFunction) {
+class AggregationEngine private (config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database, clock: Clock)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
 
   private def AggregationStage(prefix: String): AggregationStage = {
@@ -107,7 +102,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
     new AggregationStage(
       collection = collection,
       stage = new MongoStage(
-        database   = database,
+        database   = indexdb,
         mongoStageSettings = MongoStageSettings(
           expirationPolicy = ExpirationPolicy(
             timeToIdle = Some(timeToIdle),
@@ -129,7 +124,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
   private val events_collection: MongoCollection = config.getString("events.collection", "events")
 
-  def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int) = {
+  def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int, reprocess: Boolean) = {
     if (token.limits.lossless) {
       val async = Future.async {
         val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {
@@ -144,10 +139,11 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
               JField("path",      path.serialize) ::
               JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
               JField("count",     count.serialize) ::
-              JField("timestamp", instant.serialize) :: Nil
+              JField("timestamp", instant.serialize) :: 
+              (if (reprocess) JField("reprocess", true.serialize) :: Nil else Nil)
             )
 
-            database(MongoInsertQuery(events_collection, List(record))) 
+            eventsdb(MongoInsertQuery(events_collection, List(record))) 
             
           case _ => 
             Future.dead(new IllegalStateException("Unexpected system state; please report error RG-AE0"))
@@ -157,6 +153,36 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
       async.flatten
     } else {
       Future.sync(())
+    }
+  }
+
+  def aggregateFromStorage(tokenManager: TokenStorage, obj: JObject) = {
+    tokenManager.lookup(obj \ "token") foreach { 
+      _.map { token => 
+        val path = (obj \ "path").deserialize[Path]
+        val count = (obj \ "count").deserialize[Int]
+        val timestamp = (obj \ "timestamp").deserialize[Instant]
+        val eventName = (obj \ "event" \ "name").deserialize[String]
+        val eventBody = (obj \ "event" \ "data")
+
+        val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, timestamp, false) ::
+                            Tag.locationTagExtractor(Future.sync(None))      :: Nil
+
+        val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
+
+        def getTags(result: Tag.ExtractionResult) = result match {
+          case Tag.Tags(tags) => tags
+          case Tag.Skipped => Future.sync(Nil)
+          case Tag.Errors(errors) => 
+            Future.sync(Nil)
+        }
+        
+        getTags(tagResults) flatMap { tags => 
+          aggregate(token, path, eventName, tags, remainder, count).map(_.success[Seq[Tag.ExtractionError]])
+        }
+      } getOrElse {
+        Future.sync(Seq.empty[Tag.ExtractionError].fail)
+      }
     }
   }
 
@@ -382,7 +408,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
     val filter = tagsFilters.foldLeft(obsFilter)(_ & _)
 
-    database(selectAll.from(events_collection).where(filter))
+    eventsdb(selectAll.from(events_collection).where(filter))
   }
 
 
@@ -406,7 +432,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
 
     Future (
       toQuery.map {
-        case (docKey, dataKeys) => database(selectOne(dataPath).from(collection).where(filter(docKey))).map {
+        case (docKey, dataKeys) => indexdb(selectOne(dataPath).from(collection).where(filter(docKey))).map {
           results => dataKeys.flatMap {
             case (keySig, keyData) => results.map {
                // since the data keys are a stream of all possible keys in the document that data might
@@ -461,7 +487,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   private def extractChildren[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
-    database {
+    indexdb {
       select(".child", ".count").from(collection).where(filter)
     } map {
       _.foldLeft(List.empty[T]) { 
@@ -474,7 +500,7 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   private def extractValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
-    database {
+    indexdb {
       selectOne(".values").from(collection).where(filter)
     } map { 
       case None => Nil
@@ -582,22 +608,18 @@ class AggregationEngine private (config: ConfigMap, logger: Logger, database: Da
   }
 
   private def variableValueSeriesPatches(token: Token, path: Path, finiteReport: Report[HasValue], count: CountType): MongoPatches = {
-    val (finitePatches, refKeys) = finiteReport.storageKeysets.foldLeft((MongoPatches.empty, List.empty[MongoPrimitive])) {
-      case ((finitePatches, refKeys), (storageKeys, finiteObservation)) => 
+    val finitePatches = finiteReport.storageKeysets.foldLeft(MongoPatches.empty) {
+      case (finitePatches, (storageKeys, finiteObservation)) => 
 
         // When we query for associated infinite values, we will use the queriable expansion (heap shaped) 
         // of the specified time series so here we need to construct a value series key that records where 
         // the observation was made(as described by the data keys of the storage keys), not where it is 
         // being stored. We will then construct an identical key when we query, and the fact that we have 
         // built aggregated documents will mean that we query for the minimal set of infinite value documents.
-        val (dataKeySig, refSig) = dataKeySigs(storageKeys)
-        val referenceKey = valueSeriesKey(token, path, refSig, finiteObservation).rhs
+        val (dataKeySig, _) = dataKeySigs(storageKeys)
         val docKey = valueSeriesKey(token, path, docKeySig(storageKeys), finiteObservation)
 
-        Tuple2(
-          finitePatches + (docKey -> ((CountsPath \ dataKeySig.hashSignature) inc count)),
-          referenceKey :: refKeys
-        )
+        finitePatches + (docKey -> ((CountsPath \ dataKeySig.hashSignature) inc count))
     } 
 
     finitePatches
@@ -675,7 +697,13 @@ object AggregationEngine {
   val timeSeriesEncoding  = TimeSeriesEncoding.Default
   val timeGranularity     = timeSeriesEncoding.grouping.keys.min
 
-  private val CollectionIndices = Map(
+  private val EventsdbIndices = Map(
+    "events" -> Map(
+      "raw_events_query" -> (List("token", "timestamp", "path"), false)
+    )
+  )
+
+  private val IndexdbIndices = Map(
     "variable_series" -> Map(
       "var_series_id" -> (List(seriesId), true)
     ),
@@ -685,24 +713,17 @@ object AggregationEngine {
     "variable_values" -> Map(
       "var_val_id" -> (List(valuesId), true)
     ),
-    "variable_values_infinite" -> Map(
-      "var_val_inf_id" -> (List(valuesId, "value"), true) //,
-    //  "var_val_inf_keyMatch" -> (List("ids"), false)
-    ),
     "variable_children" -> Map(
       "variable_query" -> (List("path", "accountTokenId", "variable"), false)
     ),
     "path_children" -> Map(
       "path_query" -> (List("path", "accountTokenId"), false),
       "path_child_query" -> (List("path", "accountTokenId", "child"), false)
-    ),
-    "events" -> Map(
-      "raw_events_query" -> (List("token", "timestamp", "path"), false)
     )
   )
 
-  private def createIndices(database: Database) = {
-    val futures = for ((collection, indices) <- CollectionIndices; 
+  private def createIndices(database: Database, toCreate: Map[String, Map[String, (List[String], Boolean)]]) = {
+    val futures = for ((collection, indices) <- toCreate; 
                        (indexName, (fields, unique)) <- indices) yield {
       database {
         if (unique) ensureUniqueIndex(indexName + "_index").on(fields.map(JPath(_)): _*).in(collection)
@@ -713,12 +734,17 @@ object AggregationEngine {
     Future(futures.toSeq: _*)
   }
 
-  def apply(config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
-    createIndices(database).map(_ => new AggregationEngine(config, logger, database, ClockSystem.realtimeClock))
+  def apply(config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
+    for {
+      _ <- createIndices(eventsdb, EventsdbIndices)
+      _ <- createIndices(indexdb,  IndexdbIndices)
+    } yield {
+      new AggregationEngine(config, logger, eventsdb, indexdb, ClockSystem.realtimeClock)
+    }
   }
 
-  def forConsole(config: ConfigMap, logger: Logger, database: Database)(implicit hashFunction: HashFunction = Sha1HashFunction) = {
-    new AggregationEngine(config, logger, database, ClockSystem.realtimeClock)
+  def forConsole(config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database)(implicit hashFunction: HashFunction = Sha1HashFunction) = {
+    new AggregationEngine(config, logger, eventsdb, indexdb, ClockSystem.realtimeClock)
   }
 
   def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[JValue, T])]): scala.math.Ordering[JArray] = {

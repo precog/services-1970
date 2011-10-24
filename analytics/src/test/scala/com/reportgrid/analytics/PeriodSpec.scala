@@ -11,6 +11,8 @@ import Periodicity._
 import scalaz.Scalaz._
 
 class PeriodSpec extends Specification with ArbitraryTime with ScalaCheck {
+  val genTimeClock = blueeyes.util.Clock.System
+
   implicit val arbTuple = Arbitrary {
     for {
       periodicity <- genPeriodicity(Minute, Hour)

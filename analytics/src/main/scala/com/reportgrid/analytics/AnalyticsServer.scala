@@ -4,6 +4,7 @@ import  external._
 import blueeyes.BlueEyesServer
 import blueeyes.json.JsonAST._
 import blueeyes.persistence.mongo.Mongo
+import blueeyes.util.Clock
 import com.reportgrid.api.Server
 import com.reportgrid.api.blueeyes.ReportGrid
 import java.util.Date
@@ -32,16 +33,8 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
       configMap.getInt("port"),
       configMap.getString("path", "/services/jessup/v1"))
   }
-}
 
-
-object TestAnalyticsServer extends BlueEyesServer with AnalyticsService {
-  def mongoFactory(config: ConfigMap) = {
-    new blueeyes.persistence.mongo.mock.MockMongo()
-  }
-
-  def auditClient(config: ConfigMap) = NoopTrackingClient
-  def jessup(configMap: ConfigMap) = Jessup.Noop
+  val clock = Clock.System
 }
 
 // vim: set ts=4 sw=4 et:

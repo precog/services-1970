@@ -10,6 +10,8 @@ import Periodicity._
 import Arbitrary._
 
 class PeriodicitySpec extends Specification with ArbitraryTime with ScalaCheck {
+  val genTimeClock = blueeyes.util.Clock.System
+
   case class Count(i: Int)
   "Periodicity.period" should {
     "have the same semantics as period.withPeriodicity" in {

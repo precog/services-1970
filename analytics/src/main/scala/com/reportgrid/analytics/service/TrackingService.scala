@@ -7,11 +7,13 @@ import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
+import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.util.Clock
 
 import AnalyticsService._
 import external.Jessup
 import scalaz.Success
+import scalaz.Scalaz._
 
 class TrackingService(aggregationEngine: AggregationEngine, timeSeriesEncoding: TimeSeriesEncoding, clock: Clock, jessup: Jessup, autoTimestamp: Boolean)
 extends CustomHttpService[JValue, (Token, Path) => Future[HttpResponse[JValue]]] {
@@ -28,19 +30,25 @@ extends CustomHttpService[JValue, (Token, Path) => Future[HttpResponse[JValue]]]
 
           Future(
             fields.map { case JField(eventName, jvalue) => 
-              aggregationEngine.store(token, path, eventName, jvalue, count)
-
               // compensate for bare jvalues as events
               val event: JObject = jvalue match {
                 case obj: JObject => obj
                 case v => JObject(JField("value", v) :: Nil)
               }
         
-              val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
-              getTags(tagResults).flatMap(aggregationEngine.aggregate(token, path, eventName, _, remainder, count))
+              val offset = clock.now().minusDays(1).toInstant
+              val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
+              aggregationEngine.store(token, path, eventName, jvalue, count, reprocess)
+
+              if (!reprocess) {
+                val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
+                getTags(tagResults).flatMap(aggregationEngine.aggregate(token, path, eventName, _, remainder, count))
+              } else {
+                Future.sync(0L)
+              }
             }: _*
           ) map {
-            v => HttpResponse[JValue](content = Some(v))
+            v => HttpResponse[JValue](content = Some(v.sum))
           }
 
         case err => 

@@ -13,6 +13,8 @@ import Arbitrary._
 import scalaz.Scalaz._
 
 class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with ScalaCheck {
+  val genTimeClock = blueeyes.util.Clock.System
+
   "TimeSeriesEncoding.expand" should {
     val encoding = TimeSeriesEncoding.Default
 

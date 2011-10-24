@@ -33,12 +33,22 @@ import Scalaz._
 import Periodicity._
 
 trait LocalMongo {
-  val dbName = "test" + scala.util.Random.nextInt(10000)
+  val eventsName = "testev" + scala.util.Random.nextInt(10000)
+  val indexName =  "testix" + scala.util.Random.nextInt(10000)
 
   def mongoConfigFileData = """
-    mongo {
+    eventsdb {
       database = "%s"
       servers  = ["localhost:27017"]
+    }
+
+    indexdb {
+      database = "%s"
+      servers  = ["localhost:27017"]
+    }
+
+    tokens {
+      collection = "tokens"
     }
 
     variable_series {
@@ -94,7 +104,7 @@ trait LocalMongo {
       level   = "debug"
       console = true
     }
-  """.format(dbName)
+  """.format(eventsName, indexName)
 }
 
 object Console {
@@ -104,12 +114,16 @@ object Console {
   }
 
   def apply(config: ConfigMap): Console = {
-    val mongoConfig = config.configMap("services.analytics.v0.mongo")
-    val mongo = new RealMongo(mongoConfig)
-    val database = mongo.database(mongoConfig("database"))
+    val eventsdbConfig = config.configMap("services.analytics.v1.eventsdb")
+    val eventsMongo = new RealMongo(eventsdbConfig)
+    val eventsdb = eventsMongo.database(eventsdbConfig("database"))
+
+    val indexdbConfig = config.configMap("services.analytics.v1.indexdb")
+    val indexMongo = new RealMongo(indexdbConfig)
+    val indexdb = indexMongo.database(indexdbConfig("database"))
     Console(
-      AggregationEngine.forConsole(config, Logger.get, database),
-      get(TokenManager(database, "tokens"))
+      AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb),
+      get(TokenManager(indexdb, "tokens"))
     )
   }
 }
@@ -128,22 +142,46 @@ object FutureUtils {
   }
 }
 
-class AggregationEngineSpec extends Specification with ArbitraryEvent with FutureMatchers with LocalMongo with PendingUntilFixed {
+trait AggregationEngineTests extends Specification with FutureMatchers with ArbitraryEvent {
+  def countStoredEvents(sampleEvents: List[Event], engine: AggregationEngine) = {
+    //skip("disabled")
+    def countEvents(eventName: String) = sampleEvents.count {
+      case Event(`eventName`, _, tags) => true
+      case _ => false
+    }
+
+    val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
+
+    val queryTerms = List[TagTerm](
+      HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+    )
+
+    eventCounts.foreach {
+      case (eventName, count) =>
+        engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName), queryTerms) must whenDelivered {
+          beEqualTo(count)
+        }
+    }
+  }
+}
+
+class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with PendingUntilFixed {
   import AggregationEngine._
   import FutureUtils._
 
+  val genTimeClock = Clock.System
+
   val config = (new Config()) ->- (_.load(mongoConfigFileData))
 
-  val mongo = new RealMongo(config.configMap("mongo")) 
-  //val mongo = new MockMongo()
-
-  val database = mongo.database(dbName)
-
-//  implicit val hashFunction: HashFunction = new HashFunction {
-//    override def apply(bytes : Array[Byte]) = bytes
-//  }
+  val eventsConfig = config.configMap("eventsdb")
+  val eventsMongo = new RealMongo(eventsConfig) 
+  val eventsdb = eventsMongo.database(eventsConfig("database"))
   
-  val engine = get(AggregationEngine(config, Logger.get, database))
+  val indexConfig = config.configMap("indexdb")
+  val indexMongo = new RealMongo(indexConfig)
+  val indexdb = indexMongo.database(indexConfig("database"))
+
+  val engine = get(AggregationEngine(config, Logger.get, eventsdb, indexdb))
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
@@ -154,7 +192,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1)
-        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1)
+        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, false)
       }
     }
 
@@ -170,24 +208,7 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     }
  
     "count events" in {
-      //skip("disabled")
-      def countEvents(eventName: String) = sampleEvents.count {
-        case Event(`eventName`, _, tags) => true
-        case _ => false
-      }
-
-      val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
-
-      val queryTerms = List[TagTerm](
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
-      )
-
-      eventCounts.foreach {
-        case (eventName, count) =>
-          engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName), queryTerms) must whenDelivered {
-            beEqualTo(count)
-          }
-      }
+      countStoredEvents(sampleEvents, engine)
     }
  
     "retrieve values" in {
@@ -563,5 +584,47 @@ class AggregationEngineSpec extends Specification with ArbitraryEvent with Futur
     //  }
     //}
   }
+
 }
 
+/*
+
+class ReaggregationSpec extends AggregationEngineTests with LocalMongo {
+  import AggregationEngine._
+  import FutureUtils._
+
+  val config = (new Config()) ->- (_.load(mongoConfigFileData))
+
+  val mongo = new RealMongo(config.configMap("mongo")) 
+
+  val database = mongo.database(dbName)
+
+  val engine = get(AggregationEngine(config, Logger.get, database))
+
+  override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
+
+  object TestTokenStorage extends TokenStorage {
+    def lookup(tokenId: String) = Future.sync(Some(Token.Benchmark))
+  }
+
+  "Re-storing aggregated events" should {
+    shareVariables()
+    
+    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+      _.foreach { event => 
+        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, true)
+      }
+    }
+
+    "retrieve and re-aggregate data" in {
+      database(selectAll.from(MongoCollectionReference("events")).where("reprocess" === true)) foreach {
+        _ foreach {
+          engine.aggregateFromStorage(TestTokenStorage, _)
+        }
+      }
+
+      countStoredEvents(sampleEvents, engine)
+    }
+  }
+}
+*/
