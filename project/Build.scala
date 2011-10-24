@@ -6,7 +6,7 @@ import sbt.NameFilter._
 
 object ServicesSettings {
   val buildOrganization = "com.reportgrid"
-  val buildVersion = "1.1.1-SNAPSHOT"
+  val buildVersion = "1.2.0-SNAPSHOT"
   val buildScalaVersion = "2.9.1"
   
   val serviceSettings = Defaults.defaultSettings ++ Seq (
@@ -42,7 +42,7 @@ object ServicesBuild extends Build {
         "org.scala-tools.testing" %% "scalacheck"         % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer"),
-      jarName in assembly := "analytics-v1.jar"
+      jarName in assembly := "analytics-v1.jar"//, test in assembly := {}
     )
 
     val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))

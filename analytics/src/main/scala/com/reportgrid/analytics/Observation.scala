@@ -185,7 +185,7 @@ object Tag {
       case (result, remainder) => 
         val unparsed = remainder.fields.filter(_.name.startsWith(Tag.Prefix)) 
         if (unparsed.isEmpty) (result, remainder)
-        else (Errors(unparsed.map(field => ExtractionError(field.name, "No extractor could handle the field."))), remainder)
+        else (Errors(unparsed.map(field => ExtractionError(field.name, "No extractor could handle the value: " + compact(render(field.value))))), remainder)
     }
   }
 }
