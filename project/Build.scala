@@ -76,17 +76,8 @@ object ServicesBuild extends Build {
 
     val jessup = Project("jessup", file("jessup"), settings = jessupSettings) dependsOnAlt blueeyes(base)
 
+    val services = Project("services", file(".")) aggregate (common, analytics, billing, jessup) 
 
-    val benchmarkSettings = serviceSettings ++ Seq(
-      libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile",
-      mainClass := Some("com.reportgrid.benchmark.AnalyticsTool")
-    )
-
-    val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ sbtassembly.Plugin.assemblySettings) dependsOn(common) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
-
-
-    val services = Project("services", file(".")) aggregate (common, analytics, benchmark, billing, jessup) 
-
-    common :: analytics :: benchmark :: billing :: jessup :: services :: Nil
+    common :: analytics :: billing :: jessup :: services :: Nil
   }
 }
