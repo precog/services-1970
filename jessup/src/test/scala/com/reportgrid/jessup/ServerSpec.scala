@@ -13,7 +13,7 @@ import org.scalacheck._
 
 import scala.collection.mutable
 
-object ServerSpec extends BlueEyesServiceSpecification with Server with ScalaCheck with InMemoryGeoIPComponent with BijectionsChunkJson {
+object ServerSpec extends BlueEyesServiceSpecification with Service with ScalaCheck with InMemoryGeoIPComponent with BijectionsChunkJson {
   import Prop._
   import Arbitrary.arbitrary
   

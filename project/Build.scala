@@ -36,10 +36,10 @@ object ServicesBuild extends Build {
 
     val analyticsSettings = serviceSettings ++ Seq( 
       libraryDependencies ++= Seq(
-        "joda-time"               % "joda-time"    % "1.6.2",
-        "org.scalaz"              %% "scalaz-core" % "6.0.2",
-        "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
-        "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"
+        "joda-time"               % "joda-time"           % "1.6.2",
+        "org.scalaz"              %% "scalaz-core"        % "6.0.2",
+        "org.scala-tools.testing" %% "specs"              % "1.6.9"  % "test",
+        "org.scala-tools.testing" %% "scalacheck"         % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer"),
       jarName in assembly := "analytics-v1.jar"
@@ -50,8 +50,13 @@ object ServicesBuild extends Build {
 
     val billingSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
       libraryDependencies ++= Seq(
-        "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
-        "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"
+        "commons-codec"           % "commons-codec"       % "1.5",
+        "commons-httpclient"      % "commons-httpclient"  % "3.1",
+        "joda-time"               % "joda-time"           % "1.6.2",
+        "net.liftweb"             %% "lift-mapper"        % "2.4-M4",
+        "org.mockito"             % "mockito-all"         % "1.9.0-rc1" % "test", 
+        "org.scala-tools.testing" %% "specs"              % "1.6.9"     % "test",
+        "org.scala-tools.testing" %% "scalacheck"         % "1.9"       % "test"
       ),
       mainClass := Some("com.reportgrid.billing.BillingServer"),
       jarName in assembly := "billing-v1.jar"
@@ -71,17 +76,8 @@ object ServicesBuild extends Build {
 
     val jessup = Project("jessup", file("jessup"), settings = jessupSettings) dependsOnAlt blueeyes(base)
 
+    val services = Project("services", file(".")) aggregate (common, analytics, billing, jessup) 
 
-    val benchmarkSettings = serviceSettings ++ Seq(
-      libraryDependencies += "org.scala-tools.testing" %% "scalacheck"  % "1.9" % "compile",
-      mainClass := Some("com.reportgrid.benchmark.AnalyticsTool")
-    )
-
-    val benchmark = Project("benchmark", file("benchmark"), settings = benchmarkSettings ++ sbtassembly.Plugin.assemblySettings) dependsOn(common) dependsOnAlt(blueeyes(base)) dependsOnAlt(client(base))
-
-
-    val services = Project("services", file(".")) aggregate (common, analytics, benchmark, billing, jessup) 
-
-    common :: analytics :: benchmark :: billing :: jessup :: services :: Nil
+    common :: analytics :: billing :: jessup :: services :: Nil
   }
 }
