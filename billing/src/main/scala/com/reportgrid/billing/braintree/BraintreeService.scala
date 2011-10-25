@@ -5,8 +5,8 @@ import com.braintreegateway._
 import scalaz._
 import scala.collection.JavaConverters._
 
-import com.reportgrid.billing.Signup
 import com.reportgrid.billing.BillingInformation
+import com.reportgrid.billing.CreateAccount
 
 class BraintreeService(gateway: BraintreeGateway, environment: Environment) {
 
@@ -43,6 +43,15 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) {
   
   def findPlans(): List[Plan] = {
     gateway.plan().all().asScala.toList
+  }
+  
+  def findPlan(planId: String): Option[Plan] = {
+    val plan = findPlans().filter(p => p.getId() == planId)
+    plan match {
+      case Nil      => None
+      case p :: Nil => Some(p)
+      case _        => None // This should never happen???
+    }
   }
   
   def newSubscription(customer: Customer, planId: String): Validation[String, Subscription] = {
@@ -130,15 +139,15 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) {
     findActiveSubscription(accountToken).isSuccess
   }
 
-  def newUserAndCard(signup: Signup, billing: BillingInformation, accountToken: String): Validation[String, Customer] = {
-    if (conflictingCustomers(accountToken, signup.email)) {
+  def newUserAndCard(create: CreateAccount, billing: BillingInformation, accountToken: String): Validation[String, Customer] = {
+    if (conflictingCustomers(accountToken, create.email)) {
       Failure("The account token or email requested is already in use.")
     } else {
       val request = new CustomerRequest()
         .id(accountToken)
-        .email(signup.email)
-        .company(signup.company.getOrElse(""))
-        .website(signup.website.getOrElse(""))
+        .email(create.email)
+        .company(create.contact.company.getOrElse(""))
+        .website(create.contact.website.getOrElse(""))
         .creditCard()
           .cardholderName(billing.cardholder)
           .number(billing.number)

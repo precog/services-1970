@@ -34,12 +34,12 @@ import blueeyes.json.xschema.DefaultSerialization._
 import SerializationHelpers._
 
 abstract class TokenGenerator {
-  def newToken(): Future[Validation[String, String]]
+  def newToken(path: String): Future[Validation[String, String]]
   def deleteToken(token: String): Future[Unit] 
 }
 
 class MockTokenGenerator extends TokenGenerator {
-  override def newToken() = {
+  override def newToken(path: String) = {
     Future.sync(Success(UUID.randomUUID().toString().toUpperCase()))
   }
   override def deleteToken(token: String) = {
@@ -51,11 +51,34 @@ class RealTokenGenerator(client: HttpClient[ByteChunk], rootToken: String, rootU
 
   import blueeyes.core.http.MimeTypes._
   
-  override def newToken() = {
+  val defaultOrder = 2
+  val defaultLimit = 100
+  val defaultDepth = 3
+  val defaultTags = 1
+  
+  override def newToken(path: String) = {
     client.
       query("tokenId", rootToken).
       contentType[ByteChunk](application / json).
-      post[JValue](rootUrl)(JsonParser.parse("{ }"))
+      post[JValue](rootUrl)(JsonParser.parse(
+        """
+          {
+            "path": , "%s"
+            "permissions": {
+                "read":    true,
+                "write":   true,
+                "share":   true,
+                "explore": true
+            },
+            "limits": {
+                "order": %d,
+                "limit": %d,
+                "depth": %d,
+                "tags" : %d
+            }
+          }
+        """.format(path, defaultOrder, defaultLimit, defaultDepth, defaultTags)
+      ))
   }.map{ h => h.content match {
     case Some(JString(s)) => Success(s)
     case _                => Failure("Unable to create new token")
@@ -88,7 +111,7 @@ object BillingServiceHandlers {
         case None => Future.sync[Validation[String, Account]](failure("Missing request content"))
         case Some(js) => js.flatMap[Validation[String, Account]] {
           _.validated[CreateAccount] match {
-            case Success(ca) => accounts.create(ca.signup, ca.billing)
+            case Success(ca) => accounts.create(ca)
             case Failure(e) => Future.sync(failure(e.message))
           }
         }
@@ -177,7 +200,7 @@ object BillingServiceHandlers {
         Future.sync(Failure("You must provide a valid token or email."))
       }
       account.map{ oa => oa.flatMap{ a =>
-        if(PasswordHash.checkSaltedHash(request.password, a.passwordHash)) 
+        if(PasswordHash.checkSaltedHash(request.password, a.id.passwordHash)) 
           Success(a) else 
           Failure("You must provide valid identification and authentication information.") 
         }
@@ -220,7 +243,7 @@ object BillingServiceHandlers {
       val dailyRate = planRate / averageDaysPerMonth
       
       val daysToBeBilled = 1 // compare today and last bill adjustment date
-      val newCredit = math.max(0, account.accountCredit - daysToBeBilled * dailyRate)
+      val newCredit = math.max(0, account.service.credit - daysToBeBilled * dailyRate)
 
       // if account disable skip
       // if credit == 0
@@ -276,11 +299,11 @@ object BillingServiceHandlers {
     }
 
     def valuesInExpectedRange(account: Account): Boolean = {
-      account.accountCredit >= 0 && account.accountUsage >= 0
+      account.service.credit >= 0 && account.service.usage >= 0
     }
 
     def billingAccountInSync(account: Account): Boolean = {
-      if (account.accountCredit == 0 && account.accountStatus == AccountStatus.ACTIVE) {
+      if (account.service.credit == 0 && account.service.status == AccountStatus.ACTIVE) {
         account.billing.isDefined
       } else {
         true
@@ -378,40 +401,6 @@ object BillingServiceHandlers {
 
     def developerCredit: Int = 25000
   }
-
-  case class CreateAccount(
-    signup: Signup,
-    billing: Option[BillingInformation])
-
-  trait CreateAccountSerialization {
-
-    implicit val CreateAccountDecomposer: Decomposer[CreateAccount] = new Decomposer[CreateAccount] {
-      override def decompose(account: CreateAccount): JValue = JObject(
-        List(
-          JField("email", account.signup.email.serialize),
-          JField("company", account.signup.company.serialize),
-          JField("website", account.signup.website.serialize),
-          JField("planId", account.signup.planId.serialize),
-          JField("planCreditOption", account.signup.planCreditOption.serialize),
-          JField("password", account.signup.password.serialize),
-          JField("billing", account.billing.serialize)).filter(fieldHasValue))
-    }
-
-    implicit val CreateAccountExtractor: Extractor[CreateAccount] = new Extractor[CreateAccount] with ValidatedExtraction[CreateAccount] {
-      override def validated(obj: JValue): Validation[Error, CreateAccount] = {
-        val signup = ((obj \ "email").validated[String] |@|
-                     (obj \ "company").validated[Option[String]] |@|
-                     (obj \ "website").validated[Option[String]] |@|
-                     (obj \ "planId").validated[String] |@|
-                     (obj \ "planCreditOption").validated[Option[String]] |@|
-                     (obj \ "password").validated[String]).apply(Signup(_, _, _, _, _, _))
-        (signup |@|
-         (obj \ "billing").validated[Option[BillingInformation]]).apply(CreateAccount(_, _))
-      }
-    }
-  }
-
-  object CreateAccount extends CreateAccountSerialization
 
   // Used for get and close account operations
   case class AccountAction(
