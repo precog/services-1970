@@ -46,16 +46,16 @@ trait NewBillingService extends BlueEyesServiceBuilder with BijectionsChunkStrin
 //            post { new UpdateAccountHandler(config) } ~
             path("get") {
               post { new GetAccountHandler(config) }              
-            }
+            } ~
 //            path("usage") {
 //                put { new AccountUsageHandler(config) }
 //            } ~
 //            path("audit") {
 //              post { new AccountAuditHandler(config) }              
 //            } ~
-//            path("assess") {
-//              post { new AccountAssessmentHandler(config) }              
-//            }
+            path("assess") {
+              post { new AccountAssessmentHandler(config) }              
+            }
           }
         }
       } -> shutdown { config =>

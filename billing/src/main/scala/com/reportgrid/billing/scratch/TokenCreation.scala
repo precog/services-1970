@@ -28,7 +28,7 @@ object TokenCreation {
 
     dumpTokens(token)
 
-    val nt = tg.newToken()
+    val nt = tg.newToken("path")
 
     dumpTokens(token)
 
@@ -45,7 +45,23 @@ object TokenCreation {
   }
   
   def newToken(parent: String): String = {
-    val foo: Future[HttpResponse[JValue]] = httpClient.query("tokenId", parent).contentType[ByteChunk](application / json).post[JValue](url)(JsonParser.parse("{ \"path\": \"/test\" }"))
+    val foo: Future[HttpResponse[JValue]] = httpClient.query("tokenId", parent).contentType[ByteChunk](application / json).post[JValue](url)(JsonParser.parse("""
+          {
+            "path": , "%s"
+            "permissions": {
+                "read":    true,
+                "write":   true,
+                "share":   true,
+                "explore": true
+            },
+            "limits": {
+                "order": %d,
+                "limit": %d,
+                "depth": %d,
+                "tags" : %d
+            }
+          }
+        """.format("com_reportgrid_nick", 2, 10, 3, 1)))
     
     while(!foo.isDone) {
       
