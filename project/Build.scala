@@ -42,10 +42,10 @@ object ServicesBuild extends Build {
         "org.scala-tools.testing" %% "scalacheck"         % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
+      //, test in assembly := {}
     )
 
     val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))
-
 
     val billingSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
       libraryDependencies ++= Seq(

@@ -57,6 +57,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
 
   override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(40, 1000L.milliseconds)
 }
+
 class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
   override val genTimeClock = clock 
 
@@ -102,10 +103,6 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         case Event("tweeted", _, _) => true
         case _ => false
       }
-
-      val queryTerms = JObject(
-        JField("location", "usa") :: Nil
-      )
 
       jsonTestService.get[JValue]("/vfs/test/.tweeted/count?location=usa") must whenDelivered {
         beLike {
@@ -218,6 +215,50 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
           }
         //}
       }
+    }
+  }
+}
+
+class RootTrackingServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
+  override val genTimeClock = PastClock(Days.TWO.toStandardDuration)
+
+  "When writing to the service root" should {
+    shareVariables()
+
+    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+      _.foreach(event => jsonTestService.post[JValue]("/vfs/")(event.message))
+    }
+
+    "count events by get" in {
+      lazy val tweetedCount = sampleEvents.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      jsonTestService.get[JValue]("/vfs/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+        }
+      } 
+    }
+
+    "retrieve path children at the root" in {
+      jsonTestService.get[JValue]("/vfs/?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(JArray(elements)), _) => 
+            println(elements)
+            (elements map { case JString(s) => s }) must contain(".tweeted")
+          case x => println(x); false
+        }
+      } 
+    }
+
+    "retrieve property children at the root" in {
+      jsonTestService.get[JValue]("/vfs/.tweeted?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(JArray(elements)), _) => (elements map { case JString(s) => s }) must contain(".twitterClient")
+        }
+      } 
     }
   }
 }

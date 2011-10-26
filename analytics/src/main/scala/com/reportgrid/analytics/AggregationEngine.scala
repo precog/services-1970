@@ -88,7 +88,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
   }
 }
 
-class AggregationEngine private (config: ConfigMap, logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock)(implicit hashFunction: HashFunction = Sha1HashFunction) {
+class AggregationEngine private (config: ConfigMap, val logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
 
   private def AggregationStage(prefix: String): AggregationStage = {

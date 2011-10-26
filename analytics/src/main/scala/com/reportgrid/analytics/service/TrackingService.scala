@@ -26,7 +26,7 @@ extends CustomHttpService[JValue, (Token, Path) => Future[HttpResponse[JValue]]]
     Success(
       (token: Token, path: Path) => request.content.map { 
         case obj @ JObject(fields) => 
-          //logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)))
+          aggregationEngine.logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)))
 
           Future(
             fields.map { case JField(eventName, jvalue) => 
