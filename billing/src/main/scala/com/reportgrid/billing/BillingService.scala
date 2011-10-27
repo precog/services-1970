@@ -22,48 +22,49 @@ import com.braintreegateway.{ BraintreeGateway, Environment }
 import net.lag.configgy.ConfigMap
 
 trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString with BijectionsChunkJson with BijectionsChunkFutureJson {
-  
+
   implicit def httpClient: HttpClient[ByteChunk]
-  
+
   def accountsFactory(config: ConfigMap): Accounts
   def mailerFactory(config: ConfigMap): Mailer
-  
+
   val billing = service("billing", "1.0.0") {
-    serviceLocator { locator => context =>
-      startup {  
-        val config = context.config
-        
-        val accounts = accountsFactory(config)
-        val mailer = mailerFactory(config)
-        
-        val bc = BillingConfiguration(accounts, mailer)
-        Future.sync(bc)
-      } -> request { config =>
-        headerParameterRequired("ReportGridDecrypter", "Service may only be accessed via SSL.") {
-        jvalue {
+    serviceLocator { locator =>
+      context =>
+        startup {
+          val config = context.config
+
+          val accounts = accountsFactory(config)
+          val mailer = mailerFactory(config)
+
+          val bc = BillingConfiguration(accounts, mailer)
+          Future.sync(bc)
+        } -> request { config =>
+          headerParameterRequired("ReportGridDecrypter", "Service may only be accessed via SSL.") {
+            jsonp {
               path("/accounts/") {
                 put { new CreateAccountHandler(config) } ~
-    //            delete { new CloseAccountHandler(config) } ~
-    //            post { new UpdateAccountHandler(config) } ~
-                path("get") {
-                  post { new GetAccountHandler(config) }              
-                } ~
-    //            path("usage") {
-    //                put { new AccountUsageHandler(config) }
-    //            } ~
-    //            path("audit") {
-    //              post { new AccountAuditHandler(config) }              
-    //            } ~
-                path("assess") {
-                  post { new AccountAssessmentHandler(config) }              
-                }
+//                delete { new CloseAccountHandler(config) } ~
+//                post { new UpdateAccountHandler(config) } ~
+                  path("get") {
+                    post { new GetAccountHandler(config) }
+                  } ~
+//                path("usage") {
+//                    put { new AccountUsageHandler(config) }
+//                } ~
+//                path("audit") {
+//                    post { new AccountAuditHandler(config) }              
+//                } ~
+                  path("assess") {
+                    post { new AccountAssessmentHandler(config) }
+                  }
               }
+            }
+          }
+        } -> shutdown { config =>
+          config.shutdown
+          ().future
         }
-        }
-      } -> shutdown { config =>
-        config.shutdown
-        ().future
-      }
     }
   }
 }

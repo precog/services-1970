@@ -20,9 +20,11 @@ import blueeyes.core.http
 import blueeyes.persistence.mongo.MongoQueryBuilder._
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.http.HttpMethods._
+import blueeyes.core.service.engines.HttpClientXLightWeb
 import blueeyes.core.service.HttpClient
 import blueeyes.core.service.engines.HttpClientXLightWeb
 import blueeyes.core.service.test.BlueEyesServiceSpecification
+import blueeyes.core.data.ByteChunk
 import blueeyes.persistence.mongo.MockMongo
 import net.lag.configgy.ConfigMap
 import com.braintreegateway.BraintreeGateway
@@ -36,7 +38,17 @@ trait TestBillingService extends BlueEyesServiceSpecification with BillingServic
 
   val mongo = new MockMongo
 
-  override def mailerFactory(config: ConfigMap) = new NullMailer
+  
+  override def mailerFactory(config: ConfigMap) = {
+//    val client = new HttpClientXLightWeb
+//
+//    val url = "https://sendgrid.com/api/mail.send.json?"
+//    val apiUser = "operations@reportgrid.com"
+//    val apiKey = "seGrid8"  
+//    
+//    new OverrideMailTo(Array("nick@reportgrid.com"), new SendGridMailer(httpClient, url, apiUser, apiKey))
+    new NullMailer
+  }
   override def accountsFactory(config: ConfigMap) = {
     val mongo = this.mongo
     val database = mongo.database("test")

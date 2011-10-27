@@ -17,7 +17,13 @@ object BillingServer extends BlueEyesServer with BillingService with ServerHealt
 
   override def httpClient: HttpClient[ByteChunk] = new HttpClientXLightWeb
   
-  override def mailerFactory(config: ConfigMap) = new NullMailer
+  override def mailerFactory(config: ConfigMap) = {
+    val url = "https://sendgrid.com/api/mail.send.json?"
+    val apiUser = "operations@reportgrid.com"
+    val apiKey = "seGrid8"
+
+    new SendGridMailer(httpClient, url, apiUser, apiKey)
+  }
   
   override def accountsFactory(config: ConfigMap) = {
     val mongoConfig = config.configMap("mongo")

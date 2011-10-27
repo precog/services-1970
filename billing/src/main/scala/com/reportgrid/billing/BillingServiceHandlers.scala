@@ -25,6 +25,7 @@ import blueeyes.core.http._
 import blueeyes.core.http.HttpStatusCodes
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonParser
+import blueeyes.json.Printer
 import blueeyes.core.service._
 import blueeyes.core.data._
 import blueeyes.core.data.BijectionsChunkJson._
@@ -117,8 +118,23 @@ object BillingServiceHandlers {
         case None => Future.sync[Validation[String, Account]](failure("Missing request content"))
         case Some(js) => js.flatMap[Validation[String, Account]] {
           _.validated[CreateAccount] match {
-            case Success(ca) => accounts.create(ca)
-            case Failure(e) => Future.sync(failure(e.message))
+            case Success(ca) => {
+              val createResult = accounts.create(ca)
+              createResult.map {
+                case s @ Success(a) => {
+                  config.sendSignupSuccess(a)
+                  s
+                }
+                case f @ Failure(e) => {
+                  config.sendSignupFailure(Some(ca), "Error processing CreateAccount request: [" + e + "]")
+                  f
+                }
+              }
+            }
+            case Failure(e) => {
+              config.sendSignupFailure(None, "Error parsing json request into CreateAccount: [" + e.message + "]")
+              Future.sync(failure(e.message))
+            }
           }
         }
       }).map[HttpResponse[JValue]](x => collapseToHttpResponse(x.map(_.serialize)))
@@ -398,9 +414,9 @@ object BillingServiceHandlers {
   }
 
   class RequireHeaderParameter[T, S](headerParameter: String, errorMessage: String, val delegate: HttpService[T, S]) extends DelegatingService[T, S, T, S] {
-    
+
     val metadata = None
-    
+
     def service = (r: HttpRequest[T]) => {
       val p = r.headers.get(headerParameter)
       p match {
@@ -409,18 +425,107 @@ object BillingServiceHandlers {
       }
     }
   }
-  
+
   def headerParameterRequired[T, S](parameter: String, error: String): HttpService[T, S] => HttpService[T, S] = {
     in => new RequireHeaderParameter[T, S](parameter, error, in)
   }
-  
+
   case class BillingConfiguration(
     accounts: Accounts,
     mailer: Mailer) {
-    //    tokenGenerator: TokenGenerator,
-    //    database: Database,
-    //    accountsCollection: String,
-    //    billingService: BraintreeService) {
+
+    private val fromAddress = "accounts@reportgrid.com"
+    private val userSignupBccList = Array("nick@reportgrid.com")
+    private val internalSignupBccList = Array("nick@reportgrid.com", "jason@reportgrid.com")
+    private val failedSignupToList = Array("nick@reportgrid.com")
+
+    private val accountConfirmationContent = """
+Welcome to ReportGrid
+  
+
+Here is your account information:
+      
+id: %s
+token: %s
+
+
+Just getting started?
+
+Our developer page has everything you need to get started. Find API documentation, an interactive console and client libraries.
+
+http://reportgrid.com/developer.html
+
+
+Need help?
+      
+Checkout the resources on our support page or feel free to contact us.
+  
+http://reportgrid.com/support.html
+support@reportgrid.com
+
+
+Thanks,
+      
+The ReportGrid Team
+    """
+
+    def sendSignupSuccess(a: Account) {
+      sendUserSignupEmail(Array(a.id.email), accountConfirmationContent.format(a.id.email, a.id.token))
+      sendInternalSignupEmail(a)
+    }
+
+    def sendSignupFailure(c: Option[CreateAccount], e: String) {
+      sendFailedSignupEmail(c, e)
+    }
+
+    private def sendUserSignupEmail(to: Array[String], content: String) = sendEmail(
+      fromAddress,
+      to,
+      Array(),
+      userSignupBccList,
+      "Welcome to ReportGrid",
+      content)
+
+    private def sendInternalSignupEmail(a: Account) = sendEmail(
+      fromAddress,
+      internalSignupBccList,
+      Array(),
+      Array(),
+      "New User Signup [" + a.contact.company + "|" + a.service.planId + "|" + a.id.email + "]",
+      accountToMessageBody(a))
+
+    private def accountToMessageBody(a: Account): String = {
+      Printer.pretty(Printer.render(a.serialize))
+    }
+
+    private def sendFailedSignupEmail(c: Option[CreateAccount], e: String) = sendEmail(
+      fromAddress,
+      failedSignupToList,
+      Array(),
+      Array(),
+      "Failed User Signup [" + e + "]",
+      failedSignupMessageBody(c, e))
+
+    private def failedSignupMessageBody(c: Option[CreateAccount], e: String): String = {
+      "Signup Error: " + e + "\n\n" + Printer.pretty(Printer.render(c.serialize))
+    }
+
+    def addQuery(client: HttpClient[ByteChunk], key: String, value: String): HttpClient[ByteChunk] = {
+      client.query(key, value)
+    }
+
+    def addQuery(client: HttpClient[ByteChunk], kv: (String, Option[String])): HttpClient[ByteChunk] = {
+      kv._2.map(client.query(kv._1, _)).getOrElse(client)
+    }
+
+    def addQueryList(client: HttpClient[ByteChunk], kv: (String, Option[Array[String]])): HttpClient[ByteChunk] = {
+      val vals: List[(String, Option[String])] = kv._2.getOrElse(Array()).toList.map(v => (kv._1 + "[]", Some(v)))
+      vals.foldLeft(client)(addQuery)
+    }
+
+    def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], title: String, content: String) {
+      mailer.sendEmail(from, to, cc, bcc, title, content)
+    }
 
     def shutdown(): Unit = Unit
 
