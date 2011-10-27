@@ -4,7 +4,7 @@ import com.reportgrid.analytics.service._
 
 import blueeyes._
 import blueeyes.concurrent.Future
-import blueeyes.core.data.{BijectionsChunkJson, BijectionsChunkString}
+import blueeyes.core.data.{BijectionsChunkJson, BijectionsChunkFutureJson, BijectionsChunkString, ByteChunk}
 import blueeyes.core.http._
 import blueeyes.core.http.MimeTypes.{application, json}
 import blueeyes.core.service._
@@ -51,11 +51,13 @@ import com.reportgrid.api.ReportGridTrackingClient
 
 case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
 
-trait AnalyticsService extends BlueEyesServiceBuilder with BijectionsChunkJson with BijectionsChunkString 
-with AnalyticsServiceCombinators with ReportGridInstrumentation {
+trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombinators with ReportGridInstrumentation {
   import AggregationEngine._
   import AnalyticsService._
   import AnalyticsServiceSerialization._
+  import BijectionsChunkJson._
+  import BijectionsChunkString._
+  import BijectionsChunkFutureJson._
 
   def mongoFactory(configMap: ConfigMap): Mongo
 
@@ -98,7 +100,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
           val audit = auditor(state.auditClient, clock, tokenManager)
           import audit._
 
-          jsonp {
+          jsonp[ByteChunk] {
             token(tokenManager) {
               /* The virtual file system, which is used for storing data,
                * retrieving data, and querying for metadata.
@@ -110,25 +112,31 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
               } ~ 
               vfsPath {
                 post(new TrackingService(aggregationEngine, timeSeriesEncoding, clock, state.jessup, true)).audited("track") ~
-                get(new ExplorePathService[JValue](aggregationEngine)).audited("explore paths") ~
+                get(new ExplorePathService[Future[JValue]](aggregationEngine)).audited("explore paths") ~
                 variable {
                   get {
-                    new ExploreVariableService[JValue](aggregationEngine).audited("explore variable children") 
+                    new ExploreVariableService[Future[JValue]](aggregationEngine).audited("explore variable children") 
                   } ~
                   path("/") { 
                     commit {
                       path("count") {
                         audited("count occurrences of a variable") {
-                          (request: HttpRequest[JValue]) => {
-                            val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
-                            aggregationEngine.getVariableCount(_: Token, _: Path, _: Variable, terms).map(_.serialize.ok)
+                          (request: HttpRequest[Future[JValue]]) => {
+                            (token: Token, path: Path, variable: Variable) => {
+                              val futureContent: Future[Option[JValue]] = request.content.map(_.map[Option[JValue]](Some(_)))
+                                                                                 .getOrElse(Future.sync[Option[JValue]](None))
+                              futureContent.flatMap { content => 
+                                val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, content))
+                                aggregationEngine.getVariableCount(token, path, variable, terms).map(_.serialize.ok)
+                              }
+                            }
                           }
                         }
                       } ~ 
                       path("statistics") {
                         get { 
                           audited("variable statistics") {
-                            (_: HttpRequest[JValue]) => 
+                            (_: HttpRequest[Future[JValue]]) => 
                               aggregationEngine.getVariableStatistics(_: Token, _: Path, _: Variable).map(_.serialize.ok)
                           }
                         }
@@ -137,7 +145,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                         commit {
                           get { 
                             // simply return the names of valid periodicities that can be used for series queries
-                            (_: HttpRequest[JValue]) => (_: Token, _: Path, _: Variable) => 
+                            (_: HttpRequest[Future[JValue]]) => (_: Token, _: Path, _: Variable) => 
                               Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
                           } ~
                           path("/'periodicity") {
@@ -158,14 +166,14 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                       path("histogram") {
                         get { 
                           audited("Return a histogram of values of a variable.") { 
-                            (_: HttpRequest[JValue]) => aggregationEngine.getHistogram(_: Token, _: Path, _: Variable).map(_.serialize.ok)
+                            (_: HttpRequest[Future[JValue]]) => aggregationEngine.getHistogram(_: Token, _: Path, _: Variable).map(_.serialize.ok)
                           }
                         } ~
                         commit {
                           pathData("/top/'limit", 'limit, parsePathInt("limit")) {
                             get { 
                               audited("Return a histogram of the top 'limit values of a variable, by count.") { 
-                                (_: HttpRequest[JValue]) => 
+                                (_: HttpRequest[Future[JValue]]) => 
                                   (limit: Int) => aggregationEngine.getHistogramTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok) 
                               }
                             }
@@ -173,7 +181,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                           pathData("/bottom/'limit", 'limit, parsePathInt("limit")) {
                             get { 
                               audited("Return a histogram of the bottom 'limit values of a variable, by count.") { 
-                                (_: HttpRequest[JValue]) => 
+                                (_: HttpRequest[Future[JValue]]) => 
                                   (limit: Int) => aggregationEngine.getHistogramBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
                               }
                             }
@@ -183,20 +191,20 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                       path("length") {
                         get { 
                           audited("Count the number of values for a variable.") {
-                            (_: HttpRequest[JValue]) => 
+                            (_: HttpRequest[Future[JValue]]) => 
                               aggregationEngine.getVariableLength(_: Token, _: Path, _: Variable).map(_.serialize.ok)
                           }
                         }
                       } ~
                       path("values") {
                         get { 
-                          new ExploreValuesService[JValue](aggregationEngine).audited("list of variable values") 
+                          new ExploreValuesService[Future[JValue]](aggregationEngine).audited("list of variable values") 
                         } ~
                         path("/") {
                           pathData("top/'limit", 'limit, parsePathInt("limit")) {
                             get { 
                               audited("List the top n variable values") {
-                                (_: HttpRequest[JValue]) => 
+                                (_: HttpRequest[Future[JValue]]) => 
                                   (limit: Int) => aggregationEngine.getValuesTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
                               }
                             }
@@ -204,7 +212,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                           pathData("bottom/'limit", 'limit, parsePathInt("limit")) {
                             get { 
                               audited("list of bottom variable values") {
-                                (_: HttpRequest[JValue]) => 
+                                (_: HttpRequest[Future[JValue]]) => 
                                   (limit: Int) => aggregationEngine.getValuesBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
                               }
                             }
@@ -212,7 +220,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                           pathData('value, 'value, ((e: Exception) => DispatchError(HttpException(BadRequest, e))) <-: JsonParser.parseValidated(_)) {
                             get { 
                               // return a list of valid subpaths
-                              (_: HttpRequest[JValue]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
+                              (_: HttpRequest[Future[JValue]]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
                                 Future.sync(JArray(JString("count") :: JString("series/") :: Nil).ok[JValue])
                             } ~
                             path("/") {
@@ -220,10 +228,15 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                                 path("count") {
                                   get {
                                     audited("count occurrences of a variable value") { 
-                                      (request: HttpRequest[JValue]) => (value: JValue) => (token: Token, path: Path, variable: Variable) => {
-                                        val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, request.content))
-                                        aggregationEngine.getObservationCount(token, path, JointObservation(HasValue(variable, value)), terms)
-                                        .map(_.serialize.ok)
+                                      (request: HttpRequest[Future[JValue]]) => (value: JValue) => (token: Token, path: Path, variable: Variable) => {
+                                        val futureContent: Future[Option[JValue]] = request.content.map(_.map[Option[JValue]](Some(_)))
+                                                                                           .getOrElse(Future.sync[Option[JValue]](None))
+
+                                        futureContent.flatMap { content => 
+                                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, content))
+                                          aggregationEngine.getObservationCount(token, path, JointObservation(HasValue(variable, value)), terms)
+                                          .map(_.serialize.ok)
+                                        }
                                       }
                                     }
                                   }
@@ -231,7 +244,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                                 path("series") {
                                   get { 
                                     // simply return the names of valid periodicities that can be used for series queries
-                                    (_: HttpRequest[JValue]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
+                                    (_: HttpRequest[Future[JValue]]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
                                       Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
                                   } ~
                                   path("/'periodicity") { 
@@ -259,25 +272,27 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
               } ~ 
               path("/tokens") {
                 get { 
-                  (request: HttpRequest[JValue]) => (token: Token) => {
+                  (request: HttpRequest[Future[JValue]]) => (token: Token) => {
                     tokenManager.listDescendants(token) map { 
                       _.map(_.tokenId).serialize.ok
                     }
                   }
                 } ~
                 post { 
-                  (request: HttpRequest[JValue]) => (parent: Token) => {
-                    request.content map { content => 
-                      val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
-                      val permissions = (content \ "permissions").deserialize(Permissions.permissionsExtractor(parent.permissions))
-                      val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
-                      val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
+                  (request: HttpRequest[Future[JValue]]) => (parent: Token) => {
+                    request.content map { 
+                      _.flatMap { content => 
+                        val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
+                        val permissions = (content \ "permissions").deserialize(Permissions.permissionsExtractor(parent.permissions))
+                        val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
+                        val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
 
-                      if (expires < clock.now()) {
-                        Future.sync(HttpResponse[JValue](BadRequest, content = Some("Your are attempting to create an expired token. Such a token will not be usable.")))
-                      } else tokenManager.issueNew(parent, path, permissions, expires, limits) map {
-                        case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
-                        case Failure(message) => throw new HttpException(BadRequest, message)
+                        if (expires < clock.now()) {
+                          Future.sync(HttpResponse[JValue](BadRequest, content = Some("Your are attempting to create an expired token. Such a token will not be usable.")))
+                        } else tokenManager.issueNew(parent, path, permissions, expires, limits) map {
+                          case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
+                          case Failure(message) => throw new HttpException(BadRequest, message)
+                        }
                       }
                     } getOrElse {
                       Future.sync(HttpResponse[JValue](BadRequest, content = Some("New token must be contained in POST content")))
@@ -287,7 +302,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                 path("/") {
                   path('descendantTokenId) {
                     get { 
-                      (request: HttpRequest[JValue]) => (token: Token) => {
+                      (request: HttpRequest[Future[JValue]]) => (token: Token) => {
                         if (token.tokenId == request.parameters('descendantTokenId)) {
                           token.parentTokenId.map { parTokenId =>
                             tokenManager.lookup(parTokenId).map { parent => 
@@ -307,7 +322,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
                       }
                     } ~
                     delete { 
-                      (request: HttpRequest[JValue]) => (token: Token) => {
+                      (request: HttpRequest[Future[JValue]]) => (token: Token) => {
                         tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
                           HttpResponse[JValue](content = None)
                         }

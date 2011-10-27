@@ -11,6 +11,7 @@ import blueeyes.util.Clock
 
 import MimeTypes._
 
+import blueeyes.core.data._
 import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
@@ -35,6 +36,10 @@ import persistence.MongoSupport._
 import com.reportgrid.ct._
 import com.reportgrid.ct.Mult._
 import com.reportgrid.ct.Mult.MDouble._
+
+import BijectionsChunkJson._
+import BijectionsChunkString._
+import BijectionsChunkFutureJson._
 
 case class PastClock(duration: Duration) extends Clock {
   def now() = new DateTime().minus(duration)

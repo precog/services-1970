@@ -19,7 +19,7 @@ import scalaz.Validation
 
 class ExplorePathService[A](aggregationEngine: AggregationEngine) 
 extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]] {
-  val service = (request: HttpRequest[A]) => Success(
+  val service = (_: HttpRequest[A]) => Success(
     (token: Token, path: Path) => {
       if (token.permissions.explore) {
         aggregationEngine.getPathChildren(token, path).map(_.serialize.ok)
@@ -34,7 +34,7 @@ extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]] {
 
 class ExploreVariableService[A](aggregationEngine: AggregationEngine) 
 extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
-  val service = (request: HttpRequest[A]) => Success(
+  val service = (_: HttpRequest[A]) => Success(
     (token: Token, path: Path, variable: Variable) => {
       if (token.permissions.explore) {
         aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_.child).serialize.ok)
@@ -49,7 +49,7 @@ extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JVal
 
 class ExploreValuesService[A](aggregationEngine: AggregationEngine) 
 extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
-  val service = (request: HttpRequest[A]) => Success(
+  val service = (_: HttpRequest[A]) => Success(
     (token: Token, path: Path, variable: Variable) => {
       if (token.permissions.explore) {
         aggregationEngine.getValues(token, path, variable).map(_.toList.serialize.ok)
@@ -63,17 +63,20 @@ extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JVal
 }
 
 class VariableSeriesService[T: Decomposer : AbelianGroup](aggregationEngine: AggregationEngine, f: ValueStats => T) 
-extends CustomHttpService[JValue, (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
-  val service: HttpRequest[JValue] => Validation[NotServed,(Token, Path, Variable) => Future[HttpResponse[JValue]]]  = (request: HttpRequest[JValue]) => {
+extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
+  //val service: HttpRequest[Future[JValue]] => Validation[NotServed,(Token, Path, Variable) => Future[HttpResponse[JValue]]] = 
+  val service = (request: HttpRequest[Future[JValue]]) => {
     request.parameters.get('periodicity).flatMap(Periodicity.byName)
     .toSuccess(DispatchError(BadRequest, "A periodicity must be specified in order to query for a time series."))
     .map { periodicity =>
       (token: Token, path: Path, variable: Variable) => {
-        val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
+        request.content.map(_.map(Some(_))).getOrElse(Future.sync(None)).flatMap { content => 
+          val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, content))
 
-        aggregationEngine.getVariableSeries(token, path, variable, terms) 
-        .map(transformTimeSeries[ValueStats](request, periodicity))
-        .map(_.map(f.second).serialize.ok)
+          aggregationEngine.getVariableSeries(token, path, variable, terms) 
+          .map(transformTimeSeries[ValueStats](request, periodicity))
+          .map(_.map(f.second).serialize.ok)
+        }
       }
     }
   }
@@ -82,17 +85,19 @@ extends CustomHttpService[JValue, (Token, Path, Variable) => Future[HttpResponse
 }
 
 class ValueSeriesService(aggregationEngine: AggregationEngine) 
-extends CustomHttpService[JValue, (JValue) => (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
-  val service = (request: HttpRequest[JValue]) => {
+extends CustomHttpService[Future[JValue], (JValue) => (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
+  val service = (request: HttpRequest[Future[JValue]]) => {
     request.parameters.get('periodicity).flatMap(Periodicity.byName)
     .toSuccess(DispatchError(BadRequest, "A periodicity must be specified in order to query for a time series."))
     .map { periodicity =>
       (value: JValue) => (token: Token, path: Path, variable: Variable) => {
-        val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, request.content))
+        request.content.map(_.map(Some(_))).getOrElse(Future.sync(None)).flatMap { content => 
+          val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, content))
 
-        aggregationEngine.getObservationSeries(token, path, JointObservation(HasValue(variable, value)), terms)
-        .map(transformTimeSeries(request, periodicity))
-        .map(_.serialize.ok)
+          aggregationEngine.getObservationSeries(token, path, JointObservation(HasValue(variable, value)), terms)
+          .map(transformTimeSeries(request, periodicity))
+          .map(_.serialize.ok)
+        }
       }
     }
   }
@@ -101,34 +106,36 @@ extends CustomHttpService[JValue, (JValue) => (Token, Path, Variable) => Future[
 }
 
 class SearchService(aggregationEngine: AggregationEngine)
-extends CustomHttpService[JValue, Token => Future[HttpResponse[JValue]]] {
+extends CustomHttpService[Future[JValue], Token => Future[HttpResponse[JValue]]] {
   import Extractor._
-  val service = (request: HttpRequest[JValue]) => Success(
+  val service = (request: HttpRequest[Future[JValue]]) => Success(
     (token: Token) => {
-      request.content map { content => 
-        val queryComponents = (content \ "select").validated[String].flatMap(s => Selection.parse(s).toSuccess(Invalid("Invalid selection type: " + s))) |@| 
-                              (content \ "from").validated[String].map(token.path / _) |@|
-                              (content \ "where").validated[Set[HasValue]].map(JointObservation(_))
+      request.content map { 
+        _.flatMap { content => 
+          val queryComponents = (content \ "select").validated[String].flatMap(s => Selection.parse(s).toSuccess(Invalid("Invalid selection type: " + s))) |@| 
+                                (content \ "from").validated[String].map(token.path / _) |@|
+                                (content \ "where").validated[Set[HasValue]].map(JointObservation(_))
 
-        val result = queryComponents.apply {
-          (select, from, observation) => select match {
-            case Count => 
-              val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
-              aggregationEngine.getObservationCount(token, from, observation, terms).map(_.serialize.ok)
+          queryComponents.apply {
+            (select, from, observation) => select match {
+              case Count => 
+                val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
+                aggregationEngine.getObservationCount(token, from, observation, terms).map(_.serialize.ok)
 
-            case Series(periodicity) => 
-              val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, Some(content)))
-              aggregationEngine.getObservationSeries(token, from, observation, terms)
-              .map(transformTimeSeries[CountType](request, periodicity))
-              .map(_.serialize.ok)
+              case Series(periodicity) => 
+                val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, Some(content)))
+                aggregationEngine.getObservationSeries(token, from, observation, terms)
+                .map(transformTimeSeries[CountType](request, periodicity))
+                .map(_.serialize.ok)
 
-            case Related => 
-              val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
-              aggregationEngine.findRelatedInfiniteValues(token, from, observation, terms) map (_.toList.serialize.ok)
+              case Related => 
+                val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
+                aggregationEngine.findRelatedInfiniteValues(token, from, observation, terms) map (_.toList.serialize.ok)
+            }
+          } ||| { 
+            errors => Future.sync(HttpResponse[JValue](BadRequest, content = Some(errors.message.serialize))) 
           }
         }
-
-        result ||| { errors => Future.sync(HttpResponse[JValue](BadRequest, content = Some(errors.message.serialize))) }
       }
     } getOrElse Future.sync {
       HttpResponse[JValue](BadRequest, content = Some("""Request body was empty. The "select", "from", and "where" fields must be specified."""))
@@ -139,31 +146,33 @@ extends CustomHttpService[JValue, Token => Future[HttpResponse[JValue]]] {
 }
 
 class IntersectionService(aggregationEngine: AggregationEngine)
-extends CustomHttpService[JValue, Token => Future[HttpResponse[JValue]]] {
+extends CustomHttpService[Future[JValue], Token => Future[HttpResponse[JValue]]] {
   import Extractor._
-  val service = (request: HttpRequest[JValue]) => Success(
+  val service = (request: HttpRequest[Future[JValue]]) => Success(
     (token: Token) => {
-      request.content map { content => 
-        val queryComponents = (content \ "select").validated[String].flatMap(s => Selection.parse(s).toSuccess(Invalid("Invalid selection type: " + s))) |@| 
-                              (content \ "from").validated[String].map(token.path / _) |@|
-                              (content \ "properties").validated[List[VariableDescriptor]]
+      request.content map { 
+        _.flatMap { content => 
+          val queryComponents = (content \ "select").validated[String].flatMap(s => Selection.parse(s).toSuccess(Invalid("Invalid selection type: " + s))) |@| 
+                                (content \ "from").validated[String].map(token.path / _) |@|
+                                (content \ "properties").validated[List[VariableDescriptor]]
 
-        val result = queryComponents.apply {
-          case (select, from, where) => select match {
-            case Count => 
-              val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
-              aggregationEngine.getIntersectionCount(token, from, where, terms)
-              .map(serializeIntersectionResult[CountType]).map(_.ok)
+          queryComponents.apply {
+            case (select, from, where) => select match {
+              case Count => 
+                val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
+                aggregationEngine.getIntersectionCount(token, from, where, terms)
+                .map(serializeIntersectionResult[CountType]).map(_.ok)
 
-            case Series(periodicity) =>
-              val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, Some(content)))
-              aggregationEngine.getIntersectionSeries(token, from, where, terms)
-              .map(_.map(transformTimeSeries[CountType](request, periodicity).second))
-              .map(serializeIntersectionResult[ResultSet[JObject, CountType]]).map(_.ok)
+              case Series(periodicity) =>
+                val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, Some(content)))
+                aggregationEngine.getIntersectionSeries(token, from, where, terms)
+                .map(_.map(transformTimeSeries[CountType](request, periodicity).second))
+                .map(serializeIntersectionResult[ResultSet[JObject, CountType]]).map(_.ok)
+            }
+          } ||| { 
+            errors => Future.sync(HttpResponse[JValue](BadRequest, content = Some(errors.message.serialize))) 
           }
         }
-
-        result ||| { errors => Future.sync(HttpResponse[JValue](BadRequest, content = Some(errors.message.serialize))) }
       } getOrElse Future.sync {
         HttpResponse[JValue](BadRequest, content = Some("""Request body was empty. The "select", "from", and "properties" fields must be specified."""))
       }
