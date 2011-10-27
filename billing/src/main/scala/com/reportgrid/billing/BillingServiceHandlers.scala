@@ -29,6 +29,7 @@ import blueeyes.json.Printer
 import blueeyes.core.service._
 import blueeyes.core.data._
 import blueeyes.core.data.BijectionsChunkJson._
+import blueeyes.health.HealthMonitor
 
 import blueeyes.json.xschema.{ ValidatedExtraction, Extractor, Decomposer }
 import blueeyes.json.xschema.Extractor._
@@ -108,14 +109,18 @@ object BillingServiceHandlers {
     case Failure(e) => HttpResponse(HttpStatusCodes.BadRequest, content = Some(e))
   }
 
-  class CreateAccountHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
+  class CreateAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
 
     private val accounts = config.accounts
     private val mailer = config.mailer
 
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
-        case None => Future.sync[Validation[String, Account]](failure("Missing request content"))
+        case None => {
+          monitor.count(".accounts.create.failure")
+          config.sendSignupFailure(None, "Request content missing.")
+          Future.sync[Validation[String, Account]](failure("Missing request content"))
+        }
         case Some(js) => js.flatMap[Validation[String, Account]] {
           _.validated[CreateAccount] match {
             case Success(ca) => {
@@ -126,12 +131,14 @@ object BillingServiceHandlers {
                   s
                 }
                 case f @ Failure(e) => {
+                  monitor.count(".accounts.create.failure")
                   config.sendSignupFailure(Some(ca), "Error processing CreateAccount request: [" + e + "]")
                   f
                 }
               }
             }
             case Failure(e) => {
+              monitor.count(".accounts.create.failure")
               config.sendSignupFailure(None, "Error parsing json request into CreateAccount: [" + e.message + "]")
               Future.sync(failure(e.message))
             }
@@ -153,7 +160,7 @@ object BillingServiceHandlers {
 
   // Output
 
-  class CloseAccountHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
+  class CloseAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
         case None => Future.sync[JValue](jerror("outer bang"))
@@ -168,7 +175,7 @@ object BillingServiceHandlers {
   // * requires id, token and password (respec all or allow partial structure?)
   // * how to handle billing implications?
   // * email confirmation of service changes?
-  class UpdateAccountHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
+  class UpdateAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
         case None => Future.sync[JValue](jerror("outer bang"))
@@ -183,7 +190,7 @@ object BillingServiceHandlers {
   // * requires id, token (Master token?) and usage measure
   // * investigate external billing service to ensure usage is clearly communicated
   // ** if not this may require the tracking of aggregate usage in our billing system (ich!)
-  class AccountUsageHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
+  class AccountUsageHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
         case None => Future.sync[JValue](jerror("outer bang"))
@@ -194,17 +201,23 @@ object BillingServiceHandlers {
     }
   }
 
-  class GetAccountHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
+  class GetAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
 
     private val accounts = config.accounts
 
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
-        case None => Future.sync[Validation[String, Account]](failure("Missing request content"))
+        case None => {
+          monitor.count(".accounts.get.failure")
+          Future.sync[Validation[String, Account]](failure("Missing request content"))
+        }
         case Some(x) => x.flatMap[Validation[String, Account]] {
           _.validated[AccountAction] match {
             case Success(a) => getAccount(a)
-            case Failure(e) => Future.sync(failure(e.message))
+            case Failure(e) => {
+              monitor.count(".accounts.get.failure")
+              Future.sync(failure(e.message))
+            }
           }
         }
       }).map[HttpResponse[JValue]](x => collapseToHttpResponse(x.map(_.serialize)))
@@ -232,184 +245,25 @@ object BillingServiceHandlers {
     }
   }
 
-  class AccountAuditHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
+  class AccountAuditHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
 
     private val accounts = config.accounts
 
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       val results = accounts.audit()
       Future.sync(JString("Audit complete.\n").ok)
-      //      val plans = config.billingService.findPlans
-      //      config.findAccounts().map { (accounts => 
-      //        {
-      //          val validAccounts = accounts.flatMap{
-      //            case Success(a) => a :: Nil
-      //            case Failure(_) => Nil
-      //          }
-      //          val creditResults = adjustAccountCredit(plans, validAccounts)
-      //          val results = runAudit(accounts)
-      //          JString("Audit complete.\n" + auditReport(results)).ok
-      //        })
-      //      }
     }
 
-    def adjustAccountCredit(plans: List[Plan], accounts: List[Account]): AdjustCreditResults = {
-      accounts.foldLeft(new AdjustCreditResults())(adjustCredits(plans))
-    }
 
-    private val monthsPerYear: Float = 12
-    private val daysPerYear: Float = 365
-    private val averageDaysPerMonth: Float = 365 / 12
-
-    def adjustCredits(plans: List[Plan])(results: AdjustCreditResults, account: Account): AdjustCreditResults = {
-
-      val planRate = 50 // Get from plan list
-      val dailyRate = planRate / averageDaysPerMonth
-
-      val daysToBeBilled = 1 // compare today and last bill adjustment date
-      val newCredit = math.max(0, account.service.credit - daysToBeBilled * dailyRate)
-
-      // if account disable skip
-      // if credit == 0
-      //   if billing info exists 
-      //     start subscription
-      //     update account credit and last bill adjustment
-      //     send notification
-      //   else
-      //     terminate account
-      //     send notification
-      // else
-      //   if(credit / dailyRate < 7) {
-      //     send email once
-      //   else
-      //     do nothing
-
-      results
-    }
-
-    class AdjustCreditResults() {
-
-    }
-
-    def auditReport(results: OldAuditResults): String = {
-      "Audit results: (" + results.passed + "/" + results.checked + ")\n" +
-        "Billing: (" + results.activeBillingInfo + ") Subscriptions: (" + results.activeSubscriptions + ")\n" +
-        "Errors:\n" +
-        (results.errors.foldLeft("")(_ + "," + _))
-    }
-
-    def runAudit(accounts: List[Validation[String, Account]]): OldAuditResults = {
-      accounts.foldLeft(new OldAuditResults())(process)
-    }
-
-    def process(results: OldAuditResults, account: Validation[String, Account]): OldAuditResults = {
-      account match {
-        case Success(a) => {
-          if (accountValid(a)) {
-            results.passedChecks(a.hasBillingInfo, a.hasSubscription)
-          } else {
-            results.failedChecks(a.hasBillingInfo, a.hasSubscription)
-          }
-        }
-        case Failure(e) => {
-          results.checkError(e)
-        }
-      }
-    }
-
-    def accountValid(account: Account): Boolean = {
-      valuesInExpectedRange(account) &&
-        billingAccountInSync(account)
-    }
-
-    def valuesInExpectedRange(account: Account): Boolean = {
-      account.service.credit >= 0 && account.service.usage >= 0
-    }
-
-    def billingAccountInSync(account: Account): Boolean = {
-      if (account.service.credit == 0 && account.service.status == AccountStatus.ACTIVE) {
-        account.billing.isDefined
-      } else {
-        true
-      }
-    }
-
-    class OldAuditResults(val checked: Int, val passed: Int, val activeBillingInfo: Int, val activeSubscriptions: Int, val errors: List[String]) {
-      def this() = this(0, 0, 0, 0, Nil)
-
-      def checkError(error: String): OldAuditResults = new OldAuditResults(checked + 1, passed, activeBillingInfo, activeSubscriptions, error :: errors)
-      def passedChecks(hasBilling: Boolean, hasSubscription: Boolean): OldAuditResults = {
-        new OldAuditResults(
-          checked + 1,
-          passed + 1,
-          incBilling(hasBilling),
-          incSubscriptions(hasSubscription),
-          errors)
-      }
-
-      def failedChecks(hasBilling: Boolean, hasSubscription: Boolean): OldAuditResults = {
-        new OldAuditResults(
-          checked + 1,
-          passed,
-          incBilling(hasBilling),
-          incSubscriptions(hasSubscription),
-          errors)
-      }
-
-      private def incBilling(hasBilling: Boolean): Int = if (hasBilling) activeBillingInfo + 1 else activeBillingInfo
-      private def incSubscriptions(hasSubscription: Boolean): Int = if (hasSubscription) activeSubscriptions + 1 else activeSubscriptions
-    }
-
-    // Things that should be done
-    // - based on service plan decrement credit and initiate subscription if no more credit
-    // - flag plans without credit or active payment as disabled
-    // - need to thing more about usage monitoring stuff...
-
-    // Reports
-    // - plans in credit period (number, possibly break into days spent/remaining)
-    // - active plans
-    // - disable or otherwise problemattic plans
-
-    // Sanity checks
-
-    // Things that shouldn't be so
-    // - accounts with negative credit
-    // - accounts with negative usage
-    // - accounts with zero credit and no matching billing account
-    // - billing account with 0 or more than 1 credit card
-    // - billing account with more than 1 subscription
-    // - duplicate emails/accountTokens in either accounts or billing
   }
 
-  class AccountAssessmentHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
+  class AccountAssessmentHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
 
     private val accounts = config.accounts
 
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       accounts.assessment()
-      Future.sync(HttpResponse(content = Some(JString("Hello"))))
-    }
-  }
-
-  // Notes
-  // * requires id
-  // * investigate external billing service to ensure usage is clearly communicated
-  // ** if not this may require the tracking of aggregate usage in our billing system (ich!)
-  //  class IsAccountActive(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], String => Future[HttpResponse[JValue]]] {
-  //    def apply(request: HttpRequest[Future[JValue]]): String => Future[HttpResponse[JValue]] = accountId => {
-  //      (request.content match {
-  //        case None => Future.sync[JValue](jerror("outer bang"))
-  //        case Some(x) => x.map[JValue] {
-  //          _.validated[UserSignup].fold(jerror, _.serialize)
-  //        }
-  //      }).map(jval => HttpResponse[JValue](content = Some(jval)))
-  //    }
-  //  }
-
-  class StaticJValue extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-    def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
-      println("Static response foo")
-      Future.sync(HttpResponse[JValue](content = Some(JString("Static response"))))
+      Future.sync(HttpResponse(content = Some(JString("Assessment complete."))))
     }
   }
 
