@@ -21,7 +21,7 @@ import com.braintreegateway.{ BraintreeGateway, Environment }
 
 import net.lag.configgy.ConfigMap
 
-trait NewBillingService extends BlueEyesServiceBuilder with BijectionsChunkString with BijectionsChunkJson with BijectionsChunkFutureJson {
+trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString with BijectionsChunkJson with BijectionsChunkFutureJson {
   
   implicit def httpClient: HttpClient[ByteChunk]
   
@@ -39,24 +39,26 @@ trait NewBillingService extends BlueEyesServiceBuilder with BijectionsChunkStrin
         val bc = BillingConfiguration(accounts, mailer)
         Future.sync(bc)
       } -> request { config =>
+        headerParameterRequired("ReportGridDecrypter", "Service may only be accessed via SSL.") {
         jvalue {
-          path("/accounts/") {
-            put { new CreateAccountHandler(config) } ~
-//            delete { new CloseAccountHandler(config) } ~
-//            post { new UpdateAccountHandler(config) } ~
-            path("get") {
-              post { new GetAccountHandler(config) }              
-            } ~
-//            path("usage") {
-//                put { new AccountUsageHandler(config) }
-//            } ~
-//            path("audit") {
-//              post { new AccountAuditHandler(config) }              
-//            } ~
-            path("assess") {
-              post { new AccountAssessmentHandler(config) }              
-            }
-          }
+              path("/accounts/") {
+                put { new CreateAccountHandler(config) } ~
+    //            delete { new CloseAccountHandler(config) } ~
+    //            post { new UpdateAccountHandler(config) } ~
+                path("get") {
+                  post { new GetAccountHandler(config) }              
+                } ~
+    //            path("usage") {
+    //                put { new AccountUsageHandler(config) }
+    //            } ~
+    //            path("audit") {
+    //              post { new AccountAuditHandler(config) }              
+    //            } ~
+                path("assess") {
+                  post { new AccountAssessmentHandler(config) }              
+                }
+              }
+        }
         }
       } -> shutdown { config =>
         config.shutdown

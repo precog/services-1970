@@ -19,7 +19,10 @@ import com.reportgrid.billing.braintree._
 import blueeyes.persistence.mongo.Database
 import blueeyes.persistence.mongo._
 import blueeyes.concurrent.Future
+import blueeyes.core.http.HttpStatusCodes.Unauthorized
+import blueeyes.core.http.HttpRequest
 import blueeyes.core.http._
+import blueeyes.core.http.HttpStatusCodes
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonParser
 import blueeyes.core.service._
@@ -35,13 +38,14 @@ import SerializationHelpers._
 
 abstract class TokenGenerator {
   def newToken(path: String): Future[Validation[String, String]]
-  def deleteToken(token: String): Future[Unit] 
+  def deleteToken(token: String): Future[Unit]
 }
 
 class MockTokenGenerator extends TokenGenerator {
   override def newToken(path: String) = {
     Future.sync(Success(UUID.randomUUID().toString().toUpperCase()))
   }
+
   override def deleteToken(token: String) = {
     Future.sync(Unit)
   }
@@ -50,12 +54,12 @@ class MockTokenGenerator extends TokenGenerator {
 class RealTokenGenerator(client: HttpClient[ByteChunk], rootToken: String, rootUrl: String) extends TokenGenerator {
 
   import blueeyes.core.http.MimeTypes._
-  
+
   val defaultOrder = 2
-  val defaultLimit = 100
+  val defaultLimit = 10
   val defaultDepth = 3
   val defaultTags = 1
-  
+
   override def newToken(path: String) = {
     client.
       query("tokenId", rootToken).
@@ -77,19 +81,20 @@ class RealTokenGenerator(client: HttpClient[ByteChunk], rootToken: String, rootU
                 "tags" : %d
             }
           }
-        """.format(path, defaultOrder, defaultLimit, defaultDepth, defaultTags)
-      ))
-  }.map{ h => h.content match {
-    case Some(JString(s)) => Success(s)
-    case _                => Failure("Unable to create new token")
-  }}
-  
+        """.format(path, defaultOrder, defaultLimit, defaultDepth, defaultTags)))
+  }.map { h =>
+    h.content match {
+      case Some(JString(s)) => Success(s)
+      case _ => Failure("Unable to create new token")
+    }
+  }
+
   override def deleteToken(token: String) = {
     client.
       query("tokenId", rootToken).
       contentType[ByteChunk](application / json).
       delete[JValue](rootUrl + token)
-    }.map(_ => Unit)
+  }.map(_ => Unit)
 }
 
 object BillingServiceHandlers {
@@ -97,15 +102,16 @@ object BillingServiceHandlers {
   private def jerror(message: String): JValue = JString(message)
   private def jerror(error: Error): JValue = jerror(error.message)
 
-  private def collapseToHttpResponse(v: Validation[String, JValue]): HttpResponse[JValue] = {
-    HttpResponse[JValue](content = Some(v.fold[JValue](jerror(_), x => x)))
+  private def collapseToHttpResponse(v: Validation[String, JValue]): HttpResponse[JValue] = v match {
+    case Success(jv) => HttpResponse[JValue](content = Some(jv))
+    case Failure(e) => HttpResponse(HttpStatusCodes.BadRequest, content = Some(e))
   }
 
   class CreateAccountHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-    
+
     private val accounts = config.accounts
     private val mailer = config.mailer
-    
+
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
         case None => Future.sync[Validation[String, Account]](failure("Missing request content"))
@@ -173,9 +179,9 @@ object BillingServiceHandlers {
   }
 
   class GetAccountHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-    
+
     private val accounts = config.accounts
-    
+
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
         case None => Future.sync[Validation[String, Account]](failure("Missing request content"))
@@ -191,57 +197,59 @@ object BillingServiceHandlers {
     def getAccount(request: AccountAction): Future[Validation[String, Account]] = {
       val token = request.accountToken
       val email = request.email
-      
-      val account = if(token.isDefined && token.get.trim.size > 0) {
+
+      val account = if (token.isDefined && token.get.trim.size > 0) {
         accounts.findByToken(token.get)
-      } else if(email.isDefined && email.get.trim.size > 0) {
+      } else if (email.isDefined && email.get.trim.size > 0) {
         accounts.findByEmail(email.get)
       } else {
         Future.sync(Failure("You must provide a valid token or email."))
       }
-      account.map{ oa => oa.flatMap{ a =>
-        if(PasswordHash.checkSaltedHash(request.password, a.id.passwordHash)) 
-          Success(a) else 
-          Failure("You must provide valid identification and authentication information.") 
+      account.map { oa =>
+        oa.flatMap { a =>
+          if (PasswordHash.checkSaltedHash(request.password, a.id.passwordHash))
+            Success(a)
+          else
+            Failure("You must provide valid identification and authentication information.")
         }
       }
     }
   }
 
   class AccountAuditHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-    
+
     private val accounts = config.accounts
-    
+
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       val results = accounts.audit()
       Future.sync(JString("Audit complete.\n").ok)
-//      val plans = config.billingService.findPlans
-//      config.findAccounts().map { (accounts => 
-//        {
-//          val validAccounts = accounts.flatMap{
-//            case Success(a) => a :: Nil
-//            case Failure(_) => Nil
-//          }
-//          val creditResults = adjustAccountCredit(plans, validAccounts)
-//          val results = runAudit(accounts)
-//          JString("Audit complete.\n" + auditReport(results)).ok
-//        })
-//      }
+      //      val plans = config.billingService.findPlans
+      //      config.findAccounts().map { (accounts => 
+      //        {
+      //          val validAccounts = accounts.flatMap{
+      //            case Success(a) => a :: Nil
+      //            case Failure(_) => Nil
+      //          }
+      //          val creditResults = adjustAccountCredit(plans, validAccounts)
+      //          val results = runAudit(accounts)
+      //          JString("Audit complete.\n" + auditReport(results)).ok
+      //        })
+      //      }
     }
-    
+
     def adjustAccountCredit(plans: List[Plan], accounts: List[Account]): AdjustCreditResults = {
       accounts.foldLeft(new AdjustCreditResults())(adjustCredits(plans))
     }
-    
+
     private val monthsPerYear: Float = 12
     private val daysPerYear: Float = 365
     private val averageDaysPerMonth: Float = 365 / 12
-    
+
     def adjustCredits(plans: List[Plan])(results: AdjustCreditResults, account: Account): AdjustCreditResults = {
-      
+
       val planRate = 50 // Get from plan list
       val dailyRate = planRate / averageDaysPerMonth
-      
+
       val daysToBeBilled = 1 // compare today and last bill adjustment date
       val newCredit = math.max(0, account.service.credit - daysToBeBilled * dailyRate)
 
@@ -259,12 +267,12 @@ object BillingServiceHandlers {
       //     send email once
       //   else
       //     do nothing
-      
+
       results
     }
-    
+
     class AdjustCreditResults() {
-      
+
     }
 
     def auditReport(results: OldAuditResults): String = {
@@ -316,18 +324,18 @@ object BillingServiceHandlers {
       def checkError(error: String): OldAuditResults = new OldAuditResults(checked + 1, passed, activeBillingInfo, activeSubscriptions, error :: errors)
       def passedChecks(hasBilling: Boolean, hasSubscription: Boolean): OldAuditResults = {
         new OldAuditResults(
-          checked + 1, 
-          passed + 1, 
-          incBilling(hasBilling), 
+          checked + 1,
+          passed + 1,
+          incBilling(hasBilling),
           incSubscriptions(hasSubscription),
           errors)
       }
 
       def failedChecks(hasBilling: Boolean, hasSubscription: Boolean): OldAuditResults = {
         new OldAuditResults(
-          checked + 1, 
-          passed, 
-          incBilling(hasBilling), 
+          checked + 1,
+          passed,
+          incBilling(hasBilling),
           incSubscriptions(hasSubscription),
           errors)
       }
@@ -358,9 +366,9 @@ object BillingServiceHandlers {
   }
 
   class AccountAssessmentHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-    
+
     private val accounts = config.accounts
-    
+
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       accounts.assessment()
       Future.sync(HttpResponse(content = Some(JString("Hello"))))
@@ -382,20 +390,37 @@ object BillingServiceHandlers {
   //    }
   //  }
 
-    class StaticJValue extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-      def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
-        println("Static response foo")
-        Future.sync(HttpResponse[JValue](content = Some(JString("Static response"))))
+  class StaticJValue extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
+    def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
+      println("Static response foo")
+      Future.sync(HttpResponse[JValue](content = Some(JString("Static response"))))
+    }
+  }
+
+  class RequireHeaderParameter[T, S](headerParameter: String, errorMessage: String, val delegate: HttpService[T, S]) extends DelegatingService[T, S, T, S] {
+    
+    val metadata = None
+    
+    def service = (r: HttpRequest[T]) => {
+      val p = r.headers.get(headerParameter)
+      p match {
+        case Some(v) => delegate.service(r)
+        case None => Failure(DispatchError(Unauthorized, errorMessage))
       }
     }
-
+  }
+  
+  def headerParameterRequired[T, S](parameter: String, error: String): HttpService[T, S] => HttpService[T, S] = {
+    in => new RequireHeaderParameter[T, S](parameter, error, in)
+  }
+  
   case class BillingConfiguration(
     accounts: Accounts,
     mailer: Mailer) {
-//    tokenGenerator: TokenGenerator,
-//    database: Database,
-//    accountsCollection: String,
-//    billingService: BraintreeService) {
+    //    tokenGenerator: TokenGenerator,
+    //    database: Database,
+    //    accountsCollection: String,
+    //    billingService: BraintreeService) {
 
     def shutdown(): Unit = Unit
 
@@ -406,8 +431,7 @@ object BillingServiceHandlers {
   case class AccountAction(
     email: Option[String],
     accountToken: Option[String],
-    password: String
-    )
+    password: String)
 
   trait AccountActionSerialization {
     implicit val AccountActionDecomposer: Decomposer[AccountAction] = new Decomposer[AccountAction] {
@@ -417,7 +441,7 @@ object BillingServiceHandlers {
           JField("accountToken", action.accountToken.serialize),
           JField("password", action.password.serialize)).filter(fieldHasValue))
     }
-    
+
     implicit val AccountActionExtractor: Extractor[AccountAction] = new Extractor[AccountAction] with ValidatedExtraction[AccountAction] {
       override def validated(obj: JValue): Validation[Error, AccountAction] = (
         (obj \ "email").validated[Option[String]] |@|

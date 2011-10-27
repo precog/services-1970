@@ -13,7 +13,7 @@ import blueeyes.core.data.ByteChunk
 import com.reportgrid.billing._
 import com.reportgrid.billing.braintree.BraintreeService
 
-object BillingServer extends BlueEyesServer with NewBillingService with ServerHealthMonitorService {
+object BillingServer extends BlueEyesServer with BillingService with ServerHealthMonitorService {
 
   override def httpClient: HttpClient[ByteChunk] = new HttpClientXLightWeb
   
@@ -23,17 +23,14 @@ object BillingServer extends BlueEyesServer with NewBillingService with ServerHe
     val mongoConfig = config.configMap("mongo")
     val mongo = mongoFactory(mongoConfig)
 
-    val databaseName = mongoConfig.getString("database")
-    if(databaseName.isEmpty) throw new IllegalArgumentException("Accounts database setting required")
+    val databaseName = getConfigSetting("Mongo", "database", mongoConfig)
+    val accountsCollection = getConfigSetting("Mongo", "collection", mongoConfig)
     
-    val accountsCollection = mongoConfig.getString("collection")
-    if(accountsCollection.isEmpty) throw new IllegalArgumentException("Accounts collection setting required")
-    
-    val database = mongo.database(databaseName.get)
+    val database = mongo.database(databaseName)
     val billingService = braintreeFactory(config.configMap("braintree"))
     val tokenGenerator = tokenGeneratorFactory(config.configMap("tokenGenerator"))
         
-    new Accounts(config.configMap("accounts"), tokenGenerator, billingService, database, accountsCollection.get)
+    new Accounts(config.configMap("accounts"), tokenGenerator, billingService, database, accountsCollection)
   }
 
   def mongoFactory(config: ConfigMap): Mongo = {
@@ -41,15 +38,15 @@ object BillingServer extends BlueEyesServer with NewBillingService with ServerHe
   }
   
   def braintreeFactory(config: ConfigMap): BraintreeService = {
-    val env = getConfigSetting(config, "environment") match {
+    val env = getConfigSetting("Braintree", "environment", config) match {
       case x if x.toUpperCase() == "SANDBOX"    => Environment.SANDBOX
       case x if x.toUpperCase() == "PRODUCTION" => Environment.PRODUCTION
-      case x                                    => throw new IllegalArgumentException("Invalid braintree environment setting: " + x)
+      case x                                    => sys.error("Braintree: invalid environment setting: " + x)
     }
     
-    val merchantId = getConfigSetting(config, "merchantId")
-    val publicKey = getConfigSetting(config, "publicKey")
-    val privateKey = getConfigSetting(config, "privateKey")
+    val merchantId = getConfigSetting("Braintree", "merchantId", config)
+    val publicKey = getConfigSetting("Braintree", "publicKey", config)
+    val privateKey = getConfigSetting("Braintree", "privateKey", config)
     
     val gateway = new BraintreeGateway(
       env,
@@ -60,15 +57,15 @@ object BillingServer extends BlueEyesServer with NewBillingService with ServerHe
     new BraintreeService(gateway, env)
   }
   
-  private def getConfigSetting(config: ConfigMap, key: String): String = {
-    config.getString(key) match {
-      case Some(x) => x
-      case None    => throw new IllegalArgumentException("Braintree %s setting required.".format(key))
-    }
+  private def getConfigSetting(prefix: String, key: String, config: ConfigMap): String = {
+    config.getString(key).getOrElse(sys.error("%s: %s setting required.".format(prefix, key)))
   }
   
   def tokenGeneratorFactory(config: ConfigMap) = {
-    new MockTokenGenerator
+    val rootToken = getConfigSetting("TokenGenerator", "rootToken", config)
+    val rootUrl = getConfigSetting("TokenGenerator", "rootUrl", config)
+
+    new RealTokenGenerator(httpClient, rootToken, rootUrl)
   }
   
   override def main(args: Array[String]) = {
