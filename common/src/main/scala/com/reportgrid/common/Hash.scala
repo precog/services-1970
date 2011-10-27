@@ -1,4 +1,4 @@
-package com.reportgrid.analytics
+package com.reportgrid.common
 
 trait HashFunction extends (Array[Byte] => Array[Byte])
 

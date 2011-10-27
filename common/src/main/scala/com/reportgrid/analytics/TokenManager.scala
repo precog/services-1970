@@ -24,8 +24,6 @@ import scala.math._
 import scalaz.Scalaz._
 import scalaz.Validation
 
-import com.reportgrid.analytics.persistence.MongoSupport._
-
 object TokenManager {
   def apply(database: Database, tokensCollection: MongoCollection) = {
     val RootTokenJ: JObject      = Token.Root.serialize.asInstanceOf[JObject]
