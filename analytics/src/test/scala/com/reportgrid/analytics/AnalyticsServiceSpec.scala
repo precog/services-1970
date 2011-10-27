@@ -43,8 +43,15 @@ case class PastClock(duration: Duration) extends Clock {
 }
 
 trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsService with LocalMongo {
+  val requestLoggingData = """
+    requestLog {
+      enabled = true
+      fields = "time cs-method cs-uri sc-status cs-content"
+    }
+  """
+
   override val clock = Clock.System
-  override val configuration = "services{analytics{v1{" + mongoConfigFileData + "}}}"
+  override val configuration = "services{analytics{v1{" + requestLoggingData + mongoConfigFileData + "}}}"
 
   //override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
   override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()

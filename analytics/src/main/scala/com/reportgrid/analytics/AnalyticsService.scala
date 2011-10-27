@@ -66,6 +66,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
   val clock: Clock
 
   val analyticsService = this.service("analytics", "1.0") {
+    requestLogging {
     logging { logger =>
       healthMonitor { monitor => context =>
         startup {
@@ -323,7 +324,7 @@ with AnalyticsServiceCombinators with ReportGridInstrumentation {
         }
       }
     }
-  }
+  }}
 }
 
 object AnalyticsService extends HttpRequestHandlerCombinators with PartialFunctionCombinators {
