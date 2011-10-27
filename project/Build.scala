@@ -6,7 +6,7 @@ import sbt.NameFilter._
 
 object ServicesSettings {
   val buildOrganization = "com.reportgrid"
-  val buildVersion = "1.2.1"
+  val buildVersion = "1.2.2-SNAPSHOT"
   val buildScalaVersion = "2.9.1"
   
   val serviceSettings = Defaults.defaultSettings ++ Seq (
