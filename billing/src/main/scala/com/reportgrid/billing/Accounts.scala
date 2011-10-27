@@ -2,15 +2,11 @@ package com.reportgrid.billing
 
 import blueeyes.persistence.mongo._
 
-import java.security.SecureRandom
-
 import scala.collection.JavaConverters._
 
 import scalaz._
 import scalaz.Scalaz._
 
-import org.apache.commons.codec.digest.DigestUtils
-import org.apache.commons.codec.binary.Hex
 import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
 import org.joda.time.DateMidnight
@@ -34,9 +30,9 @@ import SerializationHelpers._
 
 class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: BraintreeService, database: Database, accountsCollection: String) {
 
-  def credits = config.getConfigMap("credits")
-
   type FV[E, A] = Future[Validation[E, A]]
+
+  def credits = config.getConfigMap("credits")
 
   def create(create: CreateAccount): FV[String, Account] = {
     val errs = validateCreate(create)
@@ -92,18 +88,18 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
     }
   }
 
-  def toPath(email: String): String = {
+  private def toPath(email: String): String = {
     val parts = email.split("[@.]")
     val sanitizedParts = parts.map(sanitize)
-    sanitizedParts.reduceLeft((a, b) => b + "_" + a)
+    "/" + sanitizedParts.reduceLeft((a, b) => b + "_" + a)
   }
   
-  def sanitize(s: String): String = {
+  private def sanitize(s: String): String = {
     s.replaceAll("\\W", "_")
   }
   
   private def validateCreate(create: CreateAccount): Option[String] = {
-    validateOther(create).orElse(validateBilling(create.billing))
+    validateOther(create).orElse(validateBilling(create.contact.address.postalCode, create.billing))
   }
 
   private def validateOther(c: CreateAccount): Option[String] = {
@@ -118,10 +114,10 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
     }
   }
 
-  private def validateBilling(ob: Option[BillingInformation]): Option[String] = {
+  private def validateBilling(postalCode: String, ob: Option[BillingInformation]): Option[String] = {
     ob match {
       case Some(b) if b.cardholder.trim().size == 0 => Some("Cardholder name required.")
-      case Some(b) if b.postalCode.trim().size == 0 => Some("Postal code required.")
+      case Some(b) if postalCode.trim().size == 0 => Some("Postal code required.")
       case _ => None
     }
   }
@@ -326,7 +322,7 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
           billing.billing
       )
       
-      val newba = billingService.newUserAndCard(c, b, acc.id.token)
+      val newba = billingService.newCustomer(c, b, acc.id.token)
       val subs = billing.subscriptionId.flatMap { s =>
         val c = billingService.findCustomer(acc.id.token)
         c.map(c => {
@@ -371,7 +367,7 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
   def establishBilling(create: CreateAccount, token: String, hasCredit: Boolean): Validation[String, Option[BillingAccount]] = {
     create.billing match {
       case Some(b) if hasCredit => {
-        val cust = billingService.newUserAndCard(create, b, token)
+        val cust = billingService.newCustomer(create, b, token)
         cust match {
           case Success(c) => {
             Success(Some(BillingAccount(Some(b), None)))
@@ -380,7 +376,7 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
         }
       }
       case Some(b) => {
-        val cust = billingService.newUserAndCard(create, b, token)
+        val cust = billingService.newCustomer(create, b, token)
         cust match {
           case Success(c) => {
             val subs = billingService.newSubscription(c, create.planId)
@@ -484,8 +480,7 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
           c.getLast4(),
           c.getExpirationMonth().toInt,
           c.getExpirationYear().toInt,
-          "",
-          c.getBillingAddress().getPostalCode())
+          "")
       }
     }
     val subs = card.flatMap { c =>
@@ -529,247 +524,6 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
   }
 }
 
-object SerializationHelpers {
-  def fieldHasValue(field: JField): Boolean = field.value match {
-    case JNull => false
-    case _ => true
-  }
-}
-
-object AccountStatus extends Enumeration {
-  type AccountStatus = Value
-  val ACTIVE, GRACE_PERIOD, DISABLED, ERROR = Value
-
-  implicit val AccountDecomposer: Decomposer[AccountStatus] = new Decomposer[AccountStatus] {
-    override def decompose(status: AccountStatus): JValue = JString(status.toString())
-  }
-
-  implicit val AccountExtractor: Extractor[AccountStatus] = new Extractor[AccountStatus] {
-    override def extract(jvalue: JValue): AccountStatus = {
-      jvalue match {
-        case JString(s) => {
-          try {
-            AccountStatus.withName(s)
-          } catch {
-            case ex => ERROR
-          }
-        }
-        case _ => ERROR
-      }
-    }
-  }
-
-  // Extractor not required as all instances are created with this service
-}
-
-import AccountStatus._
-
-trait Account {
-  def id: AccountId
-  def contact: ContactInformation
-  def service: ServiceInformation
-  def billing: Option[BillingInformation]
-
-  def hasSubscription: Boolean = service.subscriptionId.isDefined
-  def hasBillingInfo: Boolean = billing.isDefined
-
-  def asTrackingAccount: TrackingAccount = {
-    TrackingAccount(id, contact, service)
-  }
-
-  def asBillingAccount: BillingAccount = {
-    BillingAccount(billing, service.subscriptionId)
-  }
-}
-
-case class AccountId(
-  token: String,
-  email: String,
-  passwordHash: String)
-
-trait AccountIdSerialization {
-
-  val UnsafeAccountIdDecomposer: Decomposer[AccountId] = new Decomposer[AccountId] {
-    override def decompose(id: AccountId): JValue = JObject(
-      List(
-        JField("token", id.token.serialize),
-        JField("email", id.email.serialize),
-        JField("passwordHash", id.passwordHash.serialize)).filter(fieldHasValue))
-  }
-
-  implicit val SafeAccountIdDecomposer: Decomposer[AccountId] = new Decomposer[AccountId] {
-    override def decompose(id: AccountId): JValue = JObject(
-      List(
-        JField("token", id.token.serialize),
-        JField("email", id.email.serialize)).filter(fieldHasValue))
-  }
-
-  implicit val AccountIdExtractor: Extractor[AccountId] = new Extractor[AccountId] with ValidatedExtraction[AccountId] {
-    override def validated(obj: JValue): Validation[Error, AccountId] = (
-      (obj \ "token").validated[String] |@|
-      (obj \ "email").validated[String]).apply(AccountId(_, _, (obj \ "passwordHash").validated[String] | ""))
-  }
-
-}
-
-object AccountId extends AccountIdSerialization
-
-case class ContactInformation(
-  firstName: Option[String],
-  lastName: Option[String],
-  company: Option[String],
-  title: Option[String],
-  phone: Option[String],
-  website: Option[String],
-  address: Address)
-
-trait ContactInformationSerialization {
-
-  implicit val ContactInformationDecomposer: Decomposer[ContactInformation] = new Decomposer[ContactInformation] {
-    override def decompose(contact: ContactInformation): JValue = JObject(
-      List(
-        JField("firstName", contact.firstName.serialize),
-        JField("lastName", contact.lastName.serialize),
-        JField("company", contact.company.serialize),
-        JField("title", contact.title.serialize),
-        JField("phone", contact.phone.serialize),
-        JField("website", contact.website.serialize),
-        JField("address", contact.address.serialize)).filter(fieldHasValue))
-  }
-
-  implicit val ContactInformationExtractor: Extractor[ContactInformation] = new Extractor[ContactInformation] with ValidatedExtraction[ContactInformation] {
-    override def validated(obj: JValue): Validation[Error, ContactInformation] = (
-      (obj \ "firstName").validated[Option[String]] |@|
-      (obj \ "lastName").validated[Option[String]] |@|
-      (obj \ "company").validated[Option[String]] |@|
-      (obj \ "title").validated[Option[String]] |@|
-      (obj \ "phone").validated[Option[String]] |@|
-      (obj \ "website").validated[Option[String]] |@|
-      (obj \ "address").validated[Address]).apply(ContactInformation(_, _, _, _, _, _, _))
-  }
-
-}
-
-object ContactInformation extends ContactInformationSerialization
-
-case class Address(
-  street: Option[String],
-  city: Option[String], //(region)
-  state: Option[String], //(locality)
-  postalCode: Option[String])
-
-trait AddressSerialization {
-
-  implicit val AddressDecomposer: Decomposer[Address] = new Decomposer[Address] {
-    override def decompose(address: Address): JValue = JObject(
-      List(
-        JField("street", address.street.serialize),
-        JField("city", address.city.serialize),
-        JField("state", address.state.serialize),
-        JField("postalCode", address.postalCode.serialize)))
-  }
-
-  implicit val AddressExtractor: Extractor[Address] = new Extractor[Address] with ValidatedExtraction[Address] {
-    override def validated(obj: JValue): Validation[Error, Address] = (
-      (obj \ "street").validated[Option[String]] |@|
-      (obj \ "city").validated[Option[String]] |@|
-      (obj \ "state").validated[Option[String]] |@|
-      (obj \ "postalCode").validated[Option[String]]).apply(Address(_, _, _, _))
-  }
-
-}
-
-object Address extends AddressSerialization
-
-case class ServiceInformation(
-  planId: String,
-  accountCreated: DateTime,
-  credit: Int,
-  lastCreditAssessment: DateTime,
-  usage: Long,
-  status: AccountStatus,
-  gracePeriodExpires: Option[DateTime],
-  subscriptionId: Option[String]) {
-
-  def withNoCreditChange(assessedOn: DateTime): ServiceInformation = {
-    withNewCredit(assessedOn, credit)
-  }
-
-  def withNewCredit(assessedOn: DateTime, newCredit: Int): ServiceInformation = {
-    ServiceInformation(planId, accountCreated, newCredit, assessedOn, usage, status, gracePeriodExpires, subscriptionId)
-  }
-
-  def withNewSubscription(newSubscriptionId: Option[String]): ServiceInformation = {
-    ServiceInformation(planId, accountCreated, credit, lastCreditAssessment, usage, status, gracePeriodExpires, newSubscriptionId)
-  }
-
-  def disableAccount(): ServiceInformation = {
-    ServiceInformation(planId, accountCreated, credit, lastCreditAssessment, usage, AccountStatus.DISABLED, None, subscriptionId)
-  }
-
-  def activeGracePeriod(expiresOn: DateTime): ServiceInformation = {
-    ServiceInformation(planId, accountCreated, credit, lastCreditAssessment, usage, AccountStatus.GRACE_PERIOD, Some(expiresOn), subscriptionId)
-  }
-}
-
-trait ServiceInformationSerialization {
-
-  implicit val ServiceInformationDecomposer: Decomposer[ServiceInformation] = new Decomposer[ServiceInformation] {
-    override def decompose(address: ServiceInformation): JValue = JObject(
-      List(
-        JField("planId", address.planId.serialize),
-        JField("accountCreated", address.accountCreated.serialize),
-        JField("credit", address.credit.serialize),
-        JField("lastCreditAssessment", address.lastCreditAssessment.serialize),
-        JField("usage", address.usage.serialize),
-        JField("status", address.status.serialize),
-        JField("gracePeriodExpires", address.gracePeriodExpires.serialize),
-        JField("subscriptionId", address.subscriptionId.serialize)))
-  }
-
-  implicit val ServiceInformationExtractor: Extractor[ServiceInformation] = new Extractor[ServiceInformation] with ValidatedExtraction[ServiceInformation] {
-    override def validated(obj: JValue): Validation[Error, ServiceInformation] = (
-      (obj \ "planId").validated[String] |@|
-      (obj \ "accountCreated").validated[DateTime] |@|
-      (obj \ "credit").validated[Int] |@|
-      (obj \ "lastCreditAssessment").validated[DateTime] |@|
-      (obj \ "usage").validated[Long] |@|
-      (obj \ "status").validated[AccountStatus] |@|
-      (obj \ "gracePeriodExpires").validated[Option[DateTime]] |@|
-      (obj \ "subscriptionId").validated[Option[String]]).apply(ServiceInformation(_, _, _, _, _, _, _, _))
-  }
-}
-
-object ServiceInformation extends ServiceInformationSerialization
-
-case class ValueAccount(
-  val id: AccountId,
-  val contact: ContactInformation,
-  val service: ServiceInformation,
-  val billing: Option[BillingInformation]) extends Account
-
-trait AccountSerialization {
-  implicit val AccountDecomposer: Decomposer[Account] = new Decomposer[Account] {
-    override def decompose(account: Account): JValue = JObject(
-      List(
-        JField("id", account.id.serialize),
-        JField("contact", account.contact.serialize),
-        JField("service", account.service.serialize),
-        JField("billing", account.billing.serialize)).filter(fieldHasValue))
-  }
-
-  implicit val AccountExtractor: Extractor[Account] = new Extractor[Account] with ValidatedExtraction[Account] {
-    override def validated(obj: JValue): Validation[Error, Account] = (
-      (obj \ "id").validated[AccountId] |@|
-      (obj \ "contact").validated[ContactInformation] |@|
-      (obj \ "service").validated[ServiceInformation] |@|
-      (obj \ "billing").validated[Option[BillingInformation]]).apply(
-        ValueAccount(_, _, _, _))
-  }
-}
-
-object Account extends AccountSerialization
-
 case class TrackingAccount(
   id: AccountId,
   contact: ContactInformation,
@@ -802,83 +556,7 @@ case class BillingAccount(
   billing: Option[BillingInformation],
   subscriptionId: Option[String])
 
-object PasswordHash {
-
-  val saltBytes = 20
-
-  def saltedHash(password: String): String = {
-    val salt = generateSalt
-    val hash = hashWithSalt(salt, password)
-    salt + hash
-  }
-
-  def generateSalt(): String = {
-    val random = new SecureRandom()
-    val salt = random.generateSeed(saltBytes)
-    Hex.encodeHexString(salt).toUpperCase()
-  }
-
-  def checkSaltedHash(password: String, saltedHash: String): Boolean = {
-    val saltLength = saltBytes * 2
-    val salt = saltedHash.substring(0, saltLength)
-    val hash = saltedHash.substring(saltLength)
-    val testHash = hashWithSalt(salt, password)
-    hash == testHash
-  }
-
-  private def hashWithSalt(salt: String, password: String): String = {
-    hashFunction(salt + password)
-  }
-
-  private def hashFunction(password: String): String = {
-    DigestUtils.shaHex(password).toUpperCase()
-  }
-}
-
-case class BillingInformation(
-  cardholder: String,
-  number: String,
-  expMonth: Int,
-  expYear: Int,
-  cvv: String,
-  postalCode: String) {
-
-  def expDate = expMonth + "/" + expYear
-
-  def safeNumber: String = {
-    val show = 4
-    val required = 16
-    val size = number.length
-    val fill = required - (if (size >= show) show else size)
-    ("*" * fill) + (if (size >= show) number.substring(size - show) else number)
-  }
-}
-
-trait BillingInfoSerialization {
-
-  implicit val BillingInfoDecomposer: Decomposer[BillingInformation] = new Decomposer[BillingInformation] {
-    override def decompose(billing: BillingInformation): JValue = JObject(
-      List(
-        JField("cardholder", billing.cardholder.serialize),
-        JField("number", billing.safeNumber.serialize),
-        JField("expMonth", billing.expMonth.serialize),
-        JField("expYear", billing.expYear.serialize),
-        JField("postalCode", billing.postalCode.serialize)))
-  }
-
-  implicit val BillingInfoExtractor: Extractor[BillingInformation] = new Extractor[BillingInformation] with ValidatedExtraction[BillingInformation] {
-    override def validated(obj: JValue): Validation[Error, BillingInformation] = (
-      (obj \ "cardholder").validated[String] |@|
-      (obj \ "number").validated[String] |@|
-      (obj \ "expMonth").validated[Int] |@|
-      (obj \ "expYear").validated[Int] |@|
-      (obj \ "postalCode").validated[String]).apply(
-        BillingInformation(_, _, _, _, (obj \ "cvv").validated[String] | "", _))
-  }
-}
-
-object BillingInformation extends BillingInfoSerialization
-
+  
 case class CreateAccount(
   email: String,
   password: String,
@@ -920,24 +598,15 @@ class AuditResults {
 class AssessmentResults {
 }
 
-trait Mailer {
-  def send(): Future[Validation[String, Unit]]
-}
-
-class SendMailer extends Mailer {
-  def send(): Future[Validation[String, Unit]] = Future.sync(Failure("Not yet implemented"))
-}
-
-class NullMailer extends Mailer {
-  def send(): Future[Validation[String, Unit]] = Future.sync(Success(()))
-}
-
 object TestAccounts {
   val testAccount = new ValueAccount(
     AccountId("token", "john@doe.com", "hash"),
-    ContactInformation(Some("john"), Some("doe"), Some("j co"), Some("title"), Some("j.co"), Some("303-494-1893"),
-      Address(Some("street"), Some("city"), Some("state"), Some("60607"))),
-    ServiceInformation("starter", new DateTime(DateTimeZone.UTC), 0, new DateTime(DateTimeZone.UTC).toDateMidnight().toDateTime(), 0, AccountStatus.ACTIVE, None, None),
+    ContactInformation("john", "doe", "j co", "title", "j.co", "303-494-1893",
+      Address("street", "city", "state", "60607")),
+    ServiceInformation("starter", 
+                       new DateTime(DateTimeZone.UTC), 0, 
+                       new DateTime(DateTimeZone.UTC).toDateMidnight().toDateTime(), 0, 
+                       AccountStatus.ACTIVE, None, None), 
     None)
 
   def testTrackingAccount: TrackingAccount = {
@@ -948,3 +617,4 @@ object TestAccounts {
       a.service)
   }
 }
+

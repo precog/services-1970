@@ -26,22 +26,26 @@ object TokenCreation {
     val token = Token.Test.tokenId
     val tg = new RealTokenGenerator(httpClient, token, url)
 
-    dumpTokens(token)
+    //dumpTokens(token)
 
-    val nt = tg.newToken("path")
+    val nt = tg.newToken("/billing/test")
 
-    dumpTokens(token)
+    println(nt)
+    
+    //dumpTokens(token)
 
+//      val df = tg.deleteToken("617B8CEA-DBCF-4225-B8A0-5D7A84A278AD")    
     val df: Future[Unit] = nt.flatMap {
       case Success(t) => {
-        tg.deleteToken(t)
+        //tg.deleteToken(t)
+        Future.sync(Unit)
       }
       case _ => Future.sync(Unit)
     }
 
     while (!df.isDone) {}
 
-    dumpTokens(token)
+    //dumpTokens(token)
   }
   
   def newToken(parent: String): String = {
@@ -107,7 +111,8 @@ object TokenCreation {
     
     children(token).foreach{ c =>
       val cval = c.asInstanceOf[JString].value
-      println("  " + cval + ": " + numberOfChildren(cval))
+      println(cval)
+      //println("  " + cval + ": " + numberOfChildren(cval))
     }
   }
 }

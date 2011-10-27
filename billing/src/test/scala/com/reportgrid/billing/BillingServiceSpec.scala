@@ -32,7 +32,7 @@ import com.braintreegateway.Environment
 import net.lag.configgy.Configgy
 import org.specs.matcher.Matcher
 
-trait TestBillingService extends BlueEyesServiceSpecification with NewBillingService {
+trait TestBillingService extends BlueEyesServiceSpecification with BillingService {
 
   val mongo = new MockMongo
 
@@ -82,22 +82,21 @@ object BillingServiceSpec extends TestBillingService {
     "4111111111111111",
     5,
     2012,
-    "123",
-    "60607")
+    "123")
 
   val goodAddress = Address(
-    Some("123 Street"),
-    Some("Broomfield"),
-    Some("CO"),
-    Some("60607"))
+    "123 Street",
+    "Broomfield",
+    "CO",
+    "60607")
 
   val goodContactInfo = ContactInformation(
-    Some("John"),
-    Some("Doe"),
-    Some("b co"),
-    Some("CEO"),
-    Some("411"),
-    Some("b.com"),
+    "John",
+    "Doe",
+    "b co",
+    "CEO",
+    "411",
+    "b.com",
     goodAddress)
 
   val createAccount1 = CreateAccount(
@@ -115,8 +114,8 @@ object BillingServiceSpec extends TestBillingService {
     None,
     "bronze",
     None,
-    ContactInformation(None, None, None, None, None, None,
-      Address(None, None, None, None)),
+    ContactInformation("", "", "", "", "", "",
+      Address("", "", "", "30000")),
     Some(goodBilling))
 
   val billingService = braintreeFactory
@@ -135,6 +134,7 @@ object BillingServiceSpec extends TestBillingService {
             Some("developer"),
             goodContactInfo,
             None)
+            
           val acc = create(t)
           acc must matchCreateAccount(t)
         }
@@ -151,8 +151,7 @@ object BillingServiceSpec extends TestBillingService {
               "4111111111111111",
               5,
               2012,
-              "123",
-              "60607")))
+              "123")))
 
           val acc = create(t)
           acc must matchCreateAccount(t)
@@ -170,8 +169,7 @@ object BillingServiceSpec extends TestBillingService {
               "4111111111111111",
               5,
               2012,
-              "123",
-              "60607")))
+              "123")))
           val acc = create(t)
           acc must matchCreateAccount(t)
         }
@@ -238,8 +236,7 @@ object BillingServiceSpec extends TestBillingService {
               goodBilling.number,
               goodBilling.expMonth,
               goodBilling.expYear,
-              goodBilling.cvv,
-              goodBilling.postalCode)
+              goodBilling.cvv)
 
             val t = CreateAccount(
               validEmail,
@@ -257,8 +254,7 @@ object BillingServiceSpec extends TestBillingService {
               "411",
               goodBilling.expMonth,
               goodBilling.expYear,
-              goodBilling.cvv,
-              goodBilling.postalCode)
+              goodBilling.cvv)
 
             val t = CreateAccount(
               validEmail,
@@ -269,7 +265,7 @@ object BillingServiceSpec extends TestBillingService {
               goodContactInfo,
               Some(b))
 
-            testForCreateError(t, "Billing errors: Credit card type is not accepted by this merchant account. Credit card number must be 12-19 digits.")
+            testForCreateError(t, "Billing errors: Credit card number must be 12-19 digits. Credit card type is not accepted by this merchant account.")
           }
           "bad expiration month" in {
             val b = BillingInformation(
@@ -277,8 +273,7 @@ object BillingServiceSpec extends TestBillingService {
               goodBilling.number,
               13,
               goodBilling.expYear,
-              goodBilling.cvv,
-              goodBilling.postalCode)
+              goodBilling.cvv)
 
             val t = CreateAccount(
               validEmail,
@@ -297,8 +292,7 @@ object BillingServiceSpec extends TestBillingService {
               goodBilling.number,
               goodBilling.expMonth,
               -123,
-              goodBilling.cvv,
-              goodBilling.postalCode)
+              goodBilling.cvv)
 
             val t = CreateAccount(
               validEmail,
@@ -319,8 +313,7 @@ object BillingServiceSpec extends TestBillingService {
               "4000111111111115",
               goodBilling.expMonth,
               2001,
-              goodBilling.cvv,
-              goodBilling.postalCode)
+              goodBilling.cvv)
 
             val t = CreateAccount(
               validEmail,
@@ -339,8 +332,7 @@ object BillingServiceSpec extends TestBillingService {
               goodBilling.number,
               goodBilling.expMonth,
               goodBilling.expYear,
-              "200",
-              goodBilling.postalCode)
+              "200")
 
             val t = CreateAccount(
               validEmail,
@@ -359,8 +351,7 @@ object BillingServiceSpec extends TestBillingService {
               goodBilling.number,
               goodBilling.expMonth,
               goodBilling.expYear,
-              "201",
-              goodBilling.postalCode)
+              "201")
 
             val t = CreateAccount(
               validEmail,
@@ -380,8 +371,7 @@ object BillingServiceSpec extends TestBillingService {
               goodBilling.number,
               goodBilling.expMonth,
               goodBilling.expYear,
-              "301",
-              goodBilling.postalCode)
+              "301")
 
             val t = CreateAccount(
               validEmail,
@@ -400,8 +390,7 @@ object BillingServiceSpec extends TestBillingService {
               goodBilling.number,
               goodBilling.expMonth,
               goodBilling.expYear,
-              "",
-              goodBilling.postalCode)
+              "")
 
             val t = CreateAccount(
               validEmail,
@@ -415,33 +404,48 @@ object BillingServiceSpec extends TestBillingService {
             testForCreateError(t, "Billing errors: CVV is required.")
           }
           "bad zipcode doesn't match" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              goodBilling.cvv,
-              "20000")
-
+            val c = ContactInformation(
+                goodContactInfo.firstName,
+                goodContactInfo.lastName,
+                goodContactInfo.company,
+                goodContactInfo.title,
+                goodContactInfo.phone,
+                goodContactInfo.website,
+               Address(
+                 goodContactInfo.address.street,
+                 goodContactInfo.address.city,
+                 goodContactInfo.address.state,
+                 "20000"
+                 )
+               )
+            
+              
             val t = CreateAccount(
               validEmail,
               validPassword,
               None,
               "starter",
               None,
-              goodContactInfo,
-              Some(b))
+              c,
+              Some(goodBilling))
 
             testForCreateError(t, "Billing errors:")
           }
           "bad zipcode not verified" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              goodBilling.cvv,
-              "20001")
+            val c = ContactInformation(
+                goodContactInfo.firstName,
+                goodContactInfo.lastName,
+                goodContactInfo.company,
+                goodContactInfo.title,
+                goodContactInfo.phone,
+                goodContactInfo.website,
+               Address(
+                 goodContactInfo.address.street,
+                 goodContactInfo.address.city,
+                 goodContactInfo.address.state,
+                 "20001"
+                 )
+               )
 
             val t = CreateAccount(
               validEmail,
@@ -449,19 +453,26 @@ object BillingServiceSpec extends TestBillingService {
               None,
               "starter",
               None,
-              goodContactInfo,
-              Some(b))
+              c,
+              Some(goodBilling))
 
             testForCreateError(t, "Billing errors:")
           }
           "empty zipcode" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              goodBilling.cvv,
-              "")
+            val c = ContactInformation(
+                goodContactInfo.firstName,
+                goodContactInfo.lastName,
+                goodContactInfo.company,
+                goodContactInfo.title,
+                goodContactInfo.phone,
+                goodContactInfo.website,
+               Address(
+                 goodContactInfo.address.street,
+                 goodContactInfo.address.city,
+                 goodContactInfo.address.state,
+                 ""
+                 )
+               )
 
             val t = CreateAccount(
               validEmail,
@@ -469,20 +480,28 @@ object BillingServiceSpec extends TestBillingService {
               None,
               "starter",
               Some("developer"),
-              goodContactInfo,
-              Some(b))
+              c,
+              Some(goodBilling))
 
             testForCreateError(t, "Postal code required.")
           }
           "verfication error" in {
             skip("This is not currently rejected by our billing configuration.")
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              goodBilling.cvv,
-              "30000")
+            val c = ContactInformation(
+                goodContactInfo.firstName,
+                goodContactInfo.lastName,
+                goodContactInfo.company,
+                goodContactInfo.title,
+                goodContactInfo.phone,
+                goodContactInfo.website,
+               Address(
+                 goodContactInfo.address.street,
+                 goodContactInfo.address.city,
+                 goodContactInfo.address.state,
+                 "30000"
+                 )
+               )
+
 
             val t = CreateAccount(
               validEmail,
@@ -490,20 +509,27 @@ object BillingServiceSpec extends TestBillingService {
               None,
               "starter",
               Some("developer"),
-              goodContactInfo,
-              Some(b))
+              c,
+              Some(goodBilling))
 
             testForCreateError(t, "Test")
           }
           "verification not supported" in {
             skip("This is not currently rejected by our billing configuration.")
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              goodBilling.cvv,
-              "30001")
+            val c = ContactInformation(
+                goodContactInfo.firstName,
+                goodContactInfo.lastName,
+                goodContactInfo.company,
+                goodContactInfo.title,
+                goodContactInfo.phone,
+                goodContactInfo.website,
+               Address(
+                 goodContactInfo.address.street,
+                 goodContactInfo.address.city,
+                 goodContactInfo.address.state,
+                 "30001"
+                 )
+               )
 
             val t = CreateAccount(
               validEmail,
@@ -511,8 +537,8 @@ object BillingServiceSpec extends TestBillingService {
               None,
               "starter",
               None,
-              goodContactInfo,
-              Some(b))
+              c,
+              Some(goodBilling))
 
             testForCreateError(t, "Test")
           }
@@ -599,29 +625,29 @@ object BillingServiceSpec extends TestBillingService {
     def newContact(zip: Option[String]): ContactInformation = {
       zip match {
         case Some(z) => ContactInformation(
-          Some("first"),
-          Some("last"),
-          Some("company"),
-          Some("title"),
-          Some("phone"),
-          Some("website.com"),
+          "first",
+          "last",
+          "company",
+          "title",
+          "phone",
+          "website.com",
           Address(
-            Some("street"),
-            Some("city"),
-            Some("state"),
-            Some(z)))
+            "street",
+            "city",
+            "state",
+             z))
         case None => ContactInformation(
-          None,
-          None,
-          None,
-          None,
-          None,
-          None,
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
           Address(
-            None,
-            None,
-            None,
-            None))
+            "",
+            "",
+            "",
+            ""))
       }
     }
 
@@ -1078,8 +1104,13 @@ object BillingServiceSpec extends TestBillingService {
     acc.get
   }
 
-  def callAssessment(): Future[Option[Unit]] = {
-    val f = service.contentType[JValue](application / json).post[JValue]("/accounts/assess")("")
+  def sslHeader = ("ReportGridDecrypter", "")
+  
+  def callAssessment(sslHeader: (String, String) = sslHeader): Future[Option[Unit]] = {
+    val f = service.header(sslHeader)
+                    .contentType[JValue](application / json)
+                    .post[JValue]("/accounts/assess")("")
+                   
     f.map { h => h.content.map(_ => Unit) }
   }
 
@@ -1096,8 +1127,10 @@ object BillingServiceSpec extends TestBillingService {
     res1.value.get.get.id.token
   }
 
-  def putJsonRequest[A, B](url: String, a: A)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
-    val f = service.contentType[JValue](application / json).put[JValue](url)(a.serialize(d))
+  def putJsonRequest[A, B](url: String, a: A, sslHeader: (String, String) = sslHeader)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
+    val f = service.header(sslHeader)
+                   .contentType[JValue](application / json)
+                   .put[JValue](url)(a.serialize(d))
     f.map { h =>
       h.content.map { c =>
         try {
@@ -1109,8 +1142,11 @@ object BillingServiceSpec extends TestBillingService {
     }
   }
 
-  def postJsonRequest[A, B](url: String, a: A)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
-    val f = service.contentType[JValue](application / json).post[JValue](url)(a.serialize(d))
+  def postJsonRequest[A, B](url: String, a: A, sslHeader: (String, String) = sslHeader)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
+    val f = service.header(sslHeader)
+                   .contentType[JValue](application / json)
+                   .post[JValue](url)(a.serialize(d))
+                   
     f.map { h =>
       h.content.map { c =>
         try {
@@ -1129,8 +1165,7 @@ object BillingServiceSpec extends TestBillingService {
         JField("number", billing.number.serialize),
         JField("expMonth", billing.expMonth.serialize),
         JField("expYear", billing.expYear.serialize),
-        JField("cvv", billing.cvv.serialize),
-        JField("postalCode", billing.postalCode.serialize)))
+        JField("cvv", billing.cvv.serialize)))
   }
 
   val UnsafeCreateAccountDecomposer: Decomposer[CreateAccount] = new Decomposer[CreateAccount] {
@@ -1220,8 +1255,7 @@ object BillingServiceSpec extends TestBillingService {
 
         val test = v1.cardholder == v2.cardholder &&
           v1.number.endsWith(v2.number) &&
-          v1.expDate == v2.expDate &&
-          v1.postalCode == v2.postalCode
+          v1.expDate == v2.expDate
 
         (test, "Billing information is the same", "Billing info differs: " + v1 + " \n vs\n" + v2)
       } else if (b1.isEmpty && b2.isEmpty) {
@@ -1268,8 +1302,7 @@ object BillingServiceSpec extends TestBillingService {
         val vb = vbo.get
         cab.cardholder == vb.cardholder &&
           cab.expMonth == vb.expMonth &&
-          cab.expYear == vb.expYear &&
-          cab.postalCode == vb.postalCode
+          cab.expYear == vb.expYear
       } else {
         cabo.isEmpty && vbo.isEmpty
       }
