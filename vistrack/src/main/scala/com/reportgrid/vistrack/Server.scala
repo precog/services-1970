@@ -45,27 +45,25 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
     } ->
     request { tokenManager =>
       def buildTokenHashes(tokenId: String, hashes: List[String]): Future[List[String]] = {
-        val fut: Future[Future[List[String]]] = tokenManager.lookup(tokenId).map {
+        tokenManager.lookup(tokenId).flatMap {
           case Some(token) =>
             val hash = Base64.encodeBase64String(Sha1HashFunction(token.tokenId.getBytes)).take(7)
             token.parentTokenId match {
               case Some(id) if token.tokenId != token.accountTokenId => buildTokenHashes(id, hash :: hashes)
-              case _ => Future.sync(hash :: hashes)
+              case _ => Future.sync[List[String]](hash :: hashes)
             }
 
-          case None => Future.sync(hashes)
+          case None => Future.sync[List[String]](hashes)
         }
-        
-        fut.flatten
       }
 
       jsonp {
         path("/auditPath") {
-          get { req: HttpRequest[JValue] =>
+          get { req: HttpRequest[Future[JValue]] =>
             req.parameters.get('tokenId) map { tokenId => 
-              buildTokenHashes(tokenId, Nil).map(l => HttpResponse(content = Some(l.serialize)))
+              buildTokenHashes(tokenId, Nil).map(l => HttpResponse[JValue](content = Some(l.serialize)))
             } getOrElse {
-              Future.sync(HttpResponse(BadRequest, content = Some(JString("tokenId request parameter must be specified."))))
+              Future.sync(HttpResponse[JValue](BadRequest, content = Some(JString("tokenId request parameter must be specified."))))
             }
           }
         }
