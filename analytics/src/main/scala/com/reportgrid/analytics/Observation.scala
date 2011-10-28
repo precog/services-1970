@@ -10,8 +10,9 @@ import blueeyes.json.xschema.JodaSerializationImplicits._
 
 import org.joda.time.Instant
 import scala.annotation.tailrec
-import scalaz.Semigroup
 import scalaz.Scalaz._
+import scalaz.Semigroup
+import scalaz.NonEmptyList
 
 case class Variable(name: JPath)
 object Variable {
@@ -89,7 +90,7 @@ object Tag {
   sealed trait ExtractionResult
   case object Skipped extends ExtractionResult
   case class Tags(tags: Future[Seq[Tag]]) extends ExtractionResult
-  case class Errors(errors: Seq[ExtractionError]) extends ExtractionResult
+  case class Errors(errors: NonEmptyList[ExtractionError]) extends ExtractionResult
 
   case class ExtractionError(fieldName: String, message: String) {
     override def toString = "An error occurred parsing tag " + fieldName + ": " + message
@@ -137,7 +138,7 @@ object Tag {
   }
 
   def extractTimestampTag(encoding: TimeSeriesEncoding, tagName: String, jvalue: JValue) = jvalue.validated[Instant].fold(
-    error => Errors(ExtractionError(tagName, error.message) :: Nil), 
+    error => Errors(ExtractionError(tagName, error.message).wrapNel), 
     instant => Tags(Future.sync(Tag(tagName, TimeReference(encoding, instant)) :: Nil))
   )
 
@@ -157,7 +158,7 @@ object Tag {
 
   def extractHierarchyTag(tagName: String, v: JValue): ExtractionResult = {
     def result(locations: List[Hierarchy.Location]) = Hierarchy.of(locations).fold(
-      error => Errors(ExtractionError(tagName, error) :: Nil),
+      error => Errors(ExtractionError(tagName, error).wrapNel),
       hierarchy => Tags(Future.sync(Tag(tagName, hierarchy) :: Nil))
     )
 
@@ -183,9 +184,11 @@ object Tag {
   def extractTags(extractors: List[TagExtractor], event: JObject): (ExtractionResult, JObject) = {
     extractors.reduceLeft(_ or _).apply(event) match {
       case (result, remainder) => 
-        val unparsed = remainder.fields.filter(_.name.startsWith(Tag.Prefix)) 
-        if (unparsed.isEmpty) (result, remainder)
-        else (Errors(unparsed.map(field => ExtractionError(field.name, "No extractor could handle the value: " + compact(render(field.value))))), remainder)
+        remainder.fields.filter(_.name.startsWith(Tag.Prefix)).toNel.map {
+          unparsed => (Errors(unparsed.map(field => ExtractionError(field.name, "No extractor could handle the value: " + compact(render(field.value))))), remainder)
+        } getOrElse {
+          (result, remainder)
+        }
     }
   }
 }

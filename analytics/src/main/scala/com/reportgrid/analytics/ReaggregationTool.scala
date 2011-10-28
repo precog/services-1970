@@ -76,7 +76,7 @@ object ReaggregationTool {
            eventsdb(update(events_collection).set(JPath("reprocess") set (false)).where("_id" === objectId)).map(_ => complexity)
 
           case Failure(error) => 
-            throw new IllegalStateException("An error occurred reaggregating event data: " + compact(render(jv)))
+            throw new IllegalStateException("Errors occurred reaggregating event data: " + compact(render(jv)) + " (" + error.list.mkString("; ") + ")")
         }
       }
 

@@ -30,6 +30,7 @@ import org.joda.time.Instant
 
 import scala.collection.SortedMap
 import scalaz.Scalaz._
+import scalaz.NonEmptyList
 import Future._
 import SignatureGen._
 
@@ -170,18 +171,13 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
         val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
 
-        def getTags(result: Tag.ExtractionResult) = result match {
-          case Tag.Tags(tags) => tags
-          case Tag.Skipped => Future.sync(Nil)
-          case Tag.Errors(errors) => 
-            Future.sync(Nil)
-        }
-        
-        getTags(tagResults) flatMap { tags => 
-          aggregate(token, path, eventName, tags, remainder, count).map(_.success[Seq[Tag.ExtractionError]])
+        tagResults match {
+          case Tag.Tags(tf) => tf.flatMap(aggregate(token, path, eventName, _, remainder, count).map(_.success[NonEmptyList[String]]))
+          case Tag.Skipped  => aggregate(token, path, eventName, Nil, remainder, count).map(_.success[NonEmptyList[String]])
+          case Tag.Errors(errors) => Future.sync(errors.map(_.toString).fail[Long])
         }
       } getOrElse {
-        Future.sync(Seq.empty[Tag.ExtractionError].fail[Long])
+        Future.sync(("No token found for tokenId: " + (obj \ "token")).wrapNel.fail[Long])
       }
     }
   }

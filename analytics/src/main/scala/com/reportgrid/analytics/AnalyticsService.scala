@@ -555,7 +555,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     case Tag.Tags(tags) => tags
     case Tag.Skipped => Future.sync(Nil)
     case Tag.Errors(errors) =>
-      val errmsg = "Errors occurred extracting tag information: " + errors.map(_.toString).mkString("; ")
+      val errmsg = "Errors occurred extracting tag information: " + errors.list.mkString("; ")
       throw new HttpException(BadRequest, errmsg)
   }
 }
