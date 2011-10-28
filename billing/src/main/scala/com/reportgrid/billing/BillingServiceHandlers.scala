@@ -9,6 +9,7 @@ import scalaz._
 import scalaz.Scalaz._
 import scalaz.Validation._
 
+import org.joda.time.DateTime
 import org.apache.commons.codec.digest.DigestUtils
 import org.apache.commons.codec.binary.Hex
 import com.braintreegateway._
@@ -261,6 +262,7 @@ object BillingServiceHandlers {
     private val accounts = config.accounts
 
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
+      config.sendEmail("accounts@reportgrid.com", Array("nick@reportgrid.com"), Array(), Array(), "Assessment ran - " + new DateTime(), "<Assessment results still needs to be implemented.>")
       val token: Option[String] = request.parameters.get('token)
       token.map{ t =>
         if(t.equals(Token.Root.tokenId)) {
@@ -272,7 +274,7 @@ object BillingServiceHandlers {
       }.getOrElse(Future.sync(HttpResponse(HttpStatus(401, "Token required."), content = Some[JValue](JString("Token required.")))))
     }
   }
-
+  
   class RequireHeaderParameter[T, S](headerParameter: String, errorMessage: String, val delegate: HttpService[T, S]) extends DelegatingService[T, S, T, S] {
 
     val metadata = None

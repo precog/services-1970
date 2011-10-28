@@ -1141,21 +1141,6 @@ object BillingServiceSpec extends TestBillingService {
     res1.value.get.get.id.token
   }
 
-  def putJsonRequest[A, B](url: String, a: A, sslHeader: (String, String) = sslHeader)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
-    val f = service.header(sslHeader)
-                   .contentType[JValue](application / json)
-                   .put[JValue](url)(a.serialize(d))
-    f.map { h =>
-      h.content.map { c =>
-        try {
-          c.deserialize[B](e)
-        } catch {
-          case ex => fail("Error deserializing put request to." + ex.getMessage())
-        }
-      }
-    }
-  }
-
   def postJsonRequest[A, B](url: String, a: A, sslHeader: (String, String) = sslHeader)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
     val f = service.header(sslHeader)
                    .contentType[JValue](application / json)
@@ -1197,11 +1182,11 @@ object BillingServiceSpec extends TestBillingService {
   }
 
   def createResult(a: CreateAccount): Future[Option[JValue]] = {
-    putJsonRequest("/accounts/", a)(UnsafeCreateAccountDecomposer, implicitly[Extractor[JValue]])
+    postJsonRequest("/accounts/", a)(UnsafeCreateAccountDecomposer, implicitly[Extractor[JValue]])
   }
 
   def create(a: CreateAccount): Account = {
-    val f = putJsonRequest("/accounts/", a)(UnsafeCreateAccountDecomposer, implicitly[Extractor[Account]])
+    val f = postJsonRequest("/accounts/", a)(UnsafeCreateAccountDecomposer, implicitly[Extractor[Account]])
     val value = f.value
     value must eventually(beSomething)
     val option = value.get

@@ -44,20 +44,14 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString w
             headerParameterRequired("ReportGridDecrypter", "Service may only be accessed via SSL.") {
               jsonp {
                 path("/accounts/") {
-                  put {
-                    monitor.count(".accounts.create.requests")
-                    monitor.time(".accounts.create.timing") {
-                      new CreateAccountHandler(config, monitor) 
-                    }
+                  post {
+                    new CreateAccountHandler(config, monitor) 
                   } ~
 //                  delete { new CloseAccountHandler(config, monitor) } ~
 //                  post { new UpdateAccountHandler(config, monitor) } ~
                   path("get") {
                     post { 
-                      monitor.count(".accounts.get.requests")
-                      monitor.time(".accounts.get.timing") {
-                        new GetAccountHandler(config, monitor) 
-                      }
+                      new GetAccountHandler(config, monitor) 
                     }
                   } ~
 //                  path("usage") {
@@ -68,10 +62,7 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString w
 //                  } ~
                   path("assess") {
                     post { 
-                      monitor.count(".accounts.assessment.requests")
-                      monitor.time(".accounts.assessment.timing") {
-                        new AccountAssessmentHandler(config, monitor) 
-                      }
+                      new AccountAssessmentHandler(config, monitor) 
                     }
                   }
                 }
