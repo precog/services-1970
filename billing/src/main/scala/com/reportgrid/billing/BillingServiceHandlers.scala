@@ -19,10 +19,9 @@ import com.reportgrid.billing.braintree._
 import blueeyes.persistence.mongo.Database
 import blueeyes.persistence.mongo._
 import blueeyes.concurrent.Future
-import blueeyes.core.http.HttpStatusCodes.Unauthorized
 import blueeyes.core.http.HttpRequest
 import blueeyes.core.http._
-import blueeyes.core.http.HttpStatusCodes
+import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonParser
 import blueeyes.json.Printer
@@ -106,7 +105,7 @@ object BillingServiceHandlers {
 
   private def collapseToHttpResponse(v: Validation[String, JValue]): HttpResponse[JValue] = v match {
     case Success(jv) => HttpResponse[JValue](content = Some(jv))
-    case Failure(e) => HttpResponse(HttpStatusCodes.BadRequest, content = Some(e))
+    case Failure(e) => HttpResponse(HttpStatus(400, e), content = Some(e))
   }
 
   class CreateAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
@@ -262,8 +261,15 @@ object BillingServiceHandlers {
     private val accounts = config.accounts
 
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
-      accounts.assessment()
-      Future.sync(HttpResponse(content = Some(JString("Assessment complete."))))
+      val token: Option[String] = request.parameters.get('token)
+      token.map{ t =>
+        if(t.equals(Token.Root.tokenId)) {
+          accounts.assessment()
+          Future.sync(HttpResponse(content = Some[JValue](JString("Assessment complete."))))          
+        } else {
+          Future.sync(HttpResponse(HttpStatus(401, "Invalid token."), content = Some[JValue](JString("Invalid token."))))
+        }
+      }.getOrElse(Future.sync(HttpResponse(HttpStatus(401, "Token required."), content = Some[JValue](JString("Token required.")))))
     }
   }
 

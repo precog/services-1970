@@ -8,6 +8,7 @@ import scalaz.Scalaz._
 import scalaz.Validation._
 import blueeyes.json.JsonAST._
 
+import com.reportgrid.analytics.Token
 import blueeyes.concurrent.Future
 import blueeyes.json.xschema.{ ValidatedExtraction, Extractor, Decomposer }
 import blueeyes.json.xschema.Extractor._
@@ -1120,6 +1121,7 @@ object BillingServiceSpec extends TestBillingService {
   
   def callAssessment(sslHeader: (String, String) = sslHeader): Future[Option[Unit]] = {
     val f = service.header(sslHeader)
+                    .query("token", Token.Root.tokenId)
                     .contentType[JValue](application / json)
                     .post[JValue]("/accounts/assess")("")
                    
