@@ -6,12 +6,10 @@ import sbt.NameFilter._
 
 object ServicesSettings {
   val buildOrganization = "com.reportgrid"
-  val buildVersion = "1.2.3-SNAPSHOT"
   val buildScalaVersion = "2.9.1"
   
   val serviceSettings = Defaults.defaultSettings ++ Seq (
     organization := buildOrganization,
-    version      := buildVersion,
     scalaVersion := buildScalaVersion,
     scalacOptions ++= Seq("-deprecation", "-unchecked")
   )
@@ -26,6 +24,7 @@ object ServicesBuild extends Build {
 
   override def projectDefinitions(base: File) = {
     val commonSettings = serviceSettings ++ Seq(
+        version      := "1.2.1-SNAPSHOT",
         libraryDependencies ++= Seq(
           "joda-time" % "joda-time" % "1.6.2",
           "org.scalaz" %% "scalaz-core" % "6.0.2"
@@ -35,6 +34,7 @@ object ServicesBuild extends Build {
     val common = Project("common", file("common"), settings = commonSettings) dependsOnAlt(blueeyes(base)) 
 
     val analyticsSettings = serviceSettings ++ Seq( 
+      version      := "1.2.3-SNAPSHOT",
       libraryDependencies ++= Seq(
         "joda-time"               % "joda-time"           % "1.6.2",
         "org.scalaz"              %% "scalaz-core"        % "6.0.2",
@@ -48,6 +48,7 @@ object ServicesBuild extends Build {
     val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))
 
     val billingSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
+      version      := "1.0.2-SNAPSHOT",
       libraryDependencies ++= Seq(
         "commons-codec"           % "commons-codec"       % "1.5",
         "commons-httpclient"      % "commons-httpclient"  % "3.1",
@@ -64,6 +65,7 @@ object ServicesBuild extends Build {
 
 
     val jessupSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
+      version      := "1.0.1-SNAPSHOT",
       libraryDependencies ++= Seq(
         "org.dspace.dependencies" % "dspace-geoip" % "1.2.3",
         "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
