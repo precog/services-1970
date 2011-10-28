@@ -70,13 +70,15 @@ object ReaggregationTool {
     import env.engine._
     eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
       val reaggregated = results.map { jv => 
+        val objectId = JObject(JField("_id", jv \ "_id" \ "_id") :: Nil)
+
         aggregateFromStorage(env.tokenManager, jv --> classOf[JObject]) flatMap { 
           case Success(complexity) if complexity > 0 => 
-           val objectId = JObject(JField("_id", jv \ "_id" \ "_id") :: Nil)
-           eventsdb(update(events_collection).set(JPath("reprocess") set (false)).where("_id" === objectId)).map(_ => complexity)
+            eventsdb(update(events_collection).set(JPath("reprocess") set (false)).where("_id" === objectId)).map(_ => complexity)
 
           case Failure(error) => 
-            throw new IllegalStateException("Errors occurred reaggregating event data: " + compact(render(jv)) + " (" + error.list.mkString("; ") + ")")
+            println("Errors occurred reaggregating event data: " + compact(render(jv)) + " (" + error.list.mkString("; ") + ")")
+            eventsdb(update(events_collection).set((JPath("reprocess") set (false)) |+| (JPath("unparseable") set (true))).where("_id" === objectId)).map(_ => 0L)
         }
       }
 

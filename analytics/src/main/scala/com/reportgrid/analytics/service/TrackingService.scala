@@ -60,9 +60,13 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                   aggregationEngine.logger.debug("total complexity: " + complexity)
                   HttpResponse[JValue](OK)
 
-                case Some(Failure(errors)) => HttpResponse[JValue](HttpStatus(BadRequest, "Errors occurred parsing tag properies of one or more of your events."), content = Some(errors.list.mkString("; ")))
+                case Some(Failure(errors)) => 
+                  aggregationEngine.logger.debug("Encountered tag parsing errors: " + errors.list.mkString("; "))
+                  HttpResponse[JValue](HttpStatus(BadRequest, "Errors occurred parsing tag properies of one or more of your events."), content = Some(errors.list.mkString("; ")))
 
-                case None => HttpResponse[JValue](HttpStatus(BadRequest, "No trackable events were found in the content body."))
+                case None => 
+                  //aggregationEngine.logger.debug("No trackable events in content body.")
+                  HttpResponse[JValue](HttpStatus(BadRequest, "No trackable events were found in the content body."))
               }
             }
 

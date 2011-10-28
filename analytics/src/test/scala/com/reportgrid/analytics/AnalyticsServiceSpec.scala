@@ -303,9 +303,8 @@ class RootTrackingServiceSpec extends TestAnalyticsService with ArbitraryEvent w
       jsonTestService.get[JValue]("/vfs/?location=usa") must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(JArray(elements)), _) => 
-            println(elements)
             (elements map { case JString(s) => s }) must contain(".tweeted")
-          case x => println(x); false
+          case x => false
         }
       } 
     }
