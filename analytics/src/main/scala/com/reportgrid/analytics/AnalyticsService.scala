@@ -8,6 +8,7 @@ import blueeyes.core.data.{BijectionsChunkJson, BijectionsChunkFutureJson, Bijec
 import blueeyes.core.http._
 import blueeyes.core.http.MimeTypes.{application, json}
 import blueeyes.core.service._
+import blueeyes.core.service.RestPathPattern._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
 import blueeyes.json.{JPath, JsonParser, JPathField}
@@ -114,8 +115,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                 post(new TrackingService(aggregationEngine, timeSeriesEncoding, clock, state.jessup, true)).audited("track") ~
                 get(new ExplorePathService[Future[JValue]](aggregationEngine)).audited("explore paths") ~
                 variable {
-                  get {
-                    new ExploreVariableService[Future[JValue]](aggregationEngine).audited("explore variable children") 
+                  path(/?) {
+                    get {
+                      new ExploreVariableService[Future[JValue]](aggregationEngine).audited("explore variable children") 
+                    }
                   } ~
                   path("/") { 
                     commit {
@@ -149,8 +152,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                               Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
                           } ~
                           path("/'periodicity") {
-                            get {
-                              new VariableSeriesService(aggregationEngine, _.count).audited("variable count series")
+                            path(/?) {
+                              get {
+                                new VariableSeriesService(aggregationEngine, _.count).audited("variable count series")
+                              }
                             } ~ 
                             path("/") {
                               path("means") {
@@ -164,25 +169,29 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                         }
                       } ~ 
                       path("histogram") {
-                        get { 
-                          audited("Return a histogram of values of a variable.") { 
-                            (_: HttpRequest[Future[JValue]]) => aggregationEngine.getHistogram(_: Token, _: Path, _: Variable).map(_.serialize.ok)
+                        path(/?) {
+                          get { 
+                            audited("Return a histogram of values of a variable.") { 
+                              (_: HttpRequest[Future[JValue]]) => aggregationEngine.getHistogram(_: Token, _: Path, _: Variable).map(_.serialize.ok)
+                            }
                           }
                         } ~
                         commit {
-                          pathData("/top/'limit", 'limit, parsePathInt("limit")) {
-                            get { 
-                              audited("Return a histogram of the top 'limit values of a variable, by count.") { 
-                                (_: HttpRequest[Future[JValue]]) => 
-                                  (limit: Int) => aggregationEngine.getHistogramTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok) 
+                          path("/") {
+                            pathData("top/'limit", 'limit, parsePathInt("limit")) {
+                              get { 
+                                audited("Return a histogram of the top 'limit values of a variable, by count.") { 
+                                  (_: HttpRequest[Future[JValue]]) => 
+                                    (limit: Int) => aggregationEngine.getHistogramTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok) 
+                                }
                               }
-                            }
-                          } ~
-                          pathData("/bottom/'limit", 'limit, parsePathInt("limit")) {
-                            get { 
-                              audited("Return a histogram of the bottom 'limit values of a variable, by count.") { 
-                                (_: HttpRequest[Future[JValue]]) => 
-                                  (limit: Int) => aggregationEngine.getHistogramBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                            } ~
+                            pathData("bottom/'limit", 'limit, parsePathInt("limit")) {
+                              get { 
+                                audited("Return a histogram of the bottom 'limit values of a variable, by count.") { 
+                                  (_: HttpRequest[Future[JValue]]) => 
+                                    (limit: Int) => aggregationEngine.getHistogramBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                                }
                               }
                             }
                           }
@@ -197,58 +206,64 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                         }
                       } ~
                       path("values") {
-                        get { 
-                          new ExploreValuesService[Future[JValue]](aggregationEngine).audited("list of variable values") 
+                        path(/?) {
+                          get { 
+                            new ExploreValuesService[Future[JValue]](aggregationEngine).audited("list of variable values") 
+                          }
                         } ~
                         path("/") {
-                          pathData("top/'limit", 'limit, parsePathInt("limit")) {
-                            get { 
-                              audited("List the top n variable values") {
-                                (_: HttpRequest[Future[JValue]]) => 
-                                  (limit: Int) => aggregationEngine.getValuesTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                          commit {
+                            pathData("top/'limit", 'limit, parsePathInt("limit")) {
+                              get { 
+                                audited("List the top n variable values") {
+                                  (_: HttpRequest[Future[JValue]]) => 
+                                    (limit: Int) => aggregationEngine.getValuesTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                                }
                               }
-                            }
-                          } ~
-                          pathData("bottom/'limit", 'limit, parsePathInt("limit")) {
-                            get { 
-                              audited("list of bottom variable values") {
-                                (_: HttpRequest[Future[JValue]]) => 
-                                  (limit: Int) => aggregationEngine.getValuesBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
-                              }
-                            }
-                          } ~
-                          pathData('value, 'value, ((e: Exception) => DispatchError(HttpException(BadRequest, e))) <-: JsonParser.parseValidated(_)) {
-                            get { 
-                              // return a list of valid subpaths
-                              (_: HttpRequest[Future[JValue]]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
-                                Future.sync(JArray(JString("count") :: JString("series/") :: Nil).ok[JValue])
                             } ~
-                            path("/") {
-                              commit {
-                                path("count") {
-                                  get {
-                                    audited("count occurrences of a variable value") { 
-                                      (request: HttpRequest[Future[JValue]]) => (value: JValue) => (token: Token, path: Path, variable: Variable) => {
-                                        val futureContent: Future[Option[JValue]] = request.content.map(_.map[Option[JValue]](Some(_)))
-                                                                                           .getOrElse(Future.sync[Option[JValue]](None))
+                            pathData("bottom/'limit", 'limit, parsePathInt("limit")) {
+                              get { 
+                                audited("list of bottom variable values") {
+                                  (_: HttpRequest[Future[JValue]]) => 
+                                    (limit: Int) => aggregationEngine.getValuesBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                                }
+                              }
+                            } ~
+                            pathData('value, 'value, ((e: Exception) => DispatchError(HttpException(BadRequest, e))) <-: JsonParser.parseValidated(_)) {
+                              path(/?) {
+                                get { 
+                                  // return a list of valid subpaths
+                                  (_: HttpRequest[Future[JValue]]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
+                                    Future.sync(JArray(JString("count") :: JString("series/") :: Nil).ok[JValue])
+                                }
+                              } ~
+                              path("/") {
+                                commit {
+                                  path("count") {
+                                    get {
+                                      audited("count occurrences of a variable value") { 
+                                        (request: HttpRequest[Future[JValue]]) => (value: JValue) => (token: Token, path: Path, variable: Variable) => {
+                                          val futureContent: Future[Option[JValue]] = request.content.map(_.map[Option[JValue]](Some(_)))
+                                                                                             .getOrElse(Future.sync[Option[JValue]](None))
 
-                                        futureContent.flatMap { content => 
-                                          val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, content))
-                                          aggregationEngine.getObservationCount(token, path, JointObservation(HasValue(variable, value)), terms)
-                                          .map(_.serialize.ok)
+                                          futureContent.flatMap { content => 
+                                            val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, content))
+                                            aggregationEngine.getObservationCount(token, path, JointObservation(HasValue(variable, value)), terms)
+                                            .map(_.serialize.ok)
+                                          }
                                         }
                                       }
                                     }
-                                  }
-                                } ~
-                                path("series") {
-                                  get { 
-                                    // simply return the names of valid periodicities that can be used for series queries
-                                    (_: HttpRequest[Future[JValue]]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
-                                      Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
                                   } ~
-                                  path("/'periodicity") { 
-                                    new ValueSeriesService(aggregationEngine).audited("Returns a time series of variable values.")
+                                  path("series") {
+                                    get { 
+                                      // simply return the names of valid periodicities that can be used for series queries
+                                      (_: HttpRequest[Future[JValue]]) => (_: JValue) => (_: Token, _: Path, _: Variable) => 
+                                        Future.sync(JArray(Periodicity.Default.map(p => JString(p.name))).ok[JValue])
+                                    } ~
+                                    path("/'periodicity") { 
+                                      new ValueSeriesService(aggregationEngine).audited("Returns a time series of variable values.")
+                                    }
                                   }
                                 }
                               }
@@ -271,60 +286,64 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                 } 
               } ~ 
               path("/tokens") {
-                get { 
-                  (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-                    tokenManager.listDescendants(token) map { 
-                      _.map(_.tokenId).serialize.ok
-                    }
-                  }
-                } ~
-                post { 
-                  (request: HttpRequest[Future[JValue]]) => (parent: Token) => {
-                    request.content map { 
-                      _.flatMap { content => 
-                        val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
-                        val permissions = (content \ "permissions").deserialize(Permissions.permissionsExtractor(parent.permissions))
-                        val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
-                        val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
-
-                        if (expires < clock.now()) {
-                          Future.sync(HttpResponse[JValue](BadRequest, content = Some("Your are attempting to create an expired token. Such a token will not be usable.")))
-                        } else tokenManager.issueNew(parent, path, permissions, expires, limits) map {
-                          case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
-                          case Failure(message) => throw new HttpException(BadRequest, message)
-                        }
-                      }
-                    } getOrElse {
-                      Future.sync(HttpResponse[JValue](BadRequest, content = Some("New token must be contained in POST content")))
-                    }
-                  }
-                } ~
-                path("/") {
-                  path('descendantTokenId) {
+                commit {
+                  path(/?) {
                     get { 
                       (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-                        if (token.tokenId == request.parameters('descendantTokenId)) {
-                          token.parentTokenId.map { parTokenId =>
-                            tokenManager.lookup(parTokenId).map { parent => 
-                              val sanitized = parent.map(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
-                              HttpResponse[JValue](content = sanitized.map(_.serialize))
-                            }
-                          } getOrElse {
-                            Future.sync(HttpResponse[JValue](Forbidden))
-                          }
-                        } else {
-                          tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
-                            _.map { _.relativeTo(token).copy(accountTokenId = "").serialize }
-                          } map { descendantToken =>
-                            HttpResponse[JValue](content = descendantToken)
-                          }
+                        tokenManager.listDescendants(token) map { 
+                          _.map(_.tokenId).serialize.ok
                         }
                       }
                     } ~
-                    delete { 
-                      (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-                        tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
-                          HttpResponse[JValue](content = None)
+                    post { 
+                      (request: HttpRequest[Future[JValue]]) => (parent: Token) => {
+                        request.content map { 
+                          _.flatMap { content => 
+                            val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
+                            val permissions = (content \ "permissions").deserialize(Permissions.permissionsExtractor(parent.permissions))
+                            val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
+                            val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
+
+                            if (expires < clock.now()) {
+                              Future.sync(HttpResponse[JValue](BadRequest, content = Some("Your are attempting to create an expired token. Such a token will not be usable.")))
+                            } else tokenManager.issueNew(parent, path, permissions, expires, limits) map {
+                              case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
+                              case Failure(message) => throw new HttpException(BadRequest, message)
+                            }
+                          }
+                        } getOrElse {
+                          Future.sync(HttpResponse[JValue](BadRequest, content = Some("New token must be contained in POST content")))
+                        }
+                      }
+                    }
+                  } ~
+                  path("/") {
+                    path('descendantTokenId) {
+                      get { 
+                        (request: HttpRequest[Future[JValue]]) => (token: Token) => {
+                          if (token.tokenId == request.parameters('descendantTokenId)) {
+                            token.parentTokenId.map { parTokenId =>
+                              tokenManager.lookup(parTokenId).map { parent => 
+                                val sanitized = parent.map(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
+                                HttpResponse[JValue](content = sanitized.map(_.serialize))
+                              }
+                            } getOrElse {
+                              Future.sync(HttpResponse[JValue](Forbidden))
+                            }
+                          } else {
+                            tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
+                              _.map { _.relativeTo(token).copy(accountTokenId = "").serialize }
+                            } map { descendantToken =>
+                              HttpResponse[JValue](content = descendantToken)
+                            }
+                          }
+                        }
+                      } ~
+                      delete { 
+                        (request: HttpRequest[Future[JValue]]) => (token: Token) => {
+                          tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
+                            HttpResponse[JValue](content = None)
+                          }
                         }
                       }
                     }

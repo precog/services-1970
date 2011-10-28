@@ -1,17 +1,12 @@
 package com.reportgrid.analytics
 
 import blueeyes._
+import blueeyes.core.data._
 import blueeyes.core.data.Bijection.identity
-import blueeyes.core.http.{HttpResponse, MimeTypes}
+import blueeyes.core.http._
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.concurrent.test._
-import blueeyes.util.metrics.Duration._
-import blueeyes.util.Clock
-
-import MimeTypes._
-
-import blueeyes.core.data._
 import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
@@ -19,6 +14,9 @@ import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
 import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo}
+import blueeyes.util.metrics.Duration._
+import blueeyes.util.Clock
+import MimeTypes._
 
 import org.joda.time._
 import net.lag.configgy.ConfigMap
@@ -26,9 +24,10 @@ import net.lag.configgy.ConfigMap
 import org.specs._
 import org.specs.specification.PendingUntilFixed
 import org.scalacheck.Gen._
+import scalaz.Success
 import scalaz.Scalaz._
 
-import rosetta.json.blueeyes._
+//import rosetta.json.blueeyes._
 
 import Periodicity._
 import AggregationEngine.ResultSet
@@ -78,6 +77,52 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
+    }
+
+    "create child tokens without a trailing slash" in {
+        val newToken = Token.Test.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
+        jsonTestService.post[JValue]("/tokens")(newToken.serialize) must whenDelivered {
+          beLike {
+            case HttpResponse(HttpStatus(status, _), _, Some(JString(tokenId)), _) => 
+              val overrideFutureTimeouts = FutureTimeouts(5, 50.milliseconds)
+
+              (status must_== HttpStatusCodes.OK) && 
+              (tokenId.length must_== Token.Test.tokenId.length) &&
+              (jsonTestService.get[JValue]("/tokens") must whenDelivered({
+                beLike[HttpResponse[JValue]] {
+                  case HttpResponse(status, _, Some(JArray(tokenIds)), _) => 
+                    (tokenIds must contain(JString(tokenId))) && 
+                    (jsonTestService.get[JValue]("/tokens/" + tokenId) must whenDelivered ({
+                      beLike[HttpResponse[JValue]] {
+                        case HttpResponse(status, _, Some(jtoken), _) => 
+                          jtoken.validated[Token] must beLike {
+                            case Success(token) => 
+                              (token.permissions.read must beTrue) && 
+                              (token.permissions.share must beFalse) &&
+                              (token.tokenId must_== tokenId)
+                          }
+                      }
+                    })(overrideFutureTimeouts))
+                }
+              })(overrideFutureTimeouts))
+          }
+        }
+    }
+
+    "create child tokens with a trailing slash" in {
+        val newToken = Token.Test.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
+        jsonTestService.post[JValue]("/tokens/")(newToken.serialize) must whenDelivered {
+          beLike {
+            case HttpResponse(HttpStatus(status, _), _, Some(JString(result)), _) => 
+              (status must_== HttpStatusCodes.OK) && 
+              (result.length must_== Token.Test.tokenId.length) &&
+              (jsonTestService.get[JValue]("/tokens/") must whenDelivered {
+                beLike {
+                  case HttpResponse(status, _, Some(JArray(tokenIds)), _) => tokenIds must contain(JString(result))
+                }
+              })
+          }
+        }
     }
 
     "explore variables" in {
