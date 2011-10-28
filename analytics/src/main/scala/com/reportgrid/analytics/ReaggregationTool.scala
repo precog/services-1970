@@ -68,23 +68,26 @@ object ReaggregationTool {
 
   def reprocess(env: AggregationEnvironment, pause: Int, batchSize: Int, totalRecords: Long, maxRecords: Long) {
     import env.engine._
-    eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
+    eventsdb(selectAll.from(events_collection).where("reprocess" === true & ("unparseable".doesNotExist)).limit(batchSize)) flatMap { results => 
       val reaggregated = results.map { jv => 
-        val objectId = JObject(JField("_id", jv \ "_id" \ "_id") :: Nil)
-
-        aggregateFromStorage(env.tokenManager, jv --> classOf[JObject]) flatMap { 
-          case Success(complexity) if complexity > 0 => 
-            eventsdb(update(events_collection).set(JPath("reprocess") set (false)).where("_id" === objectId)).map(_ => complexity)
-
-          case Failure(error) => 
-            println("Errors occurred reaggregating event data: " + compact(render(jv)) + " (" + error.list.mkString("; ") + ")")
-            eventsdb(update(events_collection).set((JPath("reprocess") set (false)) |+| (JPath("unparseable") set (true))).where("_id" === objectId)).map(_ => 0L)
+        aggregateFromStorage(env.tokenManager, jv --> classOf[JObject]) map { 
+          case result @ Success(complexity) => (result, (JPath("reprocess") set (false)))
+          case result @ Failure(error)      => (result, (JPath("reprocess") set (false)) |+| (JPath("unparseable") set (true)))
+        } flatMap {
+          case (result, mongoUpdate) => eventsdb(update(events_collection).set(mongoUpdate).where("_id" === (jv \ "_id"))).map(_ => result)
         }
       }
 
       Future(reaggregated.toSeq: _*) deliverTo { results => 
         val total = results.size + totalRecords
-        println("Processed " + results.size + " events with a total complexity of " + results.sum)
+        val (errors, complexity) = results.foldLeft((List.empty[String], 0L)) {
+          case ((errors, total),  Failure(err)) => (errors ++ err.list, total)
+          case ((errors, total),  Success(complexity)) => (errors, total + complexity)
+        }
+
+        println("Processed " + results.size + " events with a total complexity of " + complexity)
+        errors.foreach(println)
+
         if (total < maxRecords) {
           Thread.sleep(pause * 1000)
           reprocess(env, pause, batchSize, total, maxRecords)
