@@ -550,14 +550,6 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
       }
     } map (HierarchyLocationTerm("location", _))
   }
-
-  def getTags(result: Tag.ExtractionResult): Future[Seq[Tag]] = result match {
-    case Tag.Tags(tags) => tags
-    case Tag.Skipped => Future.sync(Nil)
-    case Tag.Errors(errors) =>
-      val errmsg = "Errors occurred extracting tag information: " + errors.list.mkString("; ")
-      throw new HttpException(BadRequest, errmsg)
-  }
 }
 
 object AnalyticsServiceSerialization extends AnalyticsSerialization {

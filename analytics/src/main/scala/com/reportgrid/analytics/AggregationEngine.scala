@@ -31,6 +31,7 @@ import org.joda.time.Instant
 import scala.collection.SortedMap
 import scalaz.Scalaz._
 import scalaz.NonEmptyList
+import scalaz.Validation
 import Future._
 import SignatureGen._
 
@@ -170,15 +171,18 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
                             Tag.locationTagExtractor(Future.sync(None))      :: Nil
 
         val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
-
-        tagResults match {
-          case Tag.Tags(tf) => tf.flatMap(aggregate(token, path, eventName, _, remainder, count).map(_.success[NonEmptyList[String]]))
-          case Tag.Skipped  => aggregate(token, path, eventName, Nil, remainder, count).map(_.success[NonEmptyList[String]])
-          case Tag.Errors(errors) => Future.sync(errors.map(_.toString).fail[Long])
-        }
+        aggregate(token, path, eventName, tagResults, remainder, count)
       } getOrElse {
         Future.sync(("No token found for tokenId: " + (obj \ "token")).wrapNel.fail[Long])
       }
+    }
+  }
+
+  def aggregate(token: Token, path: Path, eventName: String, tagResults: Tag.ExtractionResult, eventBody: JObject, count: Int): Future[Validation[NonEmptyList[String], Long]] = {
+    tagResults match {
+      case Tag.Tags(tf) => tf.flatMap(aggregate(token, path, eventName, _, eventBody, count).map(_.success[NonEmptyList[String]]))
+      case Tag.Skipped  => aggregate(token, path, eventName, Nil, eventBody, count).map(_.success[NonEmptyList[String]])
+      case Tag.Errors(errors) => Future.sync(errors.map(_.toString).fail[Long])
     }
   }
 

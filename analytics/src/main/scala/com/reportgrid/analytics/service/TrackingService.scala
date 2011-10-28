@@ -12,8 +12,10 @@ import blueeyes.util.Clock
 
 import AnalyticsService._
 import external.Jessup
-import scalaz.Success
 import scalaz.Scalaz._
+import scalaz.Success
+import scalaz.Failure
+import scalaz.NonEmptyList
 
 class TrackingService(aggregationEngine: AggregationEngine, timeSeriesEncoding: TimeSeriesEncoding, clock: Clock, jessup: Jessup, autoTimestamp: Boolean)
 extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[JValue]]] {
@@ -41,19 +43,31 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                 val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
                 aggregationEngine.store(token, path, eventName, jvalue, count, reprocess)
 
-                if (!reprocess) {
+                val ingestResult = if (!reprocess) {
                   val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
-                  getTags(tagResults).flatMap(aggregationEngine.aggregate(token, path, eventName, _, remainder, count))
+                  aggregationEngine.aggregate(token, path, eventName, tagResults, remainder, count)
                 } else {
-                  Future.sync(0L)
+                  Future.sync(0L.success[NonEmptyList[String]])
+                } 
+
+                ingestResult map {
+                  _.fail.map((errors: NonEmptyList[String]) => ("Errors occurred parsing the \"tag\" properties of the \"" + eventName + "\" event: " + compact(render(jvalue))) <:: errors).validation
                 }
               }: _*
             ) map {
-              v => HttpResponse[JValue](content = Some(v.sum))
+              _.reduceOption(_ >>*<< _) match {
+                case Some(Success(complexity)) => 
+                  aggregationEngine.logger.debug("total complexity: " + complexity)
+                  HttpResponse[JValue](OK)
+
+                case Some(Failure(errors)) => HttpResponse[JValue](HttpStatus(BadRequest, "Errors occurred parsing tag properies of one or more of your events."), content = Some(errors.list.mkString("; ")))
+
+                case None => HttpResponse[JValue](HttpStatus(BadRequest, "No trackable events were found in the content body."))
+              }
             }
 
           case err => 
-            Future.sync(HttpResponse[JValue](BadRequest, content = Some("Expected a JSON object but got " + pretty(render(err)))))
+            Future.sync(HttpResponse[JValue](HttpStatus(BadRequest, "Body content not a JSON object."), content = Some("Expected a JSON object but got " + pretty(render(err)))))
         }
       } getOrElse {
         Future.sync(HttpResponse[JValue](BadRequest, content = Some("Event content was not specified.")))
