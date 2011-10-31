@@ -9,7 +9,7 @@ import Prop._
 import SignatureGen._
 
 class SignatureSpec extends Specification with ScalaCheck with ArbitraryJValue {
-  implicit val hashFunction = Sha1HashFunction 
+  implicit val hashFunction = com.reportgrid.common.Sha1HashFunction 
 
   override val defaultPrettyParams = Pretty.Params(6)
 

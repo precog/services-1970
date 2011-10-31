@@ -87,7 +87,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
 
           for {
             tokenManager      <- TokenManager(indexdb, tokensCollection)
-            aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb)
+            aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb, monitor)
           } yield {
             AnalyticsState(
               aggregationEngine, tokenManager, 

@@ -24,6 +24,7 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                         Tag.locationTagExtractor(jessup(request.remoteHost))             :: Nil
 
     val count: Int = request.parameters.get('count).map(_.toInt).getOrElse(1)
+    val rollup: Boolean = request.parameters.get('rollup).flatMap(_.parseBoolean.toOption).getOrElse(false)
 
     Success(
       (token: Token, path: Path) => request.content.map { 
@@ -32,7 +33,11 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
             aggregationEngine.logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)))
 
             Future(
-              fields.map { case JField(eventName, jvalue) => 
+              fields.flatMap { case JField(eventName, jvalue) => 
+                def appendError = (errors: NonEmptyList[String]) => {
+                  ("Errors occurred parsing the \"tag\" properties of the \"" + eventName + "\" event: " + compact(render(jvalue))) <:: errors
+                }
+
                 // compensate for bare jvalues as events
                 val event: JObject = jvalue match {
                   case obj: JObject => obj
@@ -41,18 +46,16 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
           
                 val offset = clock.now().minusDays(1).toInstant
                 val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
-                aggregationEngine.store(token, path, eventName, jvalue, count, reprocess)
 
-                val ingestResult = if (!reprocess) {
+                aggregationEngine.store(token, path, eventName, jvalue, count, rollup, reprocess)
+
+                if (reprocess) Nil //skip immediate aggregation of historical data
+                else {
                   val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
-                  aggregationEngine.aggregate(token, path, eventName, tagResults, remainder, count)
-                } else {
-                  Future.sync(0L.success[NonEmptyList[String]])
+                  path.rollups(rollup) map {
+                    aggregationEngine.aggregate(token, _, eventName, tagResults, remainder, count) map { appendError <-: _ }
+                  }
                 } 
-
-                ingestResult map {
-                  _.fail.map((errors: NonEmptyList[String]) => ("Errors occurred parsing the \"tag\" properties of the \"" + eventName + "\" event: " + compact(render(jvalue))) <:: errors).validation
-                }
               }: _*
             ) map {
               _.reduceOption(_ >>*<< _) match {

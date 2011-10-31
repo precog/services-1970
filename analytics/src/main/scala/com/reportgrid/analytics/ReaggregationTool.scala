@@ -1,6 +1,7 @@
 package com.reportgrid.analytics
 
 import blueeyes._
+import blueeyes.health._
 import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
@@ -30,7 +31,7 @@ object AggregationEnvironment {
 
     TokenManager(indexdb, "tokens").map { tokenManager => 
       AggregationEnvironment(
-        AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb),
+        AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop),
         tokenManager
       )
     }

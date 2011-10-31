@@ -5,6 +5,7 @@ import blueeyes.core.data.Bijection.identity
 import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.concurrent.test.FutureMatchers
+import blueeyes.health.HealthMonitor
 import blueeyes.util._
 import blueeyes.util.metrics.Duration
 import blueeyes.util.metrics.Duration.toDuration
@@ -158,7 +159,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
   val indexMongo = new RealMongo(indexConfig)
   val indexdb = indexMongo.database(indexConfig("database"))
 
-  val engine = get(AggregationEngine(config, Logger.get, eventsdb, indexdb))
+  val engine = get(AggregationEngine(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop))
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
@@ -169,7 +170,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1)
-        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, false)
+        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, false, false)
       }
     }
 
