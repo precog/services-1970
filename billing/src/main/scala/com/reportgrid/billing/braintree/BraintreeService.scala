@@ -1,10 +1,8 @@
 package com.reportgrid.billing.braintree
 
 import com.braintreegateway._
-
 import scalaz._
 import scala.collection.JavaConverters._
-
 import com.reportgrid.billing.BillingInformation
 import com.reportgrid.billing.CreateAccount
 
@@ -35,10 +33,14 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) {
       if (result.isSuccess()) {
         Success(result.getTarget())
       } else {
-        Failure(collapseErrors(result.getErrors()))
+        val ccv = result.getCreditCardVerification()
+        val occv = if(ccv == null) None else Some(ccv)
+        Failure(collapseErrors(result.getErrors(), occv))
       }
     }
   }
+  
+  
 
   def findAllCustomers(): Iterator[Customer] = {
     gateway.customer().all().asScala.iterator
@@ -160,7 +162,7 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) {
         if (result.isSuccess) {
           Success(result.getTarget())
         } else {
-          Failure(collapseErrors(result.getErrors()))
+          Failure(collapseErrors(result.getErrors(), None))
         }
       } else {
         Failure("Plan not found (" + planId + ")")
@@ -174,7 +176,7 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) {
       if (result.isSuccess) {
         Success(Unit)
       } else {
-        Failure(collapseErrors(result.getErrors()))
+        Failure(collapseErrors(result.getErrors(), None))
       }
     } else {
       Success(Unit)
@@ -183,7 +185,19 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) {
 
   // Helper methods
   
-  private def collapseErrors(errors: ValidationErrors): String = {
-    errors.getAllDeepValidationErrors().asScala.foldLeft("Billing errors:")((acc, a) => acc + " " + a.getMessage())
+  private def collapseErrors(errors: ValidationErrors, verification: Option[CreditCardVerification]): String = {
+    val validationErrors = errors.getAllDeepValidationErrors().asScala.foldLeft("")((acc, a) => acc + " " + a.getMessage())
+
+    val verificationError = verification.map(ccv => {
+      val majorCode = ccv.getProcessorResponseCode().substring(0,1)
+      majorCode match {
+        case "1" => ""
+        case "2" => " Credit card declined. Reason [" + ccv.getProcessorResponseText() + "]"
+        case "3" => " Error with credit card processing service. Reason [" + ccv.getProcessorResponseText() + "]"
+        case _   => " Error will billing service. Reason [Credit card processing gateway produced unexepcted error.]"
+      }
+    }).getOrElse("")
+    
+    "Billing errors:" + validationErrors + verificationError 
   }
 }

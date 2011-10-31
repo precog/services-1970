@@ -337,7 +337,7 @@ object BillingServiceSpec extends TestBillingService {
               goodContactInfo,
               Some(b))
 
-            testForCreateError(t, "Billing errors:")
+            testForCreateError(t, "Billing errors: Credit card declined. Reason [Do Not Honor]")
           }
           "wrong cvv" in {
             val b = BillingInformation(
