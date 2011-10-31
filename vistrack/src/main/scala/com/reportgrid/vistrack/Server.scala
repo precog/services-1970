@@ -63,7 +63,7 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
             req.parameters.get('tokenId) map { tokenId => 
               buildTokenHashes(tokenId, Nil).map(l => HttpResponse[JValue](content = Some(l.serialize)))
             } getOrElse {
-              Future.sync(HttpResponse[JValue](BadRequest, content = Some(JString("tokenId request parameter must be specified."))))
+              Future.sync(HttpResponse[JValue](HttpStatus(BadRequest, "tokenId request parameter must be specified")))
             }
           }
         }
@@ -72,5 +72,11 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
     shutdown { config =>
       Future sync ()
     }
+  }
+}
+
+object Vistrack extends BlueEyesServer with Vistrack {
+  def mongoFactory(configMap: ConfigMap): Mongo = {
+    new blueeyes.persistence.mongo.RealMongo(configMap)
   }
 }
