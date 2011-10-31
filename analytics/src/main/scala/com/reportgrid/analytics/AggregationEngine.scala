@@ -7,6 +7,7 @@ import com.reportgrid.common.Sha1HashFunction
 
 import blueeyes._
 import blueeyes.concurrent._
+import blueeyes.health.HealthMonitor
 import blueeyes.persistence.mongo._
 import blueeyes.persistence.mongo.MongoFilterImplicits._
 import blueeyes.persistence.cache.{Stage, ExpirationPolicy, CacheSettings}
@@ -93,7 +94,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
   }
 }
 
-class AggregationEngine private (config: ConfigMap, val logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock)(implicit hashFunction: HashFunction = Sha1HashFunction) {
+class AggregationEngine private (config: ConfigMap, val logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock, healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
 
   private def AggregationStage(prefix: String): AggregationStage = {
@@ -106,7 +107,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
     new AggregationStage(
       collection = collection,
-      stage = new MongoStage(
+      stage = MongoStage(
         database   = indexdb,
         mongoStageSettings = MongoStageSettings(
           expirationPolicy = ExpirationPolicy(
@@ -115,7 +116,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
             unit       = TimeUnit.MILLISECONDS
           ),
           maximumCapacity = maximumCapacity
-        )
+        )//,
+        //healthMonitor
       )
     )
   }
@@ -129,7 +131,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   val events_collection: MongoCollection = config.getString("events.collection", "events")
 
-  def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int, reprocess: Boolean) = {
+  def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int, rollup: Boolean, reprocess: Boolean) = {
     if (token.limits.lossless) {
       val async = Future.async {
         val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {
@@ -145,6 +147,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
               JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
               JField("count",     count.serialize) ::
               JField("timestamp", instant.serialize) :: 
+              JField("rollup",    rollup.serialize) :: 
               (if (reprocess) JField("reprocess", true.serialize) :: Nil else Nil)
             )
 
@@ -174,7 +177,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
                             Tag.locationTagExtractor(Future.sync(None))      :: Nil
 
         val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
-        aggregate(token, path, eventName, tagResults, remainder, count)
+        aggregate(token, path, eventName, tagResults, remainder, count) deliverTo {
+          complexity => healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
+        }
       } getOrElse {
         Future.sync(("No token found for tokenId: " + (obj \ "token")).wrapNel.fail[Long])
       }
@@ -737,17 +742,17 @@ object AggregationEngine {
     Future(futures.toSeq: _*)
   }
 
-  def apply(config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
+  def apply(config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database, healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
     for {
       _ <- createIndices(eventsdb, EventsdbIndices)
       _ <- createIndices(indexdb,  IndexdbIndices)
     } yield {
-      new AggregationEngine(config, logger, eventsdb, indexdb, ClockSystem.realtimeClock)
+      new AggregationEngine(config, logger, eventsdb, indexdb, ClockSystem.realtimeClock, healthMonitor)
     }
   }
 
-  def forConsole(config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database)(implicit hashFunction: HashFunction = Sha1HashFunction) = {
-    new AggregationEngine(config, logger, eventsdb, indexdb, ClockSystem.realtimeClock)
+  def forConsole(config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database, healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) = {
+    new AggregationEngine(config, logger, eventsdb, indexdb, ClockSystem.realtimeClock, healthMonitor)
   }
 
   def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[JValue, T])]): scala.math.Ordering[JArray] = {

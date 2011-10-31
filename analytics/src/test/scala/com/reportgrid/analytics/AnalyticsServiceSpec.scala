@@ -168,6 +168,14 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       } 
     }
 
+    "not roll up by default" in {
+      jsonTestService.get[JValue]("/vfs/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== 0l
+        }
+      } 
+    }
+
     "return variable series means" in {
       //skip("disabled")
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
@@ -318,6 +326,32 @@ class RootTrackingServiceSpec extends TestAnalyticsService with ArbitraryEvent w
     }
   }
 }
+
+class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
+  override val genTimeClock = clock 
+
+  "Analytics Service" should {
+    shareVariables()
+
+    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+      _.foreach(event => jsonTestService.query("rollup", "true").post[JValue]("/vfs/test")(event.message))
+    }
+
+    "roll up data to parent paths" in {
+      lazy val tweetedCount = sampleEvents.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      jsonTestService.get[JValue]("/vfs/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+        }
+      } 
+    }
+  }
+}
+
 
 class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
   override val genTimeClock = PastClock(Days.TWO.toStandardDuration)
