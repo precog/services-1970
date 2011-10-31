@@ -2,6 +2,7 @@ package com.reportgrid
 package vistrack
 
 import com.reportgrid.common.Sha1HashFunction
+import com.reportgrid.analytics.TokenStorage
 import com.reportgrid.analytics.TokenManager
 
 import net.lag.configgy._
@@ -32,6 +33,19 @@ import org.apache.commons.codec.binary.Base64
 trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
   def mongoFactory(configMap: ConfigMap): Mongo
 
+  def buildTokenHashes(tokenStorage: TokenStorage, tokenId: String, hashes: List[String]): Future[List[String]] = {
+    tokenStorage.lookup(tokenId).flatMap {
+      case Some(token) =>
+        val hash = Base64.encodeBase64String(Sha1HashFunction(token.tokenId.getBytes)).take(7)
+        token.parentTokenId match {
+          case Some(id) if token.tokenId != token.accountTokenId => buildTokenHashes(tokenStorage, id, hash :: hashes)
+          case _ => Future.sync[List[String]](hash :: hashes)
+        }
+
+      case None => Future.sync[List[String]](hashes)
+    }
+  }
+
   val Service = service("vistrack", "1.0") { context =>
     startup { 
       import context._
@@ -44,24 +58,11 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
       TokenManager(database, tokensCollection)
     } ->
     request { tokenManager =>
-      def buildTokenHashes(tokenId: String, hashes: List[String]): Future[List[String]] = {
-        tokenManager.lookup(tokenId).flatMap {
-          case Some(token) =>
-            val hash = Base64.encodeBase64String(Sha1HashFunction(token.tokenId.getBytes)).take(7)
-            token.parentTokenId match {
-              case Some(id) if token.tokenId != token.accountTokenId => buildTokenHashes(id, hash :: hashes)
-              case _ => Future.sync[List[String]](hash :: hashes)
-            }
-
-          case None => Future.sync[List[String]](hashes)
-        }
-      }
-
       jsonp {
         path("/auditPath") {
           get { req: HttpRequest[Future[JValue]] =>
             req.parameters.get('tokenId) map { tokenId => 
-              buildTokenHashes(tokenId, Nil).map(l => HttpResponse[JValue](content = Some(l.serialize)))
+              buildTokenHashes(tokenManager, tokenId, Nil).map(l => HttpResponse[JValue](content = Some(l.serialize)))
             } getOrElse {
               Future.sync(HttpResponse[JValue](HttpStatus(BadRequest, "tokenId request parameter must be specified")))
             }
