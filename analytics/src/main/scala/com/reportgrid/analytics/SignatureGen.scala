@@ -1,6 +1,7 @@
 package com.reportgrid.analytics
 
 import Periodicity._
+import com.reportgrid.common.HashFunction
 
 import blueeyes._
 import blueeyes.json._

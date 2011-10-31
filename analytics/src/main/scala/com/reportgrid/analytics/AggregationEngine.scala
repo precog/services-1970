@@ -2,6 +2,9 @@ package com.reportgrid.analytics
 
 import external.Jessup
 
+import com.reportgrid.common.HashFunction
+import com.reportgrid.common.Sha1HashFunction
+
 import blueeyes._
 import blueeyes.concurrent._
 import blueeyes.health.HealthMonitor

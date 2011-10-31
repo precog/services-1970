@@ -45,7 +45,7 @@ object ServicesBuild extends Build {
       , test in assembly := {}
     )
 
-    val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt (blueeyes(base)) dependsOnAlt(client(base))
+    val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt(client(base))
 
     val billingSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
       version      := "1.0.2-SNAPSHOT",
@@ -61,7 +61,7 @@ object ServicesBuild extends Build {
       mainClass := Some("com.reportgrid.billing.BillingServer")
     )
 
-    val billing = Project("billing", file("billing"), settings = billingSettings) dependsOn(common) dependsOnAlt blueeyes(base)
+    val billing = Project("billing", file("billing"), settings = billingSettings) dependsOn(common) 
 
 
     val jessupSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
@@ -76,8 +76,19 @@ object ServicesBuild extends Build {
 
     val jessup = Project("jessup", file("jessup"), settings = jessupSettings) dependsOnAlt blueeyes(base)
 
-    val services = Project("services", file(".")) aggregate (common, analytics, billing, jessup) 
+    val vistrackSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
+      libraryDependencies ++= Seq(
+        "commons-codec" % "commons-codec"       % "1.5",
+        "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
+        "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"
+      ),
+      mainClass := Some("com.reportgrid.vistrack.VistrackServer"),
+      jarName in assembly := "vistrack-v1.jar"
+    )
 
-    common :: analytics :: billing :: jessup :: services :: Nil
+    val vistrack = Project("vistrack", file("vistrack"), settings = vistrackSettings) dependsOn(common) 
+
+    val services = Project("services", file(".")) aggregate (analytics, billing, vistrack, jessup) 
+    common :: analytics :: billing :: jessup :: vistrack :: services :: Nil
   }
 }
