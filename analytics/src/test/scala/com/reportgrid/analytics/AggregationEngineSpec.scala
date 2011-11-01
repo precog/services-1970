@@ -102,7 +102,7 @@ trait LocalMongo {
     }
 
     log {
-      level   = "debug"
+      level   = "warning"
       console = true
     }
   """.format(eventsName, indexName)
@@ -124,8 +124,7 @@ trait AggregationEngineTests extends Specification with FutureMatchers with Arbi
   def countStoredEvents(sampleEvents: List[Event], engine: AggregationEngine) = {
     //skip("disabled")
     def countEvents(eventName: String) = sampleEvents.count {
-      case Event(`eventName`, _, tags) => true
-      case _ => false
+      case Event(name, _, _) => name == eventName
     }
 
     val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
@@ -170,7 +169,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1)
-        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, false, false)
+        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, 0, false)
       }
     }
 

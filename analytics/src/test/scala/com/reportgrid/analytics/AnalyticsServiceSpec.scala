@@ -188,9 +188,9 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       )
 
       (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")(queryTerms)) must whenDelivered {
-        verify {
+        beLike {
           case HttpResponse(status, _, Some(contents), _) => 
-            val resultData = contents match {
+            val resultData = (contents: @unchecked) match {
               case JArray(values) => values.flatMap { 
                 case JArray(List(JObject(List(JField("timestamp", k), JField("location", k2))), JDouble(v))) => Some((List(k.deserialize[Instant].toString, k2.deserialize[String]), v))
                 case JArray(List(JObject(List(_, _)), JNull)) => None
@@ -220,7 +220,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour"
       if (!jpath.endsInInfiniteValueSpace) {
         (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered {
-          verify {
+          beLike {
             case HttpResponse(status, _, Some(JArray(values)), _) => (values must notBeEmpty) //&& (series must_== expected)
           }
         }
@@ -245,7 +245,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour?groupBy=day"
       if (!jpath.endsInInfiniteValueSpace) {
         (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered {
-          verify {
+          beLike {
             case HttpResponse(status, _, Some(JArray(values)), _) => (values must notBeEmpty) //&& (series must_== expected)
           }
         }
@@ -311,7 +311,7 @@ class RootTrackingServiceSpec extends TestAnalyticsService with ArbitraryEvent w
       jsonTestService.get[JValue]("/vfs/?location=usa") must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(JArray(elements)), _) => 
-            (elements map { case JString(s) => s }) must contain(".tweeted")
+            (elements collect { case JString(s) => s }) must contain(".tweeted")
           case x => false
         }
       } 
@@ -320,7 +320,7 @@ class RootTrackingServiceSpec extends TestAnalyticsService with ArbitraryEvent w
     "retrieve property children at the root" in {
       jsonTestService.get[JValue]("/vfs/.tweeted?location=usa") must whenDelivered {
         beLike {
-          case HttpResponse(status, _, Some(JArray(elements)), _) => (elements map { case JString(s) => s }) must contain(".twitterClient")
+          case HttpResponse(status, _, Some(JArray(elements)), _) => (elements collect { case JString(s) => s }) must contain(".twitterClient")
         }
       } 
     }
@@ -334,7 +334,7 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
     shareVariables()
 
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
-      _.foreach(event => jsonTestService.query("rollup", "true").post[JValue]("/vfs/test")(event.message))
+      _.foreach(event => jsonTestService.query("rollup", "1").post[JValue]("/vfs/test")(event.message))
     }
 
     "roll up data to parent paths" in {

@@ -15,12 +15,13 @@ import scalaz.Validation
  * the customer signs up for. Higher limits imply more power in aggregation
  * but more resource utilization on the backend.
  */
-case class Limits(order: Int, limit: Int, depth: Int, tags: Int = 1, lossless: Boolean = true) {
+case class Limits(order: Int, limit: Int, depth: Int, tags: Int = 1, lossless: Boolean = true, rollup: Int = 0) {
   def limitTo(that: Limits) = Limits(
     order = this.order.min(that.order),
     limit = this.limit.min(that.limit),
     depth = this.depth.min(that.depth),
-    tags  = this.tags.min(that.tags)
+    tags  = this.tags.min(that.tags),
+    rollup = this.rollup.min(that.rollup)
   )
 }
 
@@ -32,6 +33,7 @@ trait LimitSerialization {
       JField("depth", limits.depth.serialize) ::
       JField("tags",  limits.tags.serialize) ::
       JField("lossless",  limits.lossless.serialize) ::
+      JField("rollup",  limits.rollup.serialize) ::
       Nil
     )
   }
@@ -42,9 +44,10 @@ trait LimitSerialization {
         (jvalue \ "order").validated[Int] |@|
         (jvalue \ "limit").validated[Int] |@|
         (jvalue \ "depth").validated[Int] |@|
-        (jvalue \ "tags").validated[Int]  
+        (jvalue \ "tags").validated[Int]  |@|
+        (jvalue \ "rollup").validated[Int]
       ) {
-        Limits(_, _, _, _, (jvalue \ "lossless").validated[Boolean] | true)
+        Limits(_, _, _, _, (jvalue \ "lossless").validated[Boolean] | true, _)
       }
     }
   }
@@ -55,7 +58,8 @@ trait LimitSerialization {
       (jvalue \ "limit").validated[Int] | default.limit,
       (jvalue \ "depth").validated[Int] | default.depth,
       (jvalue \ "tags").validated[Int]  | default.tags,
-      (jvalue \ "lossless").validated[Boolean]  | default.lossless
+      (jvalue \ "lossless").validated[Boolean]  | default.lossless,
+      (jvalue \ "rollup").validated[Int]  | default.rollup
     ) 
   }
 }

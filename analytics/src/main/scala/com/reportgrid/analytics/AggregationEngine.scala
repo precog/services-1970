@@ -131,7 +131,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   val events_collection: MongoCollection = config.getString("events.collection", "events")
 
-  def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int, rollup: Boolean, reprocess: Boolean) = {
+  def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int, rollup: Int, reprocess: Boolean) = {
     if (token.limits.lossless) {
       val async = Future.async {
         val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {

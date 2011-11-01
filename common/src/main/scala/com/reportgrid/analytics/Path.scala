@@ -34,7 +34,7 @@ class Path private (private val _path : String) {
     parentList ++ parentList.flatMap(_.ancestors)
   }
 
-  def rollups(rollup: Boolean): List[Path] = if (rollup) this :: ancestors else List(this)
+  def rollups(depth: Int): List[Path] = this :: ancestors.take(depth) 
 
   def parentChildRelations: List[(Path, Path)] = {
     val a = ancestors
