@@ -62,7 +62,8 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                   if (reprocess) Nil //skip immediate aggregation of historical data
                   else {
                     val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
-                    path.rollups(rollup) map {
+                    // only roll up to the client root, and not beyond (hence path.length - 1)
+                    path.rollups(rollup min (path.length - 1)) map { 
                       aggregationEngine.aggregate(token, _, eventName, tagResults, remainder, count) map { appendError <-: _ }
                     }
                   } 

@@ -253,7 +253,7 @@ object Hierarchy {
       else parallel(tails, acc && heads.distinct.size == 1)
     }
 
-    values.map(_.length).distinct.size == values.size && parallel(values.map(_.elements), true)
+    values.map(_.length).distinct.size == values.size && parallel(values.map(_.elements.toList), true)
   }
 }
 

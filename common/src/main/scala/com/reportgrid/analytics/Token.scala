@@ -43,9 +43,9 @@ case class Token(tokenId: String, parentTokenId: Option[String], accountTokenId:
     limits         = limits.limitTo(this.limits)
   )
 
-  def relativeTo(owner: Token) = copy(path = this.path - owner.path)
+  def relativeTo(owner: Token) = (this.path - owner.path).map(p => copy(path = p))
 
-  def absoluteFrom(owner: Token) = copy(path = owner.path + this.path)
+  def absoluteFrom(owner: Token) = copy(path = owner.path / this.path)
 }
 
 trait TokenSerialization {
@@ -90,16 +90,6 @@ object Token extends TokenSerialization {
     permissions    = Permissions(true, true, true, true),
     expires        = Never,
     limits         = Limits(order = 2, depth = 3, limit = 20, tags = 2)
-  )
-
-  lazy val Benchmark = Token(
-    tokenId        = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
-    parentTokenId  = Some(Root.tokenId),
-    accountTokenId = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
-    path           = "test-account-benchmark",
-    permissions    = Permissions(true, true, true, true),
-    expires        = Never,
-    limits         = Limits(order = 3, depth = 5, limit = 20, tags = 2)
   )
 
   def newAccount(path: Path, limits: Limits, permissions: Permissions = Permissions.All, expires: DateTime = Never): Token = {

@@ -44,10 +44,9 @@ trait LimitSerialization {
         (jvalue \ "order").validated[Int] |@|
         (jvalue \ "limit").validated[Int] |@|
         (jvalue \ "depth").validated[Int] |@|
-        (jvalue \ "tags").validated[Int]  |@|
-        (jvalue \ "rollup").validated[Int]
+        (jvalue \ "tags").validated[Int] 
       ) {
-        Limits(_, _, _, _, (jvalue \ "lossless").validated[Boolean] | true, _)
+        Limits(_, _, _, _, (jvalue \ "lossless").validated[Boolean] | true, (jvalue \ "rollup").validated[Int] | 0)
       }
     }
   }
@@ -59,11 +58,11 @@ trait LimitSerialization {
       (jvalue \ "depth").validated[Int] | default.depth,
       (jvalue \ "tags").validated[Int]  | default.tags,
       (jvalue \ "lossless").validated[Boolean]  | default.lossless,
-      (jvalue \ "rollup").validated[Int]  | default.rollup
+      (jvalue \ "rollup").validated[Int] | default.rollup
     ) 
   }
 }
 
 object Limits extends LimitSerialization {
-  val None = Limits(100, 100, 100, 100)
+  val None = Limits(100, 100, 100, 100, true, 100)
 }

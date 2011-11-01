@@ -28,13 +28,11 @@ object TokenManager {
   def apply(database: Database, tokensCollection: MongoCollection) = {
     val RootTokenJ: JObject      = Token.Root.serialize.asInstanceOf[JObject]
     val TestTokenJ: JObject      = Token.Test.serialize.asInstanceOf[JObject]
-    val BenchmarkTokenJ: JObject = Token.Benchmark.serialize.asInstanceOf[JObject]
 
     val rootTokenFuture  = database(upsert(tokensCollection).set(RootTokenJ))
     val testTokenFuture  = database(upsert(tokensCollection).set(TestTokenJ))
-    val benchTokenFuture = database(upsert(tokensCollection).set(BenchmarkTokenJ))
 
-    (rootTokenFuture zip testTokenFuture zip benchTokenFuture) map {
+    (rootTokenFuture zip testTokenFuture) map {
       tokens => new TokenManager(database, tokensCollection)
     }
   }
@@ -50,7 +48,6 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
   val tokenCache = Cache.concurrent[String, Token](CacheSettings(ExpirationPolicy(None, None, MILLISECONDS)))
   tokenCache.put(Token.Root.tokenId, Token.Root)
   tokenCache.put(Token.Test.tokenId, Token.Test)
-  tokenCache.put(Token.Benchmark.tokenId, Token.Benchmark)
 
   /** Look up the specified token.
    */

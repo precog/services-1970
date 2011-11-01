@@ -66,6 +66,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
 
   def jessup(configMap: ConfigMap): Jessup
 
+  def tokenManager(database: Database, tokensCollection: MongoCollection): Future[TokenManager]
+
   val clock: Clock
 
   val analyticsService = this.service("analytics", "1.0") {
@@ -86,7 +88,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           val tokensCollection = config.getString("tokens.collection", "tokens")
 
           for {
-            tokenManager      <- TokenManager(indexdb, tokensCollection)
+            tokenManager      <- tokenManager(indexdb, tokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb, monitor)
           } yield {
             AnalyticsState(
@@ -96,13 +98,13 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           }
         } ->
         request { (state: AnalyticsState) =>
-          import state.{aggregationEngine, tokenManager}
+          import state.{aggregationEngine}
 
-          val audit = auditor(state.auditClient, clock, tokenManager)
+          val audit = auditor(state.auditClient, clock, state.tokenManager)
           import audit._
 
           jsonp[ByteChunk] {
-            token(tokenManager) {
+            token(state.tokenManager) {
               /* The virtual file system, which is used for storing data,
                * retrieving data, and querying for metadata.
                */
@@ -290,7 +292,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                   path(/?) {
                     get { 
                       (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-                        tokenManager.listDescendants(token) map { 
+                        state.tokenManager.listDescendants(token) map { 
                           _.map(_.tokenId).serialize.ok
                         }
                       }
@@ -306,7 +308,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
 
                             if (expires < clock.now()) {
                               Future.sync(HttpResponse[JValue](BadRequest, content = Some("Your are attempting to create an expired token. Such a token will not be usable.")))
-                            } else tokenManager.issueNew(parent, path, permissions, expires, limits) map {
+                            } else state.tokenManager.issueNew(parent, path, permissions, expires, limits) map {
                               case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
                               case Failure(message) => throw new HttpException(BadRequest, message)
                             }
@@ -323,16 +325,16 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                         (request: HttpRequest[Future[JValue]]) => (token: Token) => {
                           if (token.tokenId == request.parameters('descendantTokenId)) {
                             token.parentTokenId.map { parTokenId =>
-                              tokenManager.lookup(parTokenId).map { parent => 
-                                val sanitized = parent.map(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
+                              state.tokenManager.lookup(parTokenId).map { parent => 
+                                val sanitized = parent.flatMap(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
                                 HttpResponse[JValue](content = sanitized.map(_.serialize))
                               }
                             } getOrElse {
                               Future.sync(HttpResponse[JValue](Forbidden))
                             }
                           } else {
-                            tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
-                              _.map { _.relativeTo(token).copy(accountTokenId = "").serialize }
+                            state.tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
+                              _.flatMap(_.relativeTo(token).map(_.copy(accountTokenId = "").serialize))
                             } map { descendantToken =>
                               HttpResponse[JValue](content = descendantToken)
                             }
@@ -341,7 +343,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                       } ~
                       delete { 
                         (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-                          tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
+                          state.tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
                             HttpResponse[JValue](content = None)
                           }
                         }

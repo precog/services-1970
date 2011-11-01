@@ -121,6 +121,16 @@ object FutureUtils {
 }
 
 trait AggregationEngineTests extends Specification with FutureMatchers with ArbitraryEvent {
+  val TestToken = Token(
+    tokenId        = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
+    parentTokenId  = Some(Token.Root.tokenId),
+    accountTokenId = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
+    path           = "unittest",
+    permissions    = Permissions(true, true, true, true),
+    expires        = Token.Never,
+    limits         = Limits(order = 3, depth = 5, limit = 20, tags = 2, rollup = 2)
+  )
+
   def countStoredEvents(sampleEvents: List[Event], engine: AggregationEngine) = {
     //skip("disabled")
     def countEvents(eventName: String) = sampleEvents.count {
@@ -135,7 +145,7 @@ trait AggregationEngineTests extends Specification with FutureMatchers with Arbi
 
     eventCounts.foreach {
       case (eventName, count) =>
-        engine.getVariableCount(Token.Benchmark, "/test", Variable("." + eventName), queryTerms) must whenDelivered {
+        engine.getVariableCount(TestToken, "/test", Variable("." + eventName), queryTerms) must whenDelivered {
           beEqualTo(count)
         }
     }
@@ -168,8 +178,8 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
     // using the benchmark token for testing because it has order 3
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach { event => 
-        engine.aggregate(Token.Benchmark, "/test", event.eventName, event.tags, event.data, 1)
-        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, 0, false)
+        engine.aggregate(TestToken, "/test", event.eventName, event.tags, event.data, 1)
+        engine.store(TestToken, "/test", event.eventName, event.messageData, 1, 0, false)
       }
     }
 
@@ -179,7 +189,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case Event(eventName, _, _) => "." + eventName
       }.toSet
 
-      engine.getPathChildren(Token.Benchmark, "/test") must whenDelivered {
+      engine.getPathChildren(TestToken, "/test") must whenDelivered {
         haveTheSameElementsAs(children)
       }
     }
@@ -207,7 +217,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case ((eventName, path), values) =>
           val jpath = JPath(eventName) \ path
           if (!jpath.endsInInfiniteValueSpace) {
-            engine.getValues(Token.Benchmark, "/test", Variable(jpath)) must whenDelivered {
+            engine.getValues(TestToken, "/test", Variable(jpath)) must whenDelivered {
               haveSameElementsAs(values)
             }
           }
@@ -225,7 +235,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
 
       arrayValues.foreach {
         case ((eventName, path), values) =>
-          engine.getValues(Token.Benchmark, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
+          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
             haveSameElementsAs(values)
           }
       }
@@ -241,7 +251,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (map, _) => map
       }
 
-      engine.getHistogramTop(Token.Benchmark, "/test", Variable(".tweeted.retweet"), 10) must whenDelivered {
+      engine.getHistogramTop(TestToken, "/test", Variable(".tweeted.retweet"), 10) must whenDelivered {
         haveTheSameElementsAs(retweetCounts)
       }
     }
@@ -258,7 +268,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case ((jpath, value), count) =>
           val variable = Variable(jpath) 
           if (!variable.name.endsInInfiniteValueSpace) {
-            engine.getObservationCount(Token.Benchmark, "/test", JointObservation(HasValue(variable, value)), queryTerms) must whenDelivered {
+            engine.getObservationCount(TestToken, "/test", JointObservation(HasValue(variable, value)), queryTerms) must whenDelivered {
               beEqualTo(count.toLong)
             }
           }
@@ -286,7 +296,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
 
       expectedTotals.foreach {
         case (jpath, count) =>
-          engine.getVariableSeries(Token.Benchmark, "/test", Variable(jpath), queryTerms).
+          engine.getVariableSeries(TestToken, "/test", Variable(jpath), queryTerms).
           map(_.total.count) must whenDelivered {
             beEqualTo(count.toLong)
           }
@@ -307,7 +317,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (eventName, means) =>
           val expected: Map[String, Double] = means.map{ case (k, v) => (k(0), v) }.toMap
 
-          engine.getVariableSeries(Token.Benchmark, "/test", Variable(JPath(eventName) \ "recipientCount"), queryTerms) must whenDelivered {
+          engine.getVariableSeries(TestToken, "/test", Variable(JPath(eventName) \ "recipientCount"), queryTerms) must whenDelivered {
             verify { result => 
               val remapped: Map[String, Double] = result.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant].toString -> _) }.toMap 
               remapped must_== expected
@@ -332,7 +342,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
           if (!variable.name.endsInInfiniteValueSpace) {
             val observation = JointObservation(HasValue(variable, value))
 
-            engine.getObservationSeries(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered {
+            engine.getObservationSeries(TestToken, "/test", observation, queryTerms) must whenDelivered {
               verify { results => 
                 (results.total must_== count.toLong) && 
                 (results must haveSize((granularity.period(minDate) until maxDate).size))
@@ -358,7 +368,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
           if (!variable.name.endsInInfiniteValueSpace) {
             val observation = JointObservation(HasValue(variable, value))
 
-            engine.getRawEvents(Token.Benchmark, "/test", observation, queryTerms).map(AggregationEngine.countByTerms(_, queryTerms)) must whenDelivered {
+            engine.getRawEvents(TestToken, "/test", observation, queryTerms).map(AggregationEngine.countByTerms(_, queryTerms)) must whenDelivered {
               verify { results => 
                 (results.total must_== count.toLong) && 
                 (results must haveSize((granularity.period(minDate) until maxDate).size))
@@ -389,7 +399,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
-          engine.getObservationCount(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
+          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -416,7 +426,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
-          engine.getObservationCount(Token.Benchmark, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
+          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
       }
     }
 
@@ -438,7 +448,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (map, _) => map
       }
 
-      engine.getIntersectionCount(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
+      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
         verify { result => 
           result.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts
         }
@@ -466,7 +476,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (map, _) => map
       }
 
-      engine.getIntersectionCount(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
+      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
         verify(_.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
       }
     }
@@ -491,7 +501,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (map, _) => map
       }
 
-      engine.getIntersectionSeries(Token.Benchmark, "/test", descriptors, queryTerms) must whenDelivered {
+      engine.getIntersectionSeries(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
         verify { results => 
           // all returned results must have the same length of time series
           val sizes = results.map(_._2).map(_.size).filter(_ > 0)
@@ -524,7 +534,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         expectedValues.foreach {
           case ((eventName, jpath, jvalue), infiniteValues) => 
             engine.findRelatedInfiniteValues(
-              Token.Benchmark, "/test", 
+              TestToken, "/test", 
               JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
               List(SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan(minDate, maxDate)))
             ) map {
@@ -553,7 +563,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
     //    }
     //  }
 
-    //  engine.getIntersectionSeries(Token.Benchmark, "/test", descriptors, granularity, Some(minDate), Some(maxDate)).
+    //  engine.getIntersectionSeries(TestToken, "/test", descriptors, granularity, Some(minDate), Some(maxDate)).
     //  map(AnalyticsService.serializeIntersectionResult[TimeSeriesType](_, _.serialize)) must whenDelivered {
     //    beLike {
     //      case v @ JObject(_) => isFullTimeSeries(v)
@@ -581,7 +591,7 @@ class ReaggregationSpec extends AggregationEngineTests with LocalMongo {
   override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
   object TestTokenStorage extends TokenStorage {
-    def lookup(tokenId: String) = Future.sync(Some(Token.Benchmark))
+    def lookup(tokenId: String) = Future.sync(Some(TestToken))
   }
 
   "Re-storing aggregated events" should {
@@ -589,7 +599,7 @@ class ReaggregationSpec extends AggregationEngineTests with LocalMongo {
     
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach { event => 
-        engine.store(Token.Benchmark, "/test", event.eventName, event.messageData, 1, true)
+        engine.store(TestToken, "/test", event.eventName, event.messageData, 1, true)
       }
     }
 

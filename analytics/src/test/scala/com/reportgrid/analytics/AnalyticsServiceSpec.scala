@@ -6,6 +6,7 @@ import blueeyes.core.data.Bijection.identity
 import blueeyes.core.http._
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service.test.BlueEyesServiceSpecification
+import blueeyes.concurrent.Future
 import blueeyes.concurrent.test._
 import blueeyes.json._
 import blueeyes.json.JsonAST._
@@ -13,7 +14,7 @@ import blueeyes.json.JsonDSL._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
-import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo}
+import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo, MongoCollection, Database}
 import blueeyes.util.metrics.Duration._
 import blueeyes.util.Clock
 import MimeTypes._
@@ -47,6 +48,22 @@ case class PastClock(duration: Duration) extends Clock {
 }
 
 trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsService with LocalMongo {
+  val TestToken = Token(
+    tokenId        = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
+    parentTokenId  = Some(Token.Root.tokenId),
+    accountTokenId = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
+    path           = "unittest",
+    permissions    = Permissions(true, true, true, true),
+    expires        = Token.Never,
+    limits         = Limits(order = 2, depth = 5, limit = 20, tags = 2, rollup = 2)
+  )
+
+  def tokenManager(database: Database, tokensCollection: MongoCollection): Future[TokenManager] = {
+    TokenManager(database, tokensCollection) deliverTo {
+      tokenManager => tokenManager.tokenCache.put(TestToken.tokenId, TestToken)
+    }
+  }
+
   val requestLoggingData = """
     requestLog {
       enabled = true
@@ -64,7 +81,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   def jessup(configMap: ConfigMap) = external.Jessup.Noop
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
-                                     query("tokenId", Token.Test.tokenId)
+                                     query("tokenId", TestToken.tokenId)
 
   override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(40, 1000L.milliseconds)
 }
@@ -80,14 +97,14 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "create child tokens without a trailing slash" in {
-        val newToken = Token.Test.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
+        val newToken = TestToken.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
         jsonTestService.post[JValue]("/tokens")(newToken.serialize) must whenDelivered {
           beLike {
             case HttpResponse(HttpStatus(status, _), _, Some(JString(tokenId)), _) => 
               val overrideFutureTimeouts = FutureTimeouts(5, 50.milliseconds)
 
               (status must_== HttpStatusCodes.OK) && 
-              (tokenId.length must_== Token.Test.tokenId.length) &&
+              (tokenId.length must_== TestToken.tokenId.length) &&
               (jsonTestService.get[JValue]("/tokens") must whenDelivered({
                 beLike[HttpResponse[JValue]] {
                   case HttpResponse(status, _, Some(JArray(tokenIds)), _) => 
@@ -110,12 +127,12 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "create child tokens with a trailing slash" in {
-        val newToken = Token.Test.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
+        val newToken = TestToken.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
         jsonTestService.post[JValue]("/tokens/")(newToken.serialize) must whenDelivered {
           beLike {
             case HttpResponse(HttpStatus(status, _), _, Some(JString(result)), _) => 
               (status must_== HttpStatusCodes.OK) && 
-              (result.length must_== Token.Test.tokenId.length) &&
+              (result.length must_== TestToken.tokenId.length) &&
               (jsonTestService.get[JValue]("/tokens/") must whenDelivered {
                 beLike {
                   case HttpResponse(status, _, Some(JArray(tokenIds)), _) => tokenIds must contain(JString(result))
@@ -191,9 +208,9 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         beLike {
           case HttpResponse(status, _, Some(contents), _) => 
             val resultData = (contents: @unchecked) match {
-              case JArray(values) => values.flatMap { 
-                case JArray(List(JObject(List(JField("timestamp", k), JField("location", k2))), JDouble(v))) => Some((List(k.deserialize[Instant].toString, k2.deserialize[String]), v))
-                case JArray(List(JObject(List(_, _)), JNull)) => None
+              case JArray(values) => values.collect { 
+                case JArray(List(JObject(List(JField("timestamp", k), JField("location", k2))), JDouble(v))) => 
+                  (List(k.deserialize[Instant].toString, k2.deserialize[String]), v)
               }
             }
 
@@ -334,7 +351,7 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
     shareVariables()
 
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
-      _.foreach(event => jsonTestService.query("rollup", "1").post[JValue]("/vfs/test")(event.message))
+      _.foreach(event => jsonTestService.query("rollup", "2").post[JValue]("/vfs/test")(event.message))
     }
 
     "roll up data to parent paths" in {
