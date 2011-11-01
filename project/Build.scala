@@ -77,13 +77,13 @@ object ServicesBuild extends Build {
     val jessup = Project("jessup", file("jessup"), settings = jessupSettings) dependsOnAlt blueeyes(base)
 
     val vistrackSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
+      version      := "1.0.0-SNAPSHOT",
       libraryDependencies ++= Seq(
         "commons-codec" % "commons-codec"       % "1.5",
         "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
         "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"
       ),
-      mainClass := Some("com.reportgrid.vistrack.VistrackServer"),
-      jarName in assembly := "vistrack-v1.jar"
+      mainClass := Some("com.reportgrid.vistrack.VistrackServer")
     )
 
     val vistrack = Project("vistrack", file("vistrack"), settings = vistrackSettings) dependsOn(common) 

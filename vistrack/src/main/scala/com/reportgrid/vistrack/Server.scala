@@ -21,6 +21,7 @@ import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.http.{HttpStatusCodes, HttpStatus, HttpRequest, HttpResponse}
 import blueeyes.core.http.MimeTypes._
 import blueeyes.core.http.combinators.HttpRequestCombinators
+import blueeyes.core.service._
 import blueeyes.json.xschema.SerializationImplicits._
 import blueeyes.json.xschema.DefaultSerialization._
 
@@ -28,15 +29,15 @@ import blueeyes.persistence.mongo._
 
 import blueeyes.json.JsonAST._
 
-import org.apache.commons.codec.binary.Base64
+import org.apache.commons.codec.binary.Hex
 
 trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
-  def mongoFactory(configMap: ConfigMap): Mongo
+  def tokenStorage(configMap: ConfigMap, serviceVersion: ServiceVersion): Future[TokenStorage]
 
   def buildTokenHashes(tokenStorage: TokenStorage, tokenId: String, hashes: List[String]): Future[List[String]] = {
     tokenStorage.lookup(tokenId).flatMap {
       case Some(token) =>
-        val hash = Base64.encodeBase64String(Sha1HashFunction(token.tokenId.getBytes)).take(7)
+        val hash = Hex.encodeHexString(Sha1HashFunction(token.tokenId.getBytes)).take(7)
         token.parentTokenId match {
           case Some(id) if token.tokenId != token.accountTokenId => buildTokenHashes(tokenStorage, id, hash :: hashes)
           case _ => Future.sync[List[String]](hash :: hashes)
@@ -49,20 +50,14 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
   val Service = service("vistrack", "1.0") { context =>
     startup { 
       import context._
-      val mongoConfig = config.configMap("mongo")
-      val mongo = mongoFactory(mongoConfig)
-      val database = mongo.database(mongoConfig.getString("database", "analytics-v" + serviceVersion))
-
-      val tokensCollection = mongoConfig.getString("tokensCollection", "tokens")
-
-      TokenManager(database, tokensCollection)
+      tokenStorage(config, serviceVersion)
     } ->
-    request { tokenManager =>
+    request { tokenStorage =>
       jsonp {
         path("/auditPath") {
           get { req: HttpRequest[Future[JValue]] =>
             req.parameters.get('tokenId) map { tokenId => 
-              buildTokenHashes(tokenManager, tokenId, Nil).map(l => HttpResponse[JValue](content = Some(l.serialize)))
+              buildTokenHashes(tokenStorage, tokenId, Nil).map(l => HttpResponse[JValue](content = Some(l.mkString("/").serialize)))
             } getOrElse {
               Future.sync(HttpResponse[JValue](HttpStatus(BadRequest, "tokenId request parameter must be specified")))
             }
@@ -77,7 +72,13 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
 }
 
 object Vistrack extends BlueEyesServer with Vistrack {
-  def mongoFactory(configMap: ConfigMap): Mongo = {
-    new blueeyes.persistence.mongo.RealMongo(configMap)
+  def tokenStorage(configMap: ConfigMap, serviceVersion: ServiceVersion): Future[TokenStorage] = {
+    val mongoConfig = config.configMap("mongo")
+    val mongo = new blueeyes.persistence.mongo.RealMongo(configMap)
+
+    TokenManager(
+      mongo.database(mongoConfig.getString("database", "analytics-v" + serviceVersion)),
+      mongoConfig.getString("tokensCollection", "tokens")
+    ).map(a => a: TokenStorage)
   }
 }
