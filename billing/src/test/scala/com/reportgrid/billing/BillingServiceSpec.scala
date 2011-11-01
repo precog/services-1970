@@ -39,17 +39,22 @@ trait TestBillingService extends BlueEyesServiceSpecification with BillingServic
 
   val mongo = new MockMongo
 
+  private val useSendGridTestMailer = false
   
   override def mailerFactory(config: ConfigMap) = {
-//    val client = new HttpClientXLightWeb
-//
-//    val url = "https://sendgrid.com/api/mail.send.json?"
-//    val apiUser = "operations@reportgrid.com"
-//    val apiKey = "seGrid8"  
-//    
-//    new OverrideMailTo(Array("nick@reportgrid.com"), new SendGridMailer(httpClient, url, apiUser, apiKey))
-    new NullMailer
+    if(useSendGridTestMailer) sendGridTestMailer else new NullMailer
   }
+  
+  def sendGridTestMailer(): Mailer = {
+    val client = new HttpClientXLightWeb
+
+    val url = "https://sendgrid.com/api/mail.send.json?"
+    val apiUser = "operations@reportgrid.com"
+    val apiKey = "seGrid8"  
+    
+    new OverrideMailTo(Array("nick@reportgrid.com"), new SendGridMailer(httpClient, url, apiUser, apiKey))
+  }
+
   override def accountsFactory(config: ConfigMap) = {
     val mongo = this.mongo
     val database = mongo.database("test")
@@ -139,64 +144,24 @@ object BillingServiceSpec extends TestBillingService {
       cleanup.after
       "succedding with" in {
         "developer credit and no billing" in {
-          val t = CreateAccount(
-            validEmail,
-            validPassword,
-            None,
-            "bronze",
-            Some("developer"),
-            goodContactInfo,
-            None)
-            
+          val t = createAccount1.copy(planId = "bronze")
           val acc = create(t)
           acc must matchCreateAccount(t)
         }
         "developer credit and billing" in {
-          val t = CreateAccount(
-            validEmail,
-            validPassword,
-            None,
-            "starter",
-            Some("developer"),
-            goodContactInfo,
-            Some(BillingInformation(
-              "George Harmon",
-              "4111111111111111",
-              5,
-              2012,
-              "123")))
-
+          val t = createAccount1.copy(billing = Some(goodBilling))
           val acc = create(t)
           acc must matchCreateAccount(t)
         }
         "no credit and billing" in {
-          val t = CreateAccount(
-            validEmail,
-            validPassword,
-            None,
-            "starter",
-            None,
-            goodContactInfo,
-            Some(BillingInformation(
-              "George Harmon",
-              "4111111111111111",
-              5,
-              2012,
-              "123")))
+          val t = createAccount1.copy(planCreditOption = None, billing = Some(goodBilling))
           val acc = create(t)
           acc must matchCreateAccount(t)
         }
       }
       "failing with" in {
         "no credit and no billing" in {
-          val t = CreateAccount(
-            validEmail,
-            validPassword,
-            None,
-            "starter",
-            None,
-            goodContactInfo,
-            None)
+          val t = createAccount1.copy(planCreditOption = None)
           testForCreateError(t, "Unable to create account without account credit or billing information.")
         }
         "bad signup info" in {
@@ -208,351 +173,92 @@ object BillingServiceSpec extends TestBillingService {
             accountCount() must beEqual(1)
           }
           "bad email" in {
-            val t = CreateAccount(
-              "notAnEmail",
-              validPassword,
-              None,
-              "starter",
-              None,
-              goodContactInfo,
-              None)
+            val t = createAccount1.copy(email = "notAnEmail", planCreditOption = None)
             testForCreateError(t, "Invalid email address: notAnEmail")
           }
           "bad planId" in {
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "nonPlan",
-              None,
-              goodContactInfo,
-              None)
+            val t = createAccount1.copy(planId = "nonPlan", planCreditOption = None);
             testForCreateError(t, "The selected plan (nonPlan) is not available.")
           }
           "bad password" in {
-            val t = CreateAccount(
-              validEmail,
-              "",
-              None,
-              "starter",
-              None,
-              goodContactInfo,
-              None)
+            val t = createAccount1.copy(password = "", planCreditOption = None)
             testForCreateError(t, "Password may not be zero length.")
           }
         }
         "bad billing info" in {
-
           "empty cardholder name" in {
-            val b = BillingInformation(
-              "",
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              goodBilling.cvv)
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              None,
-              goodContactInfo,
-              Some(b))
+            val b = goodBilling.copy(cardholder = "")
+            val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
             testForCreateError(t, "Cardholder name required.")
           }
           "bad cardnumber" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              "411",
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              goodBilling.cvv)
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              Some("developer"),
-              goodContactInfo,
-              Some(b))
-
-            testForCreateError(t, "Billing errors: Credit card number must be 12-19 digits. Credit card type is not accepted by this merchant account.")
+            val b = goodBilling.copy(number = "411")
+            val t = createAccount1.copy(billing = Some(b))
+            testForCreateError(t, "Billing errors: Credit card type is not accepted by this merchant account. Credit card number must be 12-19 digits.")
           }
           "bad expiration month" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              13,
-              goodBilling.expYear,
-              goodBilling.cvv)
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              Some("developer"),
-              goodContactInfo,
-              Some(b))
-              
+            val b = goodBilling.copy(expMonth = 13)
+            val t = createAccount1.copy(billing = Some(b))              
             testForCreateError(t, "Billing errors: Expiration date is invalid.")
           }
           "bad expiration year" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              -123,
-              goodBilling.cvv)
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              Some("developer"),
-              goodContactInfo,
-              Some(b))
-
+            val b = goodBilling.copy(expYear = -123)
+            val t = createAccount1.copy(billing = Some(b))
             testForCreateError(t, "Billing errors: Expiration date is invalid.")
           }
           "expired card" in {
             // Seems as if the sandbox won't decline an outdated expiration?
             // Fudging it a bit with a credit card number that won't validate...
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              "4000111111111115",
-              goodBilling.expMonth,
-              2001,
-              goodBilling.cvv)
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              None,
-              goodContactInfo,
-              Some(b))
-
+            val b = goodBilling.copy(number = "4000111111111115", expYear = 2001)
+            val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
             testForCreateError(t, "Billing errors: Credit card declined. Reason [Do Not Honor]")
           }
           "wrong cvv" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              "200")
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              None,
-              goodContactInfo,
-              Some(b))
-
+            val b = goodBilling.copy(cvv = "200")
+            val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
             testForCreateError(t, "Billing errors:")
           }
           "cvv not verified" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              "201")
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              Some("developer"),
-              goodContactInfo,
-              Some(b))
-
+            val b = goodBilling.copy(cvv = "201")
+            val t = createAccount1.copy(billing = Some(b))
             testForCreateError(t, "Billing errors:")
           }
           "cvv non participation" in {
             skip("This is not currently rejected by our billing configuration.")
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              "301")
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              Some("developer"),
-              goodContactInfo,
-              Some(b))
-
+            val b = goodBilling.copy(cvv = "301")
+            val t = createAccount1.copy(billing = Some(b))
             testForCreateError(t, "Billing errors: CVV must be 3 or 4 digits.")
           }
           "empty cvv" in {
-            val b = BillingInformation(
-              goodBilling.cardholder,
-              goodBilling.number,
-              goodBilling.expMonth,
-              goodBilling.expYear,
-              "")
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              Some("developer"),
-              goodContactInfo,
-              Some(b))
-
+            val b = goodBilling.copy(cvv = "")
+            val t = createAccount1.copy(billing = Some(b))
             testForCreateError(t, "Billing errors: CVV is required.")
           }
           "bad zipcode doesn't match" in {
-            val c = ContactInformation(
-                goodContactInfo.firstName,
-                goodContactInfo.lastName,
-                goodContactInfo.company,
-                goodContactInfo.title,
-                goodContactInfo.phone,
-                goodContactInfo.website,
-               Address(
-                 goodContactInfo.address.street,
-                 goodContactInfo.address.city,
-                 goodContactInfo.address.state,
-                 "20000"
-                 )
-               )
-            
-              
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              None,
-              c,
-              Some(goodBilling))
-
+            val c = goodContactInfo.copy(address = goodContactInfo.address.copy(postalCode = "20000"))
+            val t = createAccount1.copy(planCreditOption = None, contact = c, billing = Some(goodBilling))
             testForCreateError(t, "Billing errors:")
           }
           "bad zipcode not verified" in {
-            val c = ContactInformation(
-                goodContactInfo.firstName,
-                goodContactInfo.lastName,
-                goodContactInfo.company,
-                goodContactInfo.title,
-                goodContactInfo.phone,
-                goodContactInfo.website,
-               Address(
-                 goodContactInfo.address.street,
-                 goodContactInfo.address.city,
-                 goodContactInfo.address.state,
-                 "20001"
-                 )
-               )
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              None,
-              c,
-              Some(goodBilling))
-
+            val c = goodContactInfo.copy(address = goodContactInfo.address.copy(postalCode = "20001"))
+            val t = createAccount1.copy(planCreditOption = None, contact = c, billing = Some(goodBilling))
             testForCreateError(t, "Billing errors:")
           }
           "empty zipcode" in {
-            val c = ContactInformation(
-                goodContactInfo.firstName,
-                goodContactInfo.lastName,
-                goodContactInfo.company,
-                goodContactInfo.title,
-                goodContactInfo.phone,
-                goodContactInfo.website,
-               Address(
-                 goodContactInfo.address.street,
-                 goodContactInfo.address.city,
-                 goodContactInfo.address.state,
-                 ""
-                 )
-               )
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              Some("developer"),
-              c,
-              Some(goodBilling))
-
+            val c = goodContactInfo.copy(address = goodContactInfo.address.copy(postalCode = ""))
+            val t = createAccount1.copy(contact = c, billing = Some(goodBilling))
             testForCreateError(t, "Postal code required.")
           }
           "verfication error" in {
             skip("This is not currently rejected by our billing configuration.")
-            val c = ContactInformation(
-                goodContactInfo.firstName,
-                goodContactInfo.lastName,
-                goodContactInfo.company,
-                goodContactInfo.title,
-                goodContactInfo.phone,
-                goodContactInfo.website,
-               Address(
-                 goodContactInfo.address.street,
-                 goodContactInfo.address.city,
-                 goodContactInfo.address.state,
-                 "30000"
-                 )
-               )
-
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              Some("developer"),
-              c,
-              Some(goodBilling))
-
+            val c = goodContactInfo.copy(address = goodContactInfo.address.copy(postalCode = "30000"))
+            val t = createAccount1.copy(planCreditOption = None, contact = c, billing = Some(goodBilling))
             testForCreateError(t, "Test")
           }
           "verification not supported" in {
             skip("This is not currently rejected by our billing configuration.")
-            val c = ContactInformation(
-                goodContactInfo.firstName,
-                goodContactInfo.lastName,
-                goodContactInfo.company,
-                goodContactInfo.title,
-                goodContactInfo.phone,
-                goodContactInfo.website,
-               Address(
-                 goodContactInfo.address.street,
-                 goodContactInfo.address.city,
-                 goodContactInfo.address.state,
-                 "30001"
-                 )
-               )
-
-            val t = CreateAccount(
-              validEmail,
-              validPassword,
-              None,
-              "starter",
-              None,
-              c,
-              Some(goodBilling))
-
+            val c = goodContactInfo.copy(address = goodContactInfo.address.copy(postalCode = "30001"))
+            val t = createAccount1.copy(planCreditOption = None, contact = c, billing = Some(goodBilling))
             testForCreateError(t, "Test")
           }
         }
@@ -562,7 +268,7 @@ object BillingServiceSpec extends TestBillingService {
       doFirst {
         cleanup
         createTestAccounts
-      }
+      }      
       "succeeding with" in {
         "valid email and password" in {
           val req = AccountAction(Some(validEmail), None, validPassword)

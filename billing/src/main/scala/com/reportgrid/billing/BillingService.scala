@@ -28,7 +28,7 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString w
   def accountsFactory(config: ConfigMap): Accounts
   def mailerFactory(config: ConfigMap): Mailer
 
-  val billing = service("billing", "1.0.0") {
+  val billing = service("billing", "1.0.1") {
     healthMonitor { monitor =>
       serviceLocator { locator =>
         context =>
