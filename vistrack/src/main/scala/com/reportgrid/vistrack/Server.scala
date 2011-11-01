@@ -71,14 +71,14 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
   }
 }
 
-object Vistrack extends BlueEyesServer with Vistrack {
-  def tokenStorage(configMap: ConfigMap, serviceVersion: ServiceVersion): Future[TokenStorage] = {
+object VistrackServer extends BlueEyesServer with Vistrack {
+  def tokenStorage(config: ConfigMap, serviceVersion: ServiceVersion): Future[TokenStorage] = {
     val mongoConfig = config.configMap("mongo")
-    val mongo = new blueeyes.persistence.mongo.RealMongo(configMap)
+    val mongo = new blueeyes.persistence.mongo.RealMongo(mongoConfig)
 
     TokenManager(
       mongo.database(mongoConfig.getString("database", "analytics-v" + serviceVersion)),
-      mongoConfig.getString("tokensCollection", "tokens")
+      config.getString("tokens.collection", "tokens")
     ).map(a => a: TokenStorage)
   }
 }
