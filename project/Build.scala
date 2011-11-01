@@ -83,7 +83,7 @@ object ServicesBuild extends Build {
         "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
         "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"
       ),
-      mainClass := Some("com.reportgrid.vistrack.VistrackServer")
+      mainClass := Some("com.reportgrid.vistrack.Vistrack")
     )
 
     val vistrack = Project("vistrack", file("vistrack"), settings = vistrackSettings) dependsOn(common) 
