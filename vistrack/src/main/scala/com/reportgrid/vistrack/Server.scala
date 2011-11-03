@@ -47,26 +47,28 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
     }
   }
 
-  val Service = service("vistrack", "1.0") { context =>
-    startup { 
-      import context._
-      tokenStorage(config, serviceVersion)
-    } ->
-    request { tokenStorage =>
-      jsonp {
-        path("/auditPath") {
-          get { req: HttpRequest[Future[JValue]] =>
-            req.parameters.get('tokenId) map { tokenId => 
-              buildTokenHashes(tokenStorage, tokenId, Nil).map(l => HttpResponse[JValue](content = Some(l.mkString("/").serialize)))
-            } getOrElse {
-              Future.sync(HttpResponse[JValue](HttpStatus(BadRequest, "tokenId request parameter must be specified")))
+  val Service = service("vistrack", "1.0") { 
+    healthMonitor { monitor => context =>
+      startup { 
+        import context._
+        tokenStorage(config, serviceVersion)
+      } ->
+      request { tokenStorage =>
+        jsonp {
+          path("/auditPath") {
+            get { req: HttpRequest[Future[JValue]] =>
+              req.parameters.get('tokenId) map { tokenId => 
+                buildTokenHashes(tokenStorage, tokenId, Nil).map(l => HttpResponse[JValue](content = Some(l.mkString("/").serialize)))
+              } getOrElse {
+                Future.sync(HttpResponse[JValue](HttpStatus(BadRequest, "tokenId request parameter must be specified")))
+              }
             }
           }
         }
+      } ->
+      shutdown { config =>
+        Future sync ()
       }
-    } ->
-    shutdown { config =>
-      Future sync ()
     }
   }
 }
