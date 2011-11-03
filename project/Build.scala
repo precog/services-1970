@@ -48,7 +48,7 @@ object ServicesBuild extends Build {
     val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt(client(base))
 
     val billingSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
-      version      := "1.0.2-SNAPSHOT",
+      version      := "1.0.2",
       libraryDependencies ++= Seq(
         "commons-codec"           % "commons-codec"       % "1.5",
         "commons-httpclient"      % "commons-httpclient"  % "3.1",
