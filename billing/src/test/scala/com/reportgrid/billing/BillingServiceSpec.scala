@@ -7,6 +7,7 @@ import scalaz._
 import scalaz.Scalaz._
 import scalaz.Validation._
 import blueeyes.json.JsonAST._
+import blueeyes.json.JPath
 
 import com.reportgrid.analytics.Token
 import blueeyes.concurrent.Future
@@ -18,6 +19,10 @@ import blueeyes.json.Printer
 import blueeyes.core.http.MimeTypes._
 import blueeyes.core.data.ByteChunk
 import blueeyes.core.http
+import blueeyes.persistence.mongo.MockMongo
+import blueeyes.persistence.mongo.RealMongo
+import blueeyes.persistence.mongo.IndexType
+import blueeyes.persistence.mongo.OrdinaryIndex
 import blueeyes.persistence.mongo.MongoQueryBuilder._
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.http.HttpMethods._
@@ -26,7 +31,6 @@ import blueeyes.core.service.HttpClient
 import blueeyes.core.service.engines.HttpClientXLightWeb
 import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.core.data.ByteChunk
-import blueeyes.persistence.mongo.MockMongo
 import net.lag.configgy.ConfigMap
 import com.braintreegateway.BraintreeGateway
 import com.reportgrid.billing.braintree.BraintreeService
@@ -37,8 +41,26 @@ import org.specs.matcher.Matcher
 
 trait TestBillingService extends BlueEyesServiceSpecification with BillingService {
 
-  val mongo = new MockMongo
+  val testDatabase = "accounts_test"
+  val testCollection = "accounts_test"
 
+//  Configgy.configureFromString("""
+//        mongo {
+//          database = "accounts_test"
+//          collection = "accounts_test"
+//          servers = ["127.0.0.1:27017"]
+//        }
+//        accounts {
+//          credits {
+//            developer = 25000
+//          }
+//        }
+//    """)
+//
+//  val mongo = new RealMongo(Configgy.config.configMap("mongo"))
+
+  val mongo = new MockMongo
+    
   private val useSendGridTestMailer = false
   
   override def mailerFactory(config: ConfigMap) = {
@@ -56,9 +78,7 @@ trait TestBillingService extends BlueEyesServiceSpecification with BillingServic
   }
 
   override def accountsFactory(config: ConfigMap) = {
-    val mongo = this.mongo
-    val database = mongo.database("test")
-
+    val database = mongo.database(testDatabase)
     val billingService = braintreeFactory()
     val tokenGenerator = new MockTokenGenerator
 
@@ -71,7 +91,7 @@ trait TestBillingService extends BlueEyesServiceSpecification with BillingServic
     """)
     val cfg = Configgy.config.configMap("accounts")
 
-    new Accounts(cfg, tokenGenerator, billingService, database, "accounts")
+    new Accounts(cfg, tokenGenerator, billingService, database, testCollection)
   }
 
   def braintreeFactory(): BraintreeService = {
@@ -809,7 +829,8 @@ object BillingServiceSpec extends TestBillingService {
   val accounts = accountsFactory(null)
 
   def createAccount(acc: Account): Unit = {
-    accounts.trustedCreateAccount(acc)
+    val f = accounts.trustedCreateAccount(acc)
+    while(!f.isDone) {}
   }
 
   def findAccount(token: String): Future[Validation[String, Account]] = {
@@ -818,6 +839,7 @@ object BillingServiceSpec extends TestBillingService {
 
   def getAccountOrFail(token: String): Account = {
     val facc = accounts.findByToken(token)
+    while(!facc.isDone) {}
     val acc = facc.toOption.flatMap(_.toOption)
     acc must beSomething
     acc.get
@@ -836,15 +858,19 @@ object BillingServiceSpec extends TestBillingService {
 
   def callAndWaitOnAssessment(): Unit = {
     val res = callAssessment()
+    while(!res.isDone) {}
     val v = res.value
     v must eventually(beSomething)
     v.get must beSomething
   }
 
   def getTokenFor(email: String, password: String): String = {
-    val req1 = AccountAction(Some(email), None, password)
-    val res1: Future[Option[Account]] = postJsonRequest("/accounts/get", req1)
-    res1.value.get.get.id.token
+    val action = AccountAction(Some(email), None, password)
+    val f: Future[Option[Account]] = postJsonRequest("/accounts/get", action)
+
+    while(!f.isDone) {}
+    
+    f.value.get.get.id.token
   }
 
   def postJsonRequest[A, B](url: String, a: A, sslHeader: (String, String) = sslHeader)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
@@ -893,6 +919,7 @@ object BillingServiceSpec extends TestBillingService {
 
   def create(a: CreateAccount): Account = {
     val f = postJsonRequest("/accounts/", a)(UnsafeCreateAccountDecomposer, implicitly[Extractor[Account]])
+    while(!f.isDone) {}
     val value = f.value
     value must eventually(beSomething)
     val option = value.get
@@ -909,8 +936,8 @@ object BillingServiceSpec extends TestBillingService {
     billingService.deleteAllCustomers()
   }
   def clearMongo() {
-    val db = mongo.database("test")
-    val q = remove.from("accounts")
+    val db = mongo.database(testDatabase)
+    val q = remove.from(testCollection)
     db(q)
   }
 
@@ -920,6 +947,7 @@ object BillingServiceSpec extends TestBillingService {
   }
 
   def testFutureOptionError(f: => Future[Option[JValue]], e: String): Unit = {
+    while(!f.isDone) {}
     f.value must eventually(beSomething)
     val con = f.value.get
     con must beSomething
@@ -929,6 +957,7 @@ object BillingServiceSpec extends TestBillingService {
   def accountCount(): Int = {
     val accounts = accountsFactory(null)
     val f = accounts.findAll
+    while(!f.isDone) {}
     f.value.toList.flatMap(_.flatMap(_.toOption)).size
   }
 

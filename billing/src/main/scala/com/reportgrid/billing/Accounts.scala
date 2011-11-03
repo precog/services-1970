@@ -50,7 +50,7 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
 
         existingAccount.flatMap {
           case Success(a) => Future.sync(Failure("An account associated with this email already exists."))
-          case Failure(e) => {
+          case Failure(_) => {
             val token = newToken(toPath(create.email))
 
             token.flatMap[Validation[String, Account]] {
@@ -142,9 +142,11 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
     findByQuery(query)
   }
 
-  def findByEmail(e: String): FV[String, Account] = {
-    val query = select().from(accountsCollection).where(("id.email" === e))
-    findByQuery(query)
+  def findByEmail(e: String, forceNotFound: Boolean = false): FV[String, Account] = {
+    if(forceNotFound) Future.sync(Failure("Account not found.")) else {
+      val query = select().from(accountsCollection).where(("id.email" === e))
+      findByQuery(query)
+    }
   }
 
   private def findByQuery(q: MongoSelectQuery): FV[String, Account] = {
@@ -427,7 +429,21 @@ class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: Braint
 
     val query = insert((trackingAccount.serialize) --> classOf[JObject]).into(accountsCollection)
     val futureResult = database(query)
-    futureResult.map[Validation[String, TrackingAccount]](queryResult => Success(trackingAccount)).orElse(t => Failure("Error initializing account."))
+    
+    futureResult.map[Validation[String, TrackingAccount]] { _ =>
+      Success(trackingAccount)
+    }.orElse { ot: Option[Throwable] => 
+      ot.map{ t: Throwable =>
+        val message = t.getMessage
+        if(message.startsWith("E11000")) {
+          Failure("An account associated with this email already exists.")
+        } else {
+          Failure(message)
+        }
+      }.getOrElse{
+        Failure("Error initializing account.")
+      }
+    }
   }
 
   def buildAccount(billing: Option[BillingAccount], tracking: TrackingAccount): Account = {
