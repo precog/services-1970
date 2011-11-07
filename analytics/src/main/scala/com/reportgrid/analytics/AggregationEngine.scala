@@ -113,7 +113,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
           expirationPolicy = ExpirationPolicy(
             timeToIdle = Some(timeToIdle),
             timeToLive = Some(timeToLive),
-            unit       = TimeUnit.MILLISECONDS
+            timeUnit   = TimeUnit.MILLISECONDS
           ),
           maximumCapacity = maximumCapacity
         )//,
