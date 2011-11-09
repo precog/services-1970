@@ -84,6 +84,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
                                      query("tokenId", TestToken.tokenId)
 
   override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(40, 1000L.milliseconds)
+  val shortFutureTimeouts = FutureTimeouts(5, 100L.milliseconds)
 }
 
 class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
@@ -127,19 +128,36 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "create child tokens with a trailing slash" in {
-        val newToken = TestToken.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
-        jsonTestService.post[JValue]("/tokens/")(newToken.serialize) must whenDelivered {
-          beLike {
-            case HttpResponse(HttpStatus(status, _), _, Some(JString(result)), _) => 
-              (status must_== HttpStatusCodes.OK) && 
-              (result.length must_== TestToken.tokenId.length) &&
-              (jsonTestService.get[JValue]("/tokens/") must whenDelivered {
-                beLike {
-                  case HttpResponse(status, _, Some(JArray(tokenIds)), _) => tokenIds must contain(JString(result))
-                }
-              })
-          }
+      val newToken = TestToken.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
+      jsonTestService.post[JValue]("/tokens/")(newToken.serialize) must whenDelivered {
+        beLike {
+          case HttpResponse(HttpStatus(status, _), _, Some(JString(tokenId)), _) => 
+            (status must_== HttpStatusCodes.OK) && 
+            (tokenId.length must_== TestToken.tokenId.length) &&
+            (jsonTestService.get[JValue]("/tokens/") must whenDelivered {
+              beLike {
+                case HttpResponse(status, _, Some(JArray(tokenIds)), _) => tokenIds must contain(JString(tokenId))
+              }
+            })
         }
+      }
+    }
+
+    "mark removed tokens as deleted" in {
+      val newToken = TestToken.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
+      val insert = jsonTestService.post[JValue]("/tokens/")(newToken.serialize)
+      
+      insert flatMap {
+        case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(JString(tokenId)), _) => 
+          for {
+            HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, _, _) <- jsonTestService.delete[JValue]("/tokens/" + tokenId) 
+            HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(JArray(tokenIds)), _) <- jsonTestService.get[JValue]("/tokens/")
+          } yield {
+            tokenIds.contains(JString(tokenId))
+          }
+      } must whenDelivered {
+        beFalse
+      }
     }
 
     "explore variables" in {

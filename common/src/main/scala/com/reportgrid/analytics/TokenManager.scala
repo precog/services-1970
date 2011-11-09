@@ -49,13 +49,15 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
   tokenCache.put(Token.Root.tokenId, Token.Root)
   tokenCache.put(Token.Test.tokenId, Token.Test)
 
+  private def find(tokenId: String) = database {
+    selectOne().from(tokensCollection).where(("deleted" !== true) & ("tokenId" === tokenId))
+  }
+
   /** Look up the specified token.
    */
   def lookup(tokenId: String): Future[Option[Token]] = {
     tokenCache.get(tokenId).map[Future[Option[Token]]](v => Future.sync(Some(v))) getOrElse {
-      database {
-        selectOne().from(tokensCollection).where("tokenId" === tokenId)
-      } map {
+      find(tokenId) map {
         _.map(_.deserialize[Token] ->- (tokenCache.put(tokenId, _)))
       }
     }
@@ -65,7 +67,8 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
     database {
       selectAll.from(tokensCollection).where {
         ("parentTokenId" === parent.tokenId) &&
-        ("tokenId"      !== parent.tokenId)
+        ("tokenId"      !== parent.tokenId) &&
+        ("deleted" !== true)
       }
     } map { result =>
       result.toList.map(_.deserialize[Token])
@@ -114,8 +117,11 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
   /** Delete a specified child token.
    */
   def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
-    getDescendant(parent, descendantTokenId).deliverTo { 
-      _.foreach(_ => database(remove.from(tokensCollection).where("tokenId" === descendantTokenId)))
+    for  {
+      Some(descendant) <- getDescendant(parent, descendantTokenId)
+      _ <- database(update(tokensCollection).set(JPath("deleted").set(true)).where("tokenId" === descendantTokenId))
+    } yield {
+      tokenCache.remove(descendantTokenId)
     }
   }
 }

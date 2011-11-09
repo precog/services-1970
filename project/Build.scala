@@ -27,7 +27,8 @@ object ServicesBuild extends Build {
         version      := "1.2.1-SNAPSHOT",
         libraryDependencies ++= Seq(
           "joda-time" % "joda-time" % "1.6.2",
-          "org.scalaz" %% "scalaz-core" % "6.0.2"
+          "org.scalaz" %% "scalaz-core" % "6.0.2",
+          "org.scala-tools.testing" %% "specs"              % "1.6.9"  % "test"
         )
       )
 
