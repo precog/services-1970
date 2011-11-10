@@ -80,7 +80,8 @@ object VistrackServer extends BlueEyesServer with Vistrack {
 
     TokenManager(
       mongo.database(mongoConfig.getString("database", "analytics-v" + serviceVersion)),
-      config.getString("tokens.collection", "tokens")
+      config.getString("tokens.collection", "tokens"),
+      config.getString("tokens.deleted", "deleted_tokens")
     ).map(a => a: TokenStorage)
   }
 }
