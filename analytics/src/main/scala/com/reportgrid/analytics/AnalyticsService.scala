@@ -66,7 +66,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
 
   def jessup(configMap: ConfigMap): Jessup
 
-  def tokenManager(database: Database, tokensCollection: MongoCollection): Future[TokenManager]
+  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager]
 
   val clock: Clock
 
@@ -86,9 +86,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           val indexdb  = indexMongo.database(indexdbConfig.getString("database", "analytics-v" + serviceVersion))
 
           val tokensCollection = config.getString("tokens.collection", "tokens")
+          val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
 
           for {
-            tokenManager      <- tokenManager(indexdb, tokensCollection)
+            tokenManager      <- tokenManager(indexdb, tokensCollection, deletedTokensCollection)
             aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb, monitor)
           } yield {
             AnalyticsState(
@@ -345,7 +346,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                         (request: HttpRequest[Future[JValue]]) => (token: Token) => {
                           state.tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
                             HttpResponse[JValue](content = None)
-                          }
+                          } ifCanceled { error => 
+                            error.foreach(logger.warning("An error occurred deleting the token: " + request.parameters('descendantTokenId), _))
+                          } orElse {
+                            HttpResponse[JValue](HttpStatus(BadRequest, "No token with id " + request.parameters('descendantTokenId) + " could be found."), content = None)
+                          } 
                         }
                       }
                     }

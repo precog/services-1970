@@ -58,8 +58,8 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
     limits         = Limits(order = 2, depth = 5, limit = 20, tags = 2, rollup = 2)
   )
 
-  def tokenManager(database: Database, tokensCollection: MongoCollection): Future[TokenManager] = {
-    TokenManager(database, tokensCollection) deliverTo {
+  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager] = {
+    TokenManager(database, tokensCollection, deletedTokensCollection) deliverTo {
       tokenManager => tokenManager.tokenCache.put(TestToken.tokenId, TestToken)
     }
   }
@@ -157,6 +157,16 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
           }
       } must whenDelivered {
         beFalse
+      }
+    }
+
+    "return a sensible result when deleting a non-existent token" in {
+      val newToken = TestToken.issue(permissions = Permissions(read = true, write = true, share = false, explore = false))
+
+      jsonTestService.delete[JValue]("/tokens/" + newToken.tokenId) must whenDelivered {
+        beLike {
+          case HttpResponse(HttpStatus(code, message), _, result, _) => code must_== HttpStatusCodes.BadRequest
+        }
       }
     }
 

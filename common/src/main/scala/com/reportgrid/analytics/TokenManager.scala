@@ -25,7 +25,7 @@ import scalaz.Scalaz._
 import scalaz.Validation
 
 object TokenManager {
-  def apply(database: Database, tokensCollection: MongoCollection) = {
+  def apply(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection) = {
     val RootTokenJ: JObject      = Token.Root.serialize.asInstanceOf[JObject]
     val TestTokenJ: JObject      = Token.Test.serialize.asInstanceOf[JObject]
 
@@ -33,7 +33,7 @@ object TokenManager {
     val testTokenFuture  = database(upsert(tokensCollection).set(TestTokenJ))
 
     (rootTokenFuture zip testTokenFuture) map {
-      tokens => new TokenManager(database, tokensCollection)
+      tokens => new TokenManager(database, tokensCollection, deletedTokensCollection)
     }
   }
 }
@@ -43,14 +43,14 @@ trait TokenStorage {
 }
 
 
-class TokenManager private (database: Database, tokensCollection: MongoCollection) extends TokenStorage {
+class TokenManager private (database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection) extends TokenStorage {
   //TODO: Add expiry settings.
   val tokenCache = Cache.concurrent[String, Token](CacheSettings(ExpirationPolicy(None, None, MILLISECONDS)))
   tokenCache.put(Token.Root.tokenId, Token.Root)
   tokenCache.put(Token.Test.tokenId, Token.Test)
 
   private def find(tokenId: String) = database {
-    selectOne().from(tokensCollection).where(("deleted" !== true) & ("tokenId" === tokenId))
+    selectOne().from(tokensCollection).where("tokenId" === tokenId)
   }
 
   /** Look up the specified token.
@@ -63,12 +63,15 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
     }
   }
 
+  def findDeleted(tokenId: String) = database {
+    selectOne().from(deletedTokensCollection).where("tokenId" === tokenId)
+  }
+
   def listChildren(parent: Token): Future[List[Token]] = {
     database {
       selectAll.from(tokensCollection).where {
         ("parentTokenId" === parent.tokenId) &&
-        ("tokenId"      !== parent.tokenId) &&
-        ("deleted" !== true)
+        ("tokenId"       !== parent.tokenId) 
       }
     } map { result =>
       result.toList.map(_.deserialize[Token])
@@ -117,11 +120,12 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
   /** Delete a specified child token.
    */
   def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
-    for  {
+    for {
       Some(descendant) <- getDescendant(parent, descendantTokenId)
-      _ <- database(update(tokensCollection).set(JPath("deleted").set(true)).where("tokenId" === descendantTokenId))
+      _ <- database(insert(descendant.serialize.asInstanceOf[JObject]).into(deletedTokensCollection))
+      _ <- database(remove.from(tokensCollection).where("tokenId" === descendantTokenId))
     } yield {
       tokenCache.remove(descendantTokenId)
-    }
+    } 
   }
 }

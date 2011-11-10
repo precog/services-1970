@@ -6,9 +6,9 @@ import blueeyes.persistence.mongo._
 import org.specs.Specification
 import scalaz.Success
 
-class TokenManaagerSpec extends Specification with FutureMatchers {
+class TokenManagerSpec extends Specification with FutureMatchers {
   val mongo = new MockMongo()
-  val tokenManager = TokenManager(mongo.database("test"), "tokens").value.get
+  val tokenManager = TokenManager(mongo.database("test"), "tokens", "deleted_tokens").value.get
 
   "Token Manager" should {
     "automatically populate the test token" in {
@@ -48,6 +48,18 @@ class TokenManaagerSpec extends Specification with FutureMatchers {
 
       exchange must whenDelivered {
         beNone
+      }
+    }
+
+    "retrieve deleted tokens from the deleted tokens collection" in {
+      val exchange = tokenManager.issueNew(Token.Test, "/testchild/", Token.Test.permissions, Token.Test.expires, Token.Test.limits) flatMap {
+        case Success(token) => tokenManager.deleteDescendant(Token.Test, token.tokenId) flatMap {
+          case _ => tokenManager.findDeleted(token.tokenId)
+        }
+      }
+
+      exchange must whenDelivered {
+        beSomething
       }
     }
   }

@@ -29,11 +29,11 @@ object AggregationEnvironment {
     val indexMongo = new RealMongo(indexdbConfig)
     val indexdb = indexMongo.database(indexdbConfig("database"))
 
-    TokenManager(indexdb, "tokens").map { tokenManager => 
-      AggregationEnvironment(
-        AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop),
-        tokenManager
-      )
+    val tokensCollection = config.getString("tokens.collection", "tokens")
+    val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
+
+    TokenManager(indexdb, tokensCollection, deletedTokensCollection) map { 
+      AggregationEnvironment(AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop), _)
     }
   }
 }

@@ -194,7 +194,6 @@ object Tag {
         val normalized = elements.sortBy(_._2.size) map { case (name, values) => 
           (name, (0 until values.dropWhile(_ == "(null)").takeWhile(_ != "(null)").size) map { positionalValues } toList)
         }
-        println(normalized)
 
         removeMissingData(normalized, Nil, Nil) map {
           case (Some(name), elements) => Hierarchy.NamedLocation(name, Path(elements))
