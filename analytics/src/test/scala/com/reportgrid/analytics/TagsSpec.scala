@@ -44,22 +44,21 @@ class TagsSpec extends Specification with FutureMatchers {
     }
 
       // This test is currently disabled becaus handling malformed tags is something that we probably don't actually want to do
-//    "correctly handle malformed location tags" in {
-//      val extractors = Tag.timeTagExtractor(TimeSeriesEncoding.Default, new Instant, true) ::
-//                       Tag.locationTagExtractor(Future.sync(None)) :: Nil
-//                        
-//      val obj = JsonParser.parse("""{"type": "click", "#location": {"country":"Brazil","region":"Brazil/(null)","city":"Brazil/(null)/"}}""") --> classOf[JObject]
-//
-//      val (tags, remainder) = extractTags(extractors, obj)
-//      remainder must_== JsonParser.parse("""{"type" : "click"}""")
-//      tags must beLike {
-//        case Tags(tags) => tags must whenDelivered {
-//          beEqualTo {
-//            Hierarchy.of(Hierarchy.NamedLocation("country", "Brazil") :: Hierarchy.NamedLocation("region", "(null)") :: Nil).map(Tag("location", _)).toOption.get
-//          }
-//        }
-//      }
-//    }
+    "correctly handle malformed location tags" in {
+      val extractors = Tag.locationTagExtractor(Future.sync(None)) :: Nil
+                        
+      val obj = JsonParser.parse("""{"type": "click", "#location": {"country":"Brazil","region":"Brazil/(null)","city":"Brazil/(null)/"}}""") --> classOf[JObject]
+
+      val (tags, remainder) = extractTags(extractors, obj)
+      remainder must_== JsonParser.parse("""{"type" : "click"}""")
+      tags must beLike {
+        case Tags(tags) => tags must whenDelivered {
+          beLike {
+            case tag :: Nil => tag must_== Hierarchy.of(Hierarchy.NamedLocation("country", "Brazil") :: Nil).map(Tag("location", _)).toOption.get
+          }
+        }
+      }
+    }
   }
 
   "Tag.timeTagExtractor" should {

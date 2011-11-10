@@ -13,6 +13,7 @@ import scala.annotation.tailrec
 import scalaz.Scalaz._
 import scalaz.Semigroup
 import scalaz.NonEmptyList
+import scalaz.{Validation, Success, Failure}
 
 case class Variable(name: JPath)
 object Variable {
@@ -149,7 +150,7 @@ object Tag {
     (o \ LocationProperty) match {
       case JNothing | JNull | JBool(false) => (Skipped, o)
       case JBool(true) | JString("auto") => (Tags(auto.map(_.map(Tag("location", _)).toSeq)), remainder)
-      case x => extractHierarchyTag(LocationProperty, x) match {
+      case x => extractHierarchyTag("location", x) match {
         case tags: Tags => (tags, remainder)
         case other => (other, o)
       }
@@ -157,28 +158,66 @@ object Tag {
   }
 
   def extractHierarchyTag(tagName: String, v: JValue): ExtractionResult = {
-    def result(locations: List[Hierarchy.Location]) = Hierarchy.of(locations).fold(
+    type LocationData = List[(Option[String], List[String])]
+
+    // this function has the sole purpose of cleaning up a particular kind of bad data; that
+    // where multiple paths of the same length would be generated due to the manner in which
+    // Java string splits munge trailing delimiters.
+    def locations(elements: LocationData) = {
+      // trim longer paths containing trailing null elements
+      @tailrec def removeMissingData(elements: LocationData, prefix: List[String], results: LocationData): LocationData = elements match {
+        case (name, xs) :: ys =>
+          val validPart = xs.takeWhile(_ != "(null)")
+          if (prefix.size < validPart.size) {
+            removeMissingData(ys, validPart, (name, validPart) :: results)
+          } else {
+            results.reverse
+          }
+
+        case Nil => results.reverse
+      }
+
+      elements.foldLeft[Validation[String, Map[Int, String]]](Success(Map.empty[Int, String])) {
+        case (Success(m), (_, values)) => values.dropWhile(_ == "(null)").zipWithIndex.foldLeft[Validation[String, Map[Int, String]]](Success(m)) {
+          case (Success(m), (value, position)) => 
+            m.get(position) match {
+              case None => Success(m + (position -> value))
+              case Some(`value`) | Some("(null)") => Success(if (value == "(null)") m else m + (position -> value))
+              case Some(other) => Failure("Hierarchy paths are not parallel at position " + position + "; " + other + " is not equal to " + value)
+            }
+
+          case (failure, _) => failure
+        }
+
+        case (failure, _) => failure
+      } map { positionalValues =>
+        val normalized = elements.sortBy(_._2.size) map { case (name, values) => 
+          (name, (0 until values.dropWhile(_ == "(null)").takeWhile(_ != "(null)").size) map { positionalValues } toList)
+        }
+        println(normalized)
+
+        removeMissingData(normalized, Nil, Nil) map {
+          case (Some(name), elements) => Hierarchy.NamedLocation(name, Path(elements))
+          case (_, elements) => Hierarchy.AnonLocation(Path(elements))
+        }
+      }
+    }
+
+    def parsePath(pathName: String): List[String] = {
+      pathName.split("/", -1).dropWhile(_ == "") map { _.trim } map { v => if (v.isEmpty) "(null)" else v } toList
+    }
+
+    val withZeroWidths: LocationData = v match {
+      case JObject(fields)  => fields   collect { case JField(name, JString(pathName)) => (Some(name), parsePath(pathName)) }
+      case JArray(elements) => elements collect { case JString(pathName) => (None, parsePath(pathName)) }
+      case _ => Nil
+    }
+
+    if (withZeroWidths.isEmpty) Skipped
+    else locations(withZeroWidths) flatMap Hierarchy.of fold (
       error => Errors(ExtractionError(tagName, error).wrapNel),
       hierarchy => Tags(Future.sync(Tag(tagName, hierarchy) :: Nil))
     )
-
-    v match {
-      case JArray(elements) => 
-        val locations = elements.collect {
-          case JString(pathName) => Hierarchy.AnonLocation(Path(pathName))
-        }
-
-        if (locations.size == elements.size) result(locations) else Skipped
-
-      case JObject(fields) => 
-        val locations = fields.collect {
-          case JField(name, JString(pathName)) => Hierarchy.NamedLocation(name, Path(pathName))
-        }
-        
-        if (locations.size == fields.size) result(locations) else Skipped
-      
-      case _ => Skipped
-    }
   }
 
   def extractTags(extractors: List[TagExtractor], event: JObject): (ExtractionResult, JObject) = {
@@ -187,7 +226,7 @@ object Tag {
         remainder.fields.filter(_.name.startsWith(Tag.Prefix)).toNel.map {
           unparsed => (Errors(unparsed.map(field => ExtractionError(field.name, "No extractor could handle the value: " + compact(render(field.value))))), remainder)
         } getOrElse {
-          (result, remainder)
+          (result, remainder) 
         }
     }
   }
@@ -241,6 +280,7 @@ object Hierarchy {
     .option(Hierarchy(locations.sortBy(_.path.length)))
     .toSuccess("The specified list of locations " + locations + " does not respect the refinement rule.")
   }
+
 
   def respectsRefinementRule(values: List[Path]): Boolean = {
     @tailrec def parallel(l: List[List[String]], acc: Boolean): Boolean = {
