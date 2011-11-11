@@ -145,6 +145,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
               JField("token",     token.tokenId.serialize) ::
               JField("path",      path.serialize) ::
               JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
+    //          JField("tags",      tags.serialize) ::
               JField("count",     count.serialize) ::
               JField("timestamp", instant.serialize) :: 
               JField("rollup",    rollup.serialize) :: 

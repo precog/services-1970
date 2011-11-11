@@ -43,49 +43,53 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
               aggregationEngine.logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)))
 
               Future(
-                fields.flatMap { case JField(eventName, jvalue) => 
-                  def appendError = (errors: NonEmptyList[String]) => {
-                    ("Errors occurred parsing the \"tag\" properties of the \"" + eventName + "\" event: " + compact(render(jvalue))) <:: errors
-                  }
-
-                  // compensate for bare jvalues as events
-                  val event: JObject = jvalue match {
-                    case obj: JObject => obj
-                    case v => JObject(JField("value", v) :: Nil)
-                  }
-            
-                  val offset = clock.now().minusDays(1).toInstant
-                  val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
-
-                  aggregationEngine.store(token, path, eventName, jvalue, count, rollup, reprocess)
-
-                  if (reprocess) Nil //skip immediate aggregation of historical data
-                  else {
-                    val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
-                    // only roll up to the client root, and not beyond (hence path.length - 1)
-                    path.rollups(rollup min (path.length - 1)) map { 
-                      aggregationEngine.aggregate(token, _, eventName, tagResults, remainder, count) map { appendError <-: _ }
+                fields flatMap { 
+                  case JField(eventName, jvalue) => 
+                    def appendError = (errors: NonEmptyList[String]) => {
+                      ("Errors occurred parsing the \"tag\" properties of the \"" + eventName + "\" event: " + compact(render(jvalue))) <:: errors
                     }
-                  } 
+
+                    // compensate for bare jvalues as events
+                    val event: JObject = jvalue match {
+                      case obj: JObject => obj
+                      case v => JObject(JField("value", v) :: Nil)
+                    }
+              
+                    val offset = clock.now().minusDays(1).toInstant
+                    val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
+
+                    aggregationEngine.store(token, path, eventName, jvalue, count, rollup, reprocess)
+
+                    if (reprocess) List(Future.sync(0L.success[NonEmptyList[String]])) //skip immediate aggregation of historical data
+                    else {
+                      val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
+                      // only roll up to the client root, and not beyond (hence path.length - 1)
+                      path.rollups(rollup min (path.length - 1)) map { 
+                        aggregationEngine.aggregate(token, _, eventName, tagResults, remainder, count) map { appendError <-: _ }
+                      }
+                    } 
                 }: _*
-              ) map {
-                _.reduceOption(_ >>*<< _) match {
+              ) map { results =>
+                results.reduceOption(_ >>*<< _) match {
                   case Some(Success(complexity)) => 
-                    aggregationEngine.logger.debug("total complexity: " + complexity)
+                    aggregationEngine.logger.debug("Total complexity: " + complexity)
                     HttpResponse[JValue](OK)
 
                   case Some(Failure(errors)) => 
                     aggregationEngine.logger.debug("Encountered tag parsing errors: " + errors.list.mkString("; "))
-                    HttpResponse[JValue](HttpStatus(BadRequest, "Errors occurred parsing tag properies of one or more of your events."), content = Some(errors.list.mkString("; ")))
+                    HttpResponse[JValue](HttpStatus(BadRequest, "Errors occurred parsing tag properies of one or more of your events."), 
+                                         content = Some(errors.list.mkString("", ";\n", "\n") + "original: " + pretty(render(obj))))
 
                   case None => 
-                    //aggregationEngine.logger.debug("No trackable events in content body.")
-                    HttpResponse[JValue](HttpStatus(BadRequest, "No trackable events were found in the content body."))
+                    aggregationEngine.logger.debug("Did not find any fields in content object: " + pretty(render(obj)))
+                    HttpResponse[JValue](HttpStatus(BadRequest, "No trackable events were found in the content body."), 
+                                         content = Some("original: " + pretty(render(obj))))
                 }
               }
 
             case err => 
-              Future.sync(HttpResponse[JValue](HttpStatus(BadRequest, "Body content not a JSON object."), content = Some("Expected a JSON object but got " + pretty(render(err)))))
+              Future.sync(HttpResponse[JValue](HttpStatus(BadRequest, "Body content not a JSON object."), 
+                                               content = Some("Expected a JSON object but got " + pretty(render(err)))))
           }
         } getOrElse {
           Future.sync(HttpResponse[JValue](BadRequest, content = Some("Event content was not specified.")))
