@@ -58,11 +58,11 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                     val offset = clock.now().minusDays(1).toInstant
                     val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
 
-                    aggregationEngine.store(token, path, eventName, jvalue, count, rollup, reprocess)
+                    val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
+                    aggregationEngine.store(token, path, eventName, jvalue, tagResults, count, rollup, reprocess)
 
                     if (reprocess) List(Future.sync(0L.success[NonEmptyList[String]])) //skip immediate aggregation of historical data
                     else {
-                      val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
                       // only roll up to the client root, and not beyond (hence path.length - 1)
                       path.rollups(rollup min (path.length - 1)) map { 
                         aggregationEngine.aggregate(token, _, eventName, tagResults, remainder, count) map { appendError <-: _ }

@@ -179,7 +179,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
     val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(TestToken, "/test", event.eventName, event.tags, event.data, 1)
-        engine.store(TestToken, "/test", event.eventName, event.messageData, 1, 0, false)
+        engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 0, false)
       }
     }
 

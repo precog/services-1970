@@ -131,35 +131,29 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   val events_collection: MongoCollection = config.getString("events.collection", "events")
 
-  def store(token: Token, path: Path, eventName: String, eventBody: JValue, count: Int, rollup: Int, reprocess: Boolean) = {
+  def store(token: Token, path: Path, eventName: String, eventBody: JValue, tagResults: Tag.ExtractionResult, count: Int, rollup: Int, reprocess: Boolean) = {
     if (token.limits.lossless) {
-      val async = Future.async {
-        val tagsFuture: Future[List[Tag]] = Tag.extractTimestampTag(timeSeriesEncoding, "timestamp", eventBody \ Tag.TimestampProperty) match {
-          case Tag.Tags(tags) => tags.map(_.toList)
-          case _ =>              Future.sync(Tag("timestamp", TimeReference(timeSeriesEncoding, clock.instant)) :: Nil)
-        } 
-        
-        tagsFuture.flatMap[Unit] { 
-          case Tag(_, TimeReference(_, instant)) :: Nil => 
-            val record = JObject(
-              JField("token",     token.tokenId.serialize) ::
-              JField("path",      path.serialize) ::
-              JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
-    //          JField("tags",      tags.serialize) ::
-              JField("count",     count.serialize) ::
-              JField("timestamp", instant.serialize) :: 
-              JField("rollup",    rollup.serialize) :: 
-              (if (reprocess) JField("reprocess", true.serialize) :: Nil else Nil)
-            )
+      def withTagResults[A](f: Seq[Tag] => Future[A]): Future[A] = tagResults match {
+        case Tag.Tags(tf) => tf.flatMap(f)
+        case _ => f(Nil)
+      }
 
-            eventsdb(MongoInsertQuery(events_collection, List(record))) 
-            
-          case _ => 
-            Future.dead(new IllegalStateException("Unexpected system state; please report error RG-AE0"))
-        }
+      withTagResults { (tags: Seq[Tag]) =>
+        val instant = tags.collect{ case Tag("timestamp", TimeReference(_, instant)) => instant }.headOption.getOrElse(clock.instant)
+
+        val record = JObject(
+          JField("token",     token.tokenId.serialize) ::
+          JField("path",      path.serialize) ::
+          JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
+          JField("tags",      tags.map(_.serialize).reduceLeftOption(_ merge _).serialize) ::
+          JField("count",     count.serialize) ::
+          JField("timestamp", instant.serialize) :: 
+          JField("rollup",    rollup.serialize) :: 
+          (if (reprocess) JField("reprocess", true.serialize) :: Nil else Nil)
+        )
+
+        eventsdb(MongoInsertQuery(events_collection, List(record))) 
       } 
-
-      async.flatten
     } else {
       Future.sync(())
     }

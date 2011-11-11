@@ -397,6 +397,38 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
   }
 }
 
+class UnicodeAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
+  override val genTimeClock = clock 
+
+  implicit object JsonStringBijection extends Bijection[String, JValue] {  
+    def apply(s: String): JValue   = JsonParser.parse(s)
+    def unapply(t: JValue): String = compact(render(t))
+  }
+
+  "Analytics Service" should {
+    shareVariables()
+
+    "accept events containing unicode" in {
+      val eventData = """
+        {"case":{"sourceType":2,"os":"Win","browser":"MSIE9","fullUrl":"usbeds.com/Brand/Simmons%C2%AE/Beautyrest%C2%AE_Classic%E2%84%A2.aspx","entryUrl":"usbeds.com/Products/Simmons®_Beautyrest®_Classic™_Mercer_Park™_Plush_Pillow_Top_","referrerUrl":"google.com","agentName":"Jason","agentId":"jbircann@olejo.com","chatDuration":473,"chatResponseTime":0,"chatResponded":true,"#location":{"country":"United States","region":"United States/IL","city":"United States/IL/Deerfield"},"searchKeyword":{},"#timestamp":""" + clock.instant().getMillis.toString + """}}
+      """
+
+      jsonTestService.query("rollup", "0").post[String]("/vfs/test")(eventData) must whenDelivered {
+        beLike {
+          case HttpResponse(HttpStatus(status, _), _, _, _) => 
+            (status must_== HttpStatusCodes.OK) &&
+            (jsonTestService.get[JValue]("/vfs/test/.case.os/count?location=United%20States") must whenDelivered {
+              beLike {
+                case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== 1
+              }
+            }) 
+        }
+      }
+    }
+  }
+}
+
+
 
 class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers with PendingUntilFixed {
   override val genTimeClock = PastClock(Days.TWO.toStandardDuration)

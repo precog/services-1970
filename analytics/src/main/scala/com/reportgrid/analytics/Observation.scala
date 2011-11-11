@@ -229,6 +229,34 @@ object Tag {
         }
     }
   }
+
+  implicit object TagDecomposer extends Decomposer[Tag] {
+    def decompose(tag: Tag): JValue = JObject(
+      JField(
+        "#" + tag.name, 
+        tag.value match {
+          case NameSet(values)        => values.serialize
+          case TimeReference(_, time) => time.serialize
+          case Hierarchy(locations)   => 
+            val named = locations.collect {
+              case n: Hierarchy.NamedLocation => n
+            }
+
+            val anon = locations.collect {
+              case a: Hierarchy.AnonLocation => a
+            }
+
+            if (named.nonEmpty && anon.nonEmpty) {
+              sys.error("It should not be possible to build a hierarchy of mixed location types.")
+            } else if (anon.isEmpty) {
+              JObject(named.map(n => JField(n.name, n.path.serialize)))
+            } else {
+              anon.map(_.path).serialize
+            }
+        }
+      ) :: Nil
+    )
+  }
 }
 
 sealed trait TagValue {
@@ -269,6 +297,7 @@ object Hierarchy {
         case x => sys.error("Cannot deserialize a Location from " + pretty(render(x)))
       }
     }
+
   }
 
   case class AnonLocation(path: Path) extends Location
