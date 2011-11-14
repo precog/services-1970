@@ -28,7 +28,7 @@ object ServicesBuild extends Build {
         libraryDependencies ++= Seq(
           "joda-time" % "joda-time" % "1.6.2",
           "org.scalaz" %% "scalaz-core" % "6.0.2",
-          "org.scala-tools.testing" %% "specs"              % "1.6.9"  % "test"
+          "org.specs2" %% "specs2"              % "1.6.1"  % "test"
         )
       )
 
@@ -39,7 +39,7 @@ object ServicesBuild extends Build {
       libraryDependencies ++= Seq(
         "joda-time"               % "joda-time"           % "1.6.2",
         "org.scalaz"              %% "scalaz-core"        % "6.0.2",
-        "org.scala-tools.testing" %% "specs"              % "1.6.9"  % "test",
+        "org.specs2"              %% "specs2"             % "1.6.1"  % "test",
         "org.scala-tools.testing" %% "scalacheck"         % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
@@ -56,7 +56,7 @@ object ServicesBuild extends Build {
         "joda-time"               % "joda-time"           % "1.6.2",
         "net.liftweb"             %% "lift-mapper"        % "2.4-M4",
         "org.mockito"             % "mockito-all"         % "1.9.0-rc1" % "test", 
-        "org.scala-tools.testing" %% "specs"              % "1.6.9"     % "test",
+        "org.specs2"              %% "specs2"              % "1.6.1"     % "test",
         "org.scala-tools.testing" %% "scalacheck"         % "1.9"       % "test"
       ),
       mainClass := Some("com.reportgrid.billing.BillingServer")
@@ -64,12 +64,11 @@ object ServicesBuild extends Build {
 
     val billing = Project("billing", file("billing"), settings = billingSettings) dependsOn(common) 
 
-
     val jessupSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
       version      := "1.0.1-SNAPSHOT",
       libraryDependencies ++= Seq(
         "org.dspace.dependencies" % "dspace-geoip" % "1.2.3",
-        "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
+        "org.specs2"              %% "specs2"      % "1.6.1"  % "test",
         "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.jessup.Server")
@@ -80,9 +79,9 @@ object ServicesBuild extends Build {
     val vistrackSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
       version      := "1.0.0-SNAPSHOT",
       libraryDependencies ++= Seq(
-        "commons-codec" % "commons-codec"       % "1.5",
-        "org.scala-tools.testing" %% "specs"       % "1.6.9"  % "test",
-        "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"
+        "commons-codec" % "commons-codec"         % "1.5",
+        "org.specs2"              %% "specs2"     % "1.6.1"  % "test",
+        "org.scala-tools.testing" %% "scalacheck" % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.vistrack.VistrackServer")
     )

@@ -3,7 +3,7 @@ package com.reportgrid.analytics
 import blueeyes.concurrent.test._
 import blueeyes.persistence.mongo._
 
-import org.specs.Specification
+import org.specs2.mutable.Specification
 import scalaz.Success
 
 class TokenManagerSpec extends Specification with FutureMatchers {
@@ -13,7 +13,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
   "Token Manager" should {
     "automatically populate the test token" in {
       tokenManager.lookup(Token.Test.tokenId) must whenDelivered {
-        beLike {
+        _ must beLike {
           case Some(token) => token must_== Token.Test
         }
       }
@@ -21,9 +21,9 @@ class TokenManagerSpec extends Specification with FutureMatchers {
 
     "support token creation" in {
       tokenManager.issueNew(Token.Test, "/testchild/", Token.Test.permissions, Token.Test.expires, Token.Test.limits) must whenDelivered {
-        beLike {
-          case Success(token) =>  (token.permissions must_== Token.Test.permissions) && 
-                                  (token.limits must_== Token.Test.limits) &&
+        _ must beLike {
+          case Success(token) =>  (token.permissions must_== Token.Test.permissions) and
+                                  (token.limits must_== Token.Test.limits) and
                                   (token.path must_== (Token.Test.path / "testchild"))
         }
       }
@@ -35,7 +35,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
       }
 
       exchange must whenDelivered {
-        beSomething
+        _ must beSome
       }
     }
 
@@ -47,7 +47,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
       }
 
       exchange must whenDelivered {
-        beNone
+        _ must beNone
       }
     }
 
@@ -59,7 +59,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
       }
 
       exchange must whenDelivered {
-        beSomething
+        _ must beSome
       }
     }
   }
