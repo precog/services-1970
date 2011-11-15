@@ -1,22 +1,10 @@
 package com.reportgrid.analytics
 
-import blueeyes.json._
 import blueeyes.json.JsonAST._
-import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
-import blueeyes.json.xschema.JodaSerializationImplicits._
+import org.specs2.mutable.Specification
 
-import blueeyes.json._
-import blueeyes.json.JsonAST._
-import blueeyes.json.Printer._
-import org.specs._
-import org.scalacheck._
-import Prop._
-
-import scalaz.Scalaz._
-import scalaz.Validation
-
-class AnalyticsSerializationSpec extends Specification with ScalaCheck with AnalyticsSerialization{
+class AnalyticsSerializationSpec extends Specification with AnalyticsSerialization{
   "deserializing a limits with a default" should {
     "always return a valid limits" in {
       val default = Limits(1, 1, 1, 1)

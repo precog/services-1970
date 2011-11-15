@@ -27,7 +27,7 @@ extends DelegatingService[A, Future[B], A, Token => Future[B]] {
     }
   }
 
-  val metadata = Some(ParameterMetadata('tokenId, None, Some("A ReportGrid account token is required for the use of this service.")))
+  val metadata = Some(AboutMetadata(ParameterMetadata('tokenId, None), DescriptionMetadata("A ReportGrid account token is required for the use of this service.")))
 }
 
 // vim: set ts=4 sw=4 et:

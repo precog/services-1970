@@ -21,7 +21,7 @@ import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo}
 import org.joda.time._
 import net.lag.configgy.ConfigMap
 
-import org.specs._
+import org.specs2.mutable.Specification
 import org.scalacheck.Gen._
 import scalaz.Scalaz._
 
@@ -68,7 +68,7 @@ class AnalyticsServiceCompanionSpec extends Specification {
 
       timeSpan(parameters, None) must beLike {
         case Some(Success(TimeSpan(start, end))) => 
-          (start must_== startTime.toInstant) && 
+          (start must_== startTime.toInstant) and
           (end must_== endTime.toInstant)
       }
     }
@@ -81,7 +81,7 @@ class AnalyticsServiceCompanionSpec extends Specification {
 
       timeSpan(Map.empty, Some(content)) must beLike {
         case Some(Success(TimeSpan(start, end))) => 
-          (start must_== startTime.toInstant) && 
+          (start must_== startTime.toInstant) and
           (end must_== endTime.toInstant)
       }
     }
@@ -96,7 +96,7 @@ class AnalyticsServiceCompanionSpec extends Specification {
 
       timeSpan(parameters, None) must beLike {
         case Some(Success(TimeSpan(start, end))) => 
-          (start must_== startTime.toInstant) && 
+          (start must_== startTime.toInstant) and
           (end must_== endTime.toInstant)
       }
     }
@@ -112,7 +112,7 @@ class AnalyticsServiceCompanionSpec extends Specification {
 
       timeSpan(parameters, Some(content)) must beLike {
         case Some(Success(TimeSpan(start, end))) => 
-          (start must_== startTime.toInstant) && 
+          (start must_== startTime.toInstant) and
           (end must_== endTime.toInstant)
       }
     }

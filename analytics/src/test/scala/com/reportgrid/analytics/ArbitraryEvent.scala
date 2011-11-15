@@ -143,7 +143,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     }
   }
 
-  def expectedMeans(events: List[Event], property: String, keys: List[Tag => String]) = {
+  def expectedMeans(events: List[Event], property: String, keys: List[Tag => String]): Map[String, Map[List[String], Double]] = {
     expectedSums(events, property, keys) mapValues {
       _.mapValues {
         case (k, v) => v / k
@@ -152,7 +152,7 @@ trait ArbitraryEvent extends ArbitraryTime {
   }
 
   // returns a map from set of keys derived from the tags to count and sum
-  def expectedSums(events: List[Event], property: String, keyf: List[Tag => String]) = {
+  def expectedSums(events: List[Event], property: String, keyf: List[Tag => String]): Map[String, Map[List[String], (Int, Double)]] = {
     events.foldLeft(Map.empty[String, Map[List[String], (Int, Double)]]) {
       case (map, Event(eventName, obj, tags)) =>
         val keys = tags zip keyf map { case (t, f) => f(t) }

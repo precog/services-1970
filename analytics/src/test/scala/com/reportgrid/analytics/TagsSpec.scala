@@ -1,6 +1,6 @@
 package com.reportgrid.analytics
 
-import org.specs.Specification
+import org.specs2.mutable.Specification
 
 import blueeyes.concurrent.Future
 import blueeyes.concurrent.test.FutureMatchers
@@ -16,14 +16,12 @@ class TagsSpec extends Specification with FutureMatchers {
       val obj = JsonParser.parse("""{ "type" : "click", "#timestamp": 1315368953984 }""") --> classOf[JObject]
 
       val (tags, remainder) = extractTags(List(extractor), obj)
-      remainder must_== JsonParser.parse("""{ "type" : "click"}""")
-      tags must beLike {
+      (remainder must_== JsonParser.parse("""{ "type" : "click"}""")) and
+      (tags must beLike {
         case Tags(tags) => tags must whenDelivered {
-          beEqualTo {
-            Tag("timestamp", TimeReference(TimeSeriesEncoding.Default, new Instant(1315368953984L))) :: Nil
-          }
+          be_==(Tag("timestamp", TimeReference(TimeSeriesEncoding.Default, new Instant(1315368953984L))) :: Nil)
         }
-      }
+      })
     }
 
     "correctly handle the skipping of tags" in {
@@ -33,14 +31,12 @@ class TagsSpec extends Specification with FutureMatchers {
       val obj = JsonParser.parse("""{"type" : "click", "#timestamp": 1315368953984 }""") --> classOf[JObject]
 
       val (tags, remainder) = extractTags(extractors, obj)
-      remainder must_== JsonParser.parse("""{"type" : "click"}""")
-      tags must beLike {
+      (remainder must_== JsonParser.parse("""{"type" : "click"}""")) and
+      (tags must beLike {
         case Tags(tags) => tags must whenDelivered {
-          beEqualTo {
-            Tag("timestamp", TimeReference(TimeSeriesEncoding.Default, new Instant(1315368953984L))) :: Nil
-          }
+          be_==(Tag("timestamp", TimeReference(TimeSeriesEncoding.Default, new Instant(1315368953984L))) :: Nil)
         }
-      }
+      })
     }
 
       // This test is currently disabled becaus handling malformed tags is something that we probably don't actually want to do
@@ -50,14 +46,14 @@ class TagsSpec extends Specification with FutureMatchers {
       val obj = JsonParser.parse("""{"type": "click", "#location": {"country":"Brazil","region":"Brazil/(null)","city":"Brazil/(null)/"}}""") --> classOf[JObject]
 
       val (tags, remainder) = extractTags(extractors, obj)
-      remainder must_== JsonParser.parse("""{"type" : "click"}""")
-      tags must beLike {
+      (remainder must_== JsonParser.parse("""{"type" : "click"}""")) and
+      (tags must beLike {
         case Tags(tags) => tags must whenDelivered {
           beLike {
             case tag :: Nil => tag must_== Hierarchy.of(Hierarchy.NamedLocation("country", "Brazil") :: Nil).map(Tag("location", _)).toOption.get
           }
         }
-      }
+      })
     }
   }
 
@@ -71,8 +67,8 @@ class TagsSpec extends Specification with FutureMatchers {
       remainder must_== JsonParser.parse("""{ "type" : "click"}""")
       tags must beLike {
         case Tags(tags) => tags must whenDelivered {
-          beEqualTo {
-            Tag("timestamp", TimeReference(TimeSeriesEncoding.Default, new Instant(1315368953984L))) :: Nil
+          beLike {
+            case Tag("timestamp", TimeReference(TimeSeriesEncoding.Default, instant)) :: Nil => instant.getMillis must_== 1315368953984L
           }
         }
       }

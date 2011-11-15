@@ -1,7 +1,6 @@
 package com.reportgrid.analytics
 
 import blueeyes._
-import blueeyes.core.data.Bijection.identity
 import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.concurrent.test.FutureMatchers
@@ -24,8 +23,10 @@ import net.lag.configgy.{Configgy, Config, ConfigMap}
 import net.lag.logging.Logger
 
 import org.joda.time.Instant
-import org.specs.{Specification, ScalaCheck}
-import org.specs.specification.PendingUntilFixed
+import org.specs2.mutable.Specification
+import org.specs2.specification.{Outside, Scope}
+import org.specs2.matcher.MatchResult
+import org.specs2.execute.Result
 import org.scalacheck._
 import scala.math.Ordered._
 import Gen._
@@ -143,16 +144,13 @@ trait AggregationEngineTests extends Specification with FutureMatchers with Arbi
       HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
     )
 
-    eventCounts.foreach {
-      case (eventName, count) =>
-        engine.getVariableCount(TestToken, "/test", Variable("." + eventName), queryTerms) must whenDelivered {
-          beEqualTo(count)
-        }
+    forall(eventCounts) {
+      case (name, count) => engine.getVariableCount(TestToken, "/test", Variable("." + name), queryTerms) must whenDelivered(be_==(count))
     }
   }
 }
 
-class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with PendingUntilFixed {
+class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
   import AggregationEngine._
   import FutureUtils._
 
@@ -172,59 +170,68 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
-  "Aggregating full events" should {
-    shareVariables()
-
-    // using the benchmark token for testing because it has order 3
-    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+  object sampleData extends Outside[List[Event]] with Scope {
+    val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(TestToken, "/test", event.eventName, event.tags, event.data, 1)
         engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 0, false)
       }
     }
+  }
 
-    "retrieve path children" in {
+  "Aggregating full events" should {
+    // using the benchmark token for testing because it has order 3
+    "retrieve path children" in sampleData { sampleEvents =>
       //skip("disabled")
-      val children = sampleEvents.map {
-        case Event(eventName, _, _) => "." + eventName
-      }.toSet
+      val children = sampleEvents.map { case Event(eventName, _, _) => "." + eventName }.toSet
 
       engine.getPathChildren(TestToken, "/test") must whenDelivered {
         haveTheSameElementsAs(children)
       }
     }
  
-    "count events" in {
-      countStoredEvents(sampleEvents, engine)
+    "count events" in sampleData { sampleEvents =>
+      def countEvents(eventName: String) = sampleEvents.count {
+        case Event(name, _, _) => name == eventName
+      }
+
+      val queryTerms = List[TagTerm](
+        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      )
+
+      forall(EventTypes.map(eventName => (eventName, countEvents(eventName)))) {
+        case (name, count) => 
+          engine.getVariableCount(TestToken, "/test", Variable("." + name), queryTerms) must whenDelivered {
+            be_==(count)
+          }
+      }
     }
  
-    "retrieve values" in {
+    "retrieve values" in sampleData { sampleEvents =>
       //skip("disabled")
       val values = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
         case (map, Event(eventName, obj, _)) =>
           obj.flattenWithPath.foldLeft(map) {
-            case (map, (path, value)) => 
+            case (map, (path, value)) if (!path.endsInInfiniteValueSpace) => 
               val key = (eventName, path)
               val oldValues = map.getOrElse(key, Set.empty)
 
               map + (key -> (oldValues + value))
+            case (map, _) => map
           }
 
         case (map, _) => map
       }
 
-      values.foreach {
-        case ((eventName, path), values) =>
-          val jpath = JPath(eventName) \ path
-          if (!jpath.endsInInfiniteValueSpace) {
-            engine.getValues(TestToken, "/test", Variable(jpath)) must whenDelivered {
-              haveSameElementsAs(values)
-            }
+      forall(values) {
+        case ((eventName, path), values) => 
+          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
+            haveTheSameElementsAs(values)
           }
       }
     }
 
-    "retrieve all values of arrays" in {
+    "retrieve all values of arrays" in sampleData { sampleEvents =>
       //skip("disabled")
       val arrayValues = sampleEvents.foldLeft(Map.empty[(String, JPath), Set[JValue]]) { 
         case (map, Event(eventName, obj, _)) =>
@@ -233,15 +240,15 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (map, _) => map
       }
 
-      arrayValues.foreach {
+      forall(arrayValues) {
         case ((eventName, path), values) =>
           engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
-            haveSameElementsAs(values)
+            haveTheSameElementsAs(values)
           }
       }
     }
 
-    "retrieve the top results of a histogram" in {
+    "retrieve the top results of a histogram" in sampleData { sampleEvents => 
       //skip("disabled")
       val retweetCounts = sampleEvents.foldLeft(Map.empty[JValue, Int]) {
         case (map, Event("tweeted", data, _)) => 
@@ -256,26 +263,25 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
       }
     }
 
-    "retrieve totals" in {
+    "retrieve totals" in sampleData { sampleEvents =>
       //skip("disabled")
-      val expectedTotals = valueCounts(sampleEvents)
+      val expectedTotals = valueCounts(sampleEvents).filterNot {
+        case ((jpath, _), _) => jpath.endsInInfiniteValueSpace
+      }
 
       val queryTerms = List[TagTerm](
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 
-      expectedTotals.foreach {
+      forall(expectedTotals) {
         case ((jpath, value), count) =>
-          val variable = Variable(jpath) 
-          if (!variable.name.endsInInfiniteValueSpace) {
-            engine.getObservationCount(TestToken, "/test", JointObservation(HasValue(variable, value)), queryTerms) must whenDelivered {
-              beEqualTo(count.toLong)
-            }
+          engine.getObservationCount(TestToken, "/test", JointObservation(HasValue(Variable(jpath), value)), queryTerms) must whenDelivered {
+            be_==(count.toLong)
           }
       }
     }
 
-    "retrieve a time series for occurrences of a variable" in {
+    "retrieve a time series for occurrences of a variable" in sampleData { sampleEvents =>
       //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
@@ -294,16 +300,15 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
           }
       }
 
-      expectedTotals.foreach {
+      forall(expectedTotals) {
         case (jpath, count) =>
-          engine.getVariableSeries(TestToken, "/test", Variable(jpath), queryTerms).
-          map(_.total.count) must whenDelivered {
-            beEqualTo(count.toLong)
+          engine.getVariableSeries(TestToken, "/test", Variable(jpath), queryTerms).map(_.total.count) must whenDelivered {
+            be_==(count.toLong)
           }
       }
     }
 
-    "retrieve a time series of means of values of a variable" in {
+    "retrieve a time series of means of values of a variable" in sampleData { sampleEvents =>
       //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
@@ -313,73 +318,69 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 
-      expectedMeans(events, "recipientCount", keysf(granularity)).foreach {
+      forall(expectedMeans(events, "recipientCount", keysf(granularity))) {
         case (eventName, means) =>
           val expected: Map[String, Double] = means.map{ case (k, v) => (k(0), v) }.toMap
 
           engine.getVariableSeries(TestToken, "/test", Variable(JPath(eventName) \ "recipientCount"), queryTerms) must whenDelivered {
-            verify { result => 
-              val remapped: Map[String, Double] = result.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant].toString -> _) }.toMap 
-              remapped must_== expected
+            beLike { 
+              case result => 
+                val remapped: Map[String, Double] = result.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant].toString -> _) }.toMap 
+                remapped must_== expected
             }
           }
       }
     }
 
-    "retrieve a time series for occurrences of a value of a variable" in {      
+    "retrieve a time series for occurrences of a value of a variable" in sampleData { sampleEvents =>
       //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val expectedTotals = valueCounts(events)
+
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 
-      expectedTotals.foreach {
-        case ((jpath, value), count) =>
-          val variable = Variable(jpath)
-          if (!variable.name.endsInInfiniteValueSpace) {
-            val observation = JointObservation(HasValue(variable, value))
+      forallLike(valueCounts(events)) {
+        case ((jpath, value), count) if !jpath.endsInInfiniteValueSpace =>
+          val observation = JointObservation(HasValue(Variable(jpath), value))
 
-            engine.getObservationSeries(TestToken, "/test", observation, queryTerms) must whenDelivered {
-              verify { results => 
-                (results.total must_== count.toLong) && 
-                (results must haveSize((granularity.period(minDate) until maxDate).size))
-              }
+          engine.getObservationSeries(TestToken, "/test", observation, queryTerms) must whenDelivered {
+            beLike { case results => 
+              (results.total must_== count.toLong) and
+              (results must haveSize((granularity.period(minDate) until maxDate).size))
             }
           }
       }
     }
 
-    "retrieve a time series for occurrences of a value of a variable via the raw events" in {      
+    "retrieve a time series for occurrences of a value of a variable via the raw events" in sampleData { sampleEvents =>
       ////skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
-      val expectedTotals = valueCounts(events)
+      val expectedTotals = valueCounts(events) 
+
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
         HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
-      expectedTotals.foreach {
-        case ((jpath, value), count) =>
-          val variable = Variable(jpath)
-          if (!variable.name.endsInInfiniteValueSpace) {
-            val observation = JointObservation(HasValue(variable, value))
+      forallLike(expectedTotals) {
+        case ((jpath, value), count) if !jpath.endsInInfiniteValueSpace => 
+          val observation = JointObservation(HasValue(Variable(jpath), value))
 
-            engine.getRawEvents(TestToken, "/test", observation, queryTerms).map(AggregationEngine.countByTerms(_, queryTerms)) must whenDelivered {
-              verify { results => 
-                (results.total must_== count.toLong) && 
-                (results must haveSize((granularity.period(minDate) until maxDate).size))
-              }
+          engine.getRawEvents(TestToken, "/test", observation, queryTerms).map(AggregationEngine.countByTerms(_, queryTerms)) must whenDelivered {
+            beLike { case results => 
+              (results.total must_== count.toLong) and 
+              (results must haveSize((granularity.period(minDate) until maxDate).size))
             }
           }
       }
     }
 
 
-    "count observations of a given value" in {
+    "count observations of a given value" in sampleData { sampleEvents =>
       //skip("disabled")
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
@@ -395,15 +396,16 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (map, _) => map
       }
 
-      expectedCounts.map {
+      forall(expectedCounts) {
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
-
-          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
+          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered {
+            be_==(count)
+          }
       }
     }
 
-    "count observations of a given value in a restricted time slice" in {
+    "count observations of a given value in a restricted time slice" in sampleData { sampleEvents =>
       //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
@@ -422,7 +424,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
         case (map, _) => map
       }
 
-      expectedCounts.map {
+      forall(expectedCounts) {
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
 
@@ -430,7 +432,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
       }
     }
 
-    "retrieve intersection counts" in {      
+    "retrieve intersection counts" in sampleData { sampleEvents =>
       //skip("disabled")
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
@@ -449,13 +451,13 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
       }
 
       engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
-        verify { result => 
+        beLike { case result => 
           result.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts
         }
       }
     }
 
-    "retrieve intersection counts for a slice of time" in {      
+    "retrieve intersection counts for a slice of time" in sampleData { sampleEvents =>
       //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
@@ -477,11 +479,13 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
       }
 
       engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
-        verify(_.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
+        beLike {
+          case r => r.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts
+        }
       }
     }
 
-    "retrieve intersection series for a slice of time" in {      
+    "retrieve intersection series for a slice of time" in sampleData { sampleEvents =>
       //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
@@ -502,48 +506,43 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo with 
       }
 
       engine.getIntersectionSeries(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
-        verify { results => 
-          // all returned results must have the same length of time series
-          val sizes = results.map(_._2).map(_.size).filter(_ > 0)
+        beLike { 
+          case results => 
+            // all returned results must have the same length of time series
+            val sizes = results.map(_._2).map(_.size).filter(_ > 0)
 
-          results.isEmpty || (
-            (sizes.zip(sizes.tail).forall { case (a, b) => a must_== b }) &&
+            (forall(sizes.zip(sizes.tail)) { case (a, b) => a must_== b }) and
             (results.map(((_: ResultSet[JObject, CountType]).total).second).collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
-          )
         }
       }
     }
 
-    "retrieve all values of infinitely-valued variables that co-occurred with an observation" in {
-      //pendingUntilFixed {
-        //skip("disabled")
-        val granularity = Minute
-        val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+    "retrieve all values of infinitely-valued variables that co-occurred with an observation" in sampleData { sampleEvents =>
+      //skip("disabled")
+      val granularity = Minute
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
-        val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), Set[JValue]]) {
-          case (map, Event(eventName, data, tags)) =>
-            data.flattenWithPath.foldLeft(map) {
-              case (map, (jpath, value)) if !jpath.endsInInfiniteValueSpace =>
-                val key = (eventName, jpath, value)
-                map + (key -> (map.getOrElse(key, Set.empty[JValue]) + (data.value \ "~tweet")))
+      val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), Set[JValue]]) {
+        case (map, Event(eventName, data, tags)) =>
+          data.flattenWithPath.foldLeft(map) {
+            case (map, (jpath, value)) =>
+              val key = (eventName, jpath, value)
+              map + (key -> (map.getOrElse(key, Set.empty[JValue]) + (data.value \ "~tweet")))
+          }
+      }
 
-              case (map, _) => map
-            }
-        }
-
-        expectedValues.foreach {
-          case ((eventName, jpath, jvalue), infiniteValues) => 
-            engine.findRelatedInfiniteValues(
-              TestToken, "/test", 
-              JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
-              List(SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan(minDate, maxDate)))
-            ) map {
-              _.map(_.value).toSet
-            } must whenDelivered {
-              beEqualTo(infiniteValues)
-            }
-        }
-      //}
+      forallLike(expectedValues) {
+        case ((eventName, jpath, jvalue), infiniteValues) if !jpath.endsInInfiniteValueSpace  => 
+          engine.findRelatedInfiniteValues(
+            TestToken, "/test", 
+            JointObservation(HasValue(Variable(JPath(eventName) \ jpath), jvalue)),
+            List(SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan(minDate, maxDate)))
+          ) map {
+            _.map(_.value).toSet
+          } must whenDelivered {
+            beEqualTo(infiniteValues)
+          }
+      }
     }
 
     // this test is here because it's testing internals of the analytics service

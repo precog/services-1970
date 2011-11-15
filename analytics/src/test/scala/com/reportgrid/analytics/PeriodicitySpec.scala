@@ -1,11 +1,13 @@
 package com.reportgrid.analytics
 
 import org.joda.time.Instant
-import org.specs.{Specification, ScalaCheck}
-import org.specs.specification.PendingUntilFixed
+
+import org.specs2.mutable.Specification
+import org.specs2.ScalaCheck
 import org.scalacheck._
 import org.scalacheck.Gen._
 import org.scalacheck.Prop._
+
 import Periodicity._
 import Arbitrary._
 
@@ -15,11 +17,9 @@ class PeriodicitySpec extends Specification with ArbitraryTime with ScalaCheck {
   case class Count(i: Int)
   "Periodicity.period" should {
     "have the same semantics as period.withPeriodicity" in {
-      val prop = forAll {
+      check {
         (periodicity: Periodicity, period: Period) => period.withPeriodicity(periodicity) must_== periodicity.period(period.start)
       }
-
-      prop must pass
     }
   }
 
@@ -32,20 +32,17 @@ class PeriodicitySpec extends Specification with ArbitraryTime with ScalaCheck {
 
       implicit val arbCount = Arbitrary(choose(1, 10).map(Count))
 
-      val prop = forAll {
+      check {
         (periodicity: Periodicity, time: Instant, count: Count) => (floorN(periodicity, time, count.i) must_== periodicity.floor(time)) 
       }
-
-      prop must pass
     }
 
     "always be less than or equal to the specified time" in {
-      forAll { (time: Instant, periodicity: Periodicity) =>
+      check { (time: Instant, periodicity: Periodicity) =>
         periodicity.floor(time).getMillis must beLessThanOrEqualTo(time.getMillis)
-      } must pass
+      } 
     }
   }
-
 }
 
 

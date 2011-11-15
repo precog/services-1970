@@ -3,16 +3,19 @@ package com.reportgrid.analytics
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JsonAST._
 import org.joda.time.{Instant, DateTime, Duration}
-import org.specs.{Specification, ScalaCheck}
+
+import org.specs2.mutable.Specification
+import org.specs2.ScalaCheck
 import org.scalacheck._
 import org.scalacheck.Gen._
 import org.scalacheck.Prop._
+
 import Periodicity._
 import Arbitrary._
 
 import scalaz.Scalaz._
 
-class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with ScalaCheck {
+class TimeSeriesSpecs extends Specification with ArbitraryTime with ScalaCheck {
   val genTimeClock = blueeyes.util.Clock.System
 
   "TimeSeriesEncoding.expand" should {
@@ -32,7 +35,7 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
     }
 
     "create periods whose total size is close to the duration between start and end" in {
-      forAll { (time1: Instant, time2: Instant) =>
+      check { (time1: Instant, time2: Instant) =>
         val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
 
         val expectedDuration = new Duration(start, end)
@@ -42,11 +45,11 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
         }
 
         actualDuration.getMillis mustEqual (expectedDuration.getMillis)
-      } must pass
+      } 
     }
 
     "create a series where smaller periods are not sandwiched by larger periods" in {
-      forAll { (time1: Instant, time2: Instant) =>
+      check { (time1: Instant, time2: Instant) =>
         val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
 
         val expansion = encoding.expand(start, end)
@@ -63,7 +66,7 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
         }
 
         true
-      } must pass
+      } 
     }
   }
 
@@ -71,7 +74,7 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
     val encoding = TimeSeriesEncoding.Default
 
     "create subsequences whose total size is close to the duration between start and end" in {
-      forAll { (time1: Instant, time2: Instant) =>
+      check { (time1: Instant, time2: Instant) =>
         val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
 
         val expectedDuration = new Duration(start, end)
@@ -81,19 +84,18 @@ class TimeSeriesEncodingSpec extends Specification with ArbitraryTime with Scala
         }
 
         actualDuration.getMillis mustEqual (expectedDuration.getMillis)
-      } must pass
+      } 
     }
 
     "have an expansion that has at most two elements of each periodicity" in {
-      forAll { (time1: Instant, time2: Instant) =>
+      check { (time1: Instant, time2: Instant) =>
         val (start, end) = (if (time1.getMillis < time2.getMillis) (time1, time2) else (time2, time1)).mapElements(Minute.floor, Minute.floor)
 
         val expansion = encoding.expand(start, end)
         encoding.queriableExpansion(expansion).groupBy(_._1).forall {
           case (k, v) => v.size <= 2
         }
-      } must pass
+      }
     }
-
   }
 }

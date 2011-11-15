@@ -1,9 +1,6 @@
 package com.reportgrid.analytics
 
 import blueeyes.util.Clock
-import org.joda.time.Instant
-import org.specs.{Specification, ScalaCheck}
-import org.specs.specification.PendingUntilFixed
 import org.scalacheck._
 import org.scalacheck.Gen._
 import org.scalacheck.Prop._

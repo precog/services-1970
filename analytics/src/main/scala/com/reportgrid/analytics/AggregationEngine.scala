@@ -395,18 +395,18 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
     val tagsFilters: Seq[MongoFilter]  = tagTerms.collect {
       case IntervalTerm(_, _, span) => 
-        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
-        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
+        (MongoFilterBuilder(JPath(".tags.#timestamp")) >= span.start.getMillis) & 
+        (MongoFilterBuilder(JPath(".tags.#timestamp")) <  span.end.getMillis)
 
       case SpanTerm(_, span) =>
-        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
-        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
+        (MongoFilterBuilder(JPath(".tags.#timestamp")) >= span.start.getMillis) & 
+        (MongoFilterBuilder(JPath(".tags.#timestamp")) <  span.end.getMillis)
 
       case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) =>
-        MongoFilterBuilder(JPath(".event.data") \ ("#"+ tagName)).contains[MongoPrimitiveString](path.path)
+        MongoFilterBuilder(JPath(".tags") \ ("#"+ tagName)).contains[MongoPrimitiveString](path.path)
 
       case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) =>
-        MongoFilterBuilder(JPath(".event.data") \ ("#" + tagName) \ name) === path.path
+        MongoFilterBuilder(JPath(".tags") \ ("#" + tagName) \ name) === path.path
     }
 
     val filter = tagsFilters.foldLeft(obsFilter)(_ & _)
@@ -772,8 +772,6 @@ object AggregationEngine {
 
   def countByTerms(results: Iterable[JValue], tagTerms: Seq[TagTerm]) = {
     val retrieved = results.foldLeft(SortedMap.empty[JObject, CountType](JObjectOrdering)) { (acc, event) =>
-      val eventObj = event --> classOf[JObject]
-
       val key = JObject(
         tagTerms.collect {
           case IntervalTerm(_, periodicity, _) => JField(periodicity.name, periodicity.period(event \ "timestamp"))
@@ -800,7 +798,7 @@ object AggregationEngine {
           }.toList
         )
         
-        if (acc.contains(key)) acc else acc + (key -> 0)
+        if (acc.contains(key)) acc else acc + (key -> 0L)
     }.toSeq
   }
 }
