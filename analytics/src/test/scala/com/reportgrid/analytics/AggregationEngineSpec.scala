@@ -189,6 +189,22 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       }
     }
  
+    "retrieve variable children" in sampleData { sampleEvents =>
+      //skip("disabled")
+      val expectedChildren = sampleEvents.foldLeft(Map.empty[String, Set[String]]) {
+        case (m, Event(eventName, EventData(JObject(fields)), _)) => 
+          val properties = fields.map("." + _.name)
+          m + (eventName -> (m.getOrElse(eventName, Set.empty[String]) ++ properties))
+      }
+
+      expectedChildren forall { 
+        case (eventName, children) => 
+          engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName))).map(_.map(_.child.toString)) must whenDelivered {
+            haveTheSameElementsAs(children)
+          }
+      }
+    }
+
     "count events" in sampleData { sampleEvents =>
       def countEvents(eventName: String) = sampleEvents.count {
         case Event(name, _, _) => name == eventName

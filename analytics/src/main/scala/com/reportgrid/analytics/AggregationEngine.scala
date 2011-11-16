@@ -217,7 +217,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   def getVariableChildren(token: Token, path: Path, variable: Variable): Future[List[HasChild]] = {
     extractValues(forTokenAndPath(token, path) & forVariable(variable), variable_children.collection) { (jvalue, _) =>
       HasChild(variable, jvalue.deserialize[JPathNode])
-    }
+    } 
   }
 
   /** Retrieves children of the specified path.  */

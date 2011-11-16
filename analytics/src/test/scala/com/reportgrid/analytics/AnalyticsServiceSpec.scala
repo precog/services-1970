@@ -168,16 +168,23 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
     }
 
-    "explore variables" in {
-      //skip("disabled")
-      (jsonTestService.get[JValue]("/vfs/test/.tweeted")) must whenDelivered {
-         beLike {
-          case HttpResponse(HttpStatus(status, _), _, Some(result), _) => 
-            val expected = List(".startup",".retweet",".otherStartups",".~tweet",".location",".twitterClient",".gender",".recipientCount")
-            (status must_== HttpStatusCodes.OK) and
-            (result.deserialize[List[String]] must haveTheSameElementsAs(expected))
-        }
-      } 
+    "explore variables" in sampleData { sampleEvents =>
+      val expectedChildren = sampleEvents.foldLeft(Map.empty[String, Set[String]]) {
+        case (m, Event(eventName, EventData(JObject(fields)), _)) => 
+          val properties = fields.map("." + _.name)
+          m + (eventName -> (m.getOrElse(eventName, Set.empty[String]) ++ properties))
+      }
+
+      expectedChildren forall { 
+        case (eventName, children) => 
+          (jsonTestService.get[JValue]("/vfs/test/." + eventName)) must whenDelivered {
+             beLike {
+              case HttpResponse(HttpStatus(status, _), _, Some(result), _) => 
+                (status must_== HttpStatusCodes.OK) and
+                (result.deserialize[List[String]] must haveTheSameElementsAs(children))
+            }
+          } 
+      }
     }
 
     "count created events" in sampleData { sampleEvents =>
