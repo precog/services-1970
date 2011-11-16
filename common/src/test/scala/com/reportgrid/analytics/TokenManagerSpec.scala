@@ -13,7 +13,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
   "Token Manager" should {
     "automatically populate the test token" in {
       tokenManager.lookup(Token.Test.tokenId) must whenDelivered {
-        _ must beLike {
+        beLike {
           case Some(token) => token must_== Token.Test
         }
       }
@@ -21,7 +21,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
 
     "support token creation" in {
       tokenManager.issueNew(Token.Test, "/testchild/", Token.Test.permissions, Token.Test.expires, Token.Test.limits) must whenDelivered {
-        _ must beLike {
+        beLike {
           case Success(token) =>  (token.permissions must_== Token.Test.permissions) and
                                   (token.limits must_== Token.Test.limits) and
                                   (token.path must_== (Token.Test.path / "testchild"))
@@ -35,7 +35,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
       }
 
       exchange must whenDelivered {
-        _ must beSome
+        beSome
       }
     }
 
@@ -47,7 +47,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
       }
 
       exchange must whenDelivered {
-        _ must beNone
+        beNone
       }
     }
 
@@ -59,7 +59,7 @@ class TokenManagerSpec extends Specification with FutureMatchers {
       }
 
       exchange must whenDelivered {
-        _ must beSome
+        beSome
       }
     }
   }
