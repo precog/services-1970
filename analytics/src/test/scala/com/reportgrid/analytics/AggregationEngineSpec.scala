@@ -129,7 +129,7 @@ trait AggregationEngineTests extends Specification with FutureMatchers with Arbi
     path           = "unittest",
     permissions    = Permissions(true, true, true, true),
     expires        = Token.Never,
-    limits         = Limits(order = 3, depth = 5, limit = 20, tags = 2, rollup = 2)
+    limits         = Limits(order = 1, depth = 5, limit = 20, tags = 2, rollup = 2)
   )
 
   def countStoredEvents(sampleEvents: List[Event], engine: AggregationEngine) = {
@@ -168,7 +168,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
 
   val engine = get(AggregationEngine(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop))
 
-  override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
+  override implicit val defaultFutureTimeouts = FutureTimeouts(15, toDuration(1000).milliseconds)
 
   object sampleData extends Outside[List[Event]] with Scope {
     val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
@@ -180,7 +180,6 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
   }
 
   "Aggregating full events" should {
-    // using the benchmark token for testing because it has order 3
     "retrieve path children" in sampleData { sampleEvents =>
       //skip("disabled")
       val children = sampleEvents.map { case Event(eventName, _, _) => "." + eventName }.toSet
@@ -379,13 +378,13 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       }
     }
 
-
     "count observations of a given value" in sampleData { sampleEvents =>
+
       //skip("disabled")
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
       val queryTerms = List[TagTerm](
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
@@ -399,8 +398,8 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       forall(expectedCounts) {
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
-          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered {
-            be_==(count)
+          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered[CountType] {
+            be_== (count)
           }
       }
     }
@@ -411,7 +410,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val queryTerms = List[TagTerm](
         SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan(minDate, maxDate)),
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
@@ -438,7 +437,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
       val queryTerms = List[TagTerm](
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
@@ -463,7 +462,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
@@ -478,10 +477,9 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
         case (map, _) => map
       }
 
-      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
-        beLike {
-          case r => r.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts
-        }
+      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms).
+      map(_.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap) must {
+        whenDelivered[Map[List[JValue], CountType]]( be_== (expectedCounts) )(FutureTimeouts(5, toDuration(3000).milliseconds))
       }
     }
 
@@ -491,7 +489,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Variable(".tweeted.twitterClient") :: Nil
@@ -505,15 +503,17 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
         case (map, _) => map
       }
 
-      engine.getIntersectionSeries(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
-        beLike { 
-          case results => 
-            // all returned results must have the same length of time series
-            val sizes = results.map(_._2).map(_.size).filter(_ > 0)
+      engine.getIntersectionSeries(TestToken, "/test", descriptors, queryTerms) must {
+        whenDelivered[ResultSet[JArray, ResultSet[JObject, CountType]]] ({
+          beLike { 
+            case results => 
+              // all returned results must have the same length of time series
+              val sizes = results.map(_._2).map(_.size).filter(_ > 0)
 
-            (forall(sizes.zip(sizes.tail)) { case (a, b) => a must_== b }) and
-            (results.map(((_: ResultSet[JObject, CountType]).total).second).collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
-        }
+              (forall(sizes.zip(sizes.tail)) { case (a, b) => a must_== b }) and
+              (results.map(((_: ResultSet[JObject, CountType]).total).second).collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
+          }
+        })(FutureTimeouts(5, toDuration(3000).milliseconds))
       }
     }
 
