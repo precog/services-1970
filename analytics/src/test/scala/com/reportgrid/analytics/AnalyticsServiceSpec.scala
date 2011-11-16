@@ -81,7 +81,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", TestToken.tokenId)
 
-  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(40, toDuration(1000L).milliseconds)
+  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(15, toDuration(1000L).milliseconds)
   val shortFutureTimeouts = FutureTimeouts(5, toDuration(100L).milliseconds)
 }
 
@@ -172,9 +172,10 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       //skip("disabled")
       (jsonTestService.get[JValue]("/vfs/test/.tweeted")) must whenDelivered {
          beLike {
-          case HttpResponse(status, _, Some(result), _) => 
+          case HttpResponse(HttpStatus(status, _), _, Some(result), _) => 
             val expected = List(".startup",".retweet",".otherStartups",".~tweet",".location",".twitterClient",".gender",".recipientCount")
-            result.deserialize[List[String]] must haveTheSameElementsAs(expected)
+            (status must_== HttpStatusCodes.OK) and
+            (result.deserialize[List[String]] must haveTheSameElementsAs(expected))
         }
       } 
     }
@@ -323,7 +324,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 }
 
 class RootTrackingServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
-  override val genTimeClock = PastClock(Days.TWO.toStandardDuration)
+  override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
     def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
