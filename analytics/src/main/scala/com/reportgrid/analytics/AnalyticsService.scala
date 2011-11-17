@@ -290,71 +290,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
               } ~ 
               path("/tokens") {
                 commit {
-                  path(/?) {
-                    get { 
-                      (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-                        state.tokenManager.listDescendants(token) map { 
-                          _.map(_.tokenId).serialize.ok
-                        }
-                      }
-                    } ~
-                    post { 
-                      (request: HttpRequest[Future[JValue]]) => (parent: Token) => {
-                        request.content map { 
-                          _.flatMap { content => 
-                            val path        = (content \ "path").deserialize[Option[String]].getOrElse("/")
-                            val permissions = (content \ "permissions").deserialize(Permissions.permissionsExtractor(parent.permissions))
-                            val expires     = (content \ "expires").deserialize[Option[DateTime]].getOrElse(parent.expires)
-                            val limits      = (content \ "limits").deserialize(Limits.limitsExtractor(parent.limits))
-
-                            if (expires < clock.now()) {
-                              Future.sync(HttpResponse[JValue](BadRequest, content = Some("Your are attempting to create an expired token. Such a token will not be usable.")))
-                            } else state.tokenManager.issueNew(parent, path, permissions, expires, limits) map {
-                              case Success(newToken) => HttpResponse[JValue](content = Some(newToken.tokenId.serialize))
-                              case Failure(message) => throw new HttpException(BadRequest, message)
-                            }
-                          }
-                        } getOrElse {
-                          Future.sync(HttpResponse[JValue](BadRequest, content = Some("New token must be contained in POST content")))
-                        }
-                      }
-                    }
-                  } ~
-                  path("/") {
-                    path('descendantTokenId) {
-                      get { 
-                        (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-                          if (token.tokenId == request.parameters('descendantTokenId)) {
-                            token.parentTokenId.map { parTokenId =>
-                              state.tokenManager.lookup(parTokenId).map { parent => 
-                                val sanitized = parent.flatMap(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
-                                HttpResponse[JValue](content = sanitized.map(_.serialize))
-                              }
-                            } getOrElse {
-                              Future.sync(HttpResponse[JValue](Forbidden))
-                            }
-                          } else {
-                            state.tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
-                              _.flatMap(_.relativeTo(token).map(_.copy(accountTokenId = "").serialize))
-                            } map { descendantToken =>
-                              HttpResponse[JValue](content = descendantToken)
-                            }
-                          }
-                        }
-                      } ~
-                      delete { 
-                        (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-                          state.tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
-                            HttpResponse[JValue](content = None)
-                          } ifCanceled { error => 
-                            error.foreach(logger.warning("An error occurred deleting the token: " + request.parameters('descendantTokenId), _))
-                          } orElse {
-                            HttpResponse[JValue](HttpStatus(BadRequest, "No token with id " + request.parameters('descendantTokenId) + " could be found."), content = None)
-                          } 
-                        }
-                      }
-                    }
-                  }
+                  TokenService(state.tokenManager, clock, logger)
                 }
               }
             }

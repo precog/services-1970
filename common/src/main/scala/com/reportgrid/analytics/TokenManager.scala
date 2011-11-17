@@ -40,6 +40,22 @@ object TokenManager {
 
 trait TokenStorage {
   def lookup(tokenId: String): Future[Option[Token]]
+  def listChildren(parent: Token): Future[List[Token]]
+  def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Validation[String, Token]]
+  def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]]
+
+  /** List all descendants of the specified token.  */
+  def listDescendants(parent: Token): Future[List[Token]] = {
+    listChildren(parent) flatMap { 
+      _.map(child => listDescendants(child) map { child :: _ }).sequence.map(_.flatten)
+    }
+  }
+
+  /** Get details about a specified child token.
+   */
+  def getDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
+    listDescendants(parent).map(_.find(_.tokenId == descendantTokenId))
+  }
 }
 
 
@@ -78,20 +94,6 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
     }
   }
 
-  /** List all descendants of the specified token.
-   */
-  def listDescendants(parent: Token): Future[List[Token]] = {
-    listChildren(parent).flatMap { children =>
-      Future[List[Token]](children.map { child =>
-        for {
-          descendantsOfChild <- listDescendants(child)
-        } yield child :: descendantsOfChild
-      }: _*).map { (nested: List[List[Token]]) =>
-        nested.flatten
-      }
-    }
-  }
-
   /** Issue a new token from the specified token.
    */
   def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Validation[String, Token]] = {
@@ -109,12 +111,6 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
     } else {
       Future.sync(("Token " + parent + " does not allow creation of child tokens.").fail)
     }
-  }
-
-  /** Get details about a specified child token.
-   */
-  def getDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
-    listDescendants(parent).map(_.find(_.tokenId == descendantTokenId))
   }
 
   /** Delete a specified child token.

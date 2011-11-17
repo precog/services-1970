@@ -43,7 +43,7 @@ case class Token(tokenId: String, parentTokenId: Option[String], accountTokenId:
     limits         = limits.limitTo(this.limits)
   )
 
-  def relativeTo(owner: Token) = (this.path - owner.path).map(p => copy(path = p))
+  def relativeTo(owner: Token) = copy(path = (this.path - owner.path).getOrElse(this.path))
 
   def absoluteFrom(owner: Token) = copy(path = owner.path / this.path)
 }
