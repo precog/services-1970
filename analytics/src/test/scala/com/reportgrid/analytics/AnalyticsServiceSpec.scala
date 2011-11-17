@@ -92,10 +92,7 @@ class BaseAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent 
 
   object sampleData extends Outside[List[Event]] with Scope {
     val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
-      _.foreach(event => {
-        jsonTestService.post[JValue]("/vfs/t")(event.message)
-        jsonTestService.post[JValue]("/vfs/test")(event.message)
-      })
+      _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
     }
   }
 
@@ -321,19 +318,6 @@ class BaseAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent 
         }
       })//.pendingUntilFixed
     }
-
-    "works with single character path element" in sampleData { sampleEvents =>
-      lazy val tweetedCount = sampleEvents.count {
-        case Event("tweeted", _, _) => true
-        case _ => false
-      }
-
-      jsonTestService.get[JValue]("/vfs/t/.tweeted/count?location=usa") must whenDelivered {
-        beLike {
-          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
-        }
-      } 
-    }
   }
 }
 
@@ -370,6 +354,47 @@ class RootTrackingAnalyticsServiceSpec extends TestAnalyticsService with Arbitra
 
     "retrieve property children at the root" in {
       jsonTestService.get[JValue]("/vfs/.tweeted?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(JArray(elements)), _) => (elements collect { case JString(s) => s }) must contain(".twitterClient")
+        }
+      } 
+    }
+  }
+}
+
+class SingleTokenPathAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+  override val genTimeClock = clock 
+
+  object sampleData extends Outside[List[Event]] with Scope {
+    def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+      _.foreach(event => jsonTestService.post[JValue]("/vfs/t")(event.message))
+    }
+  }
+
+  "When writing to the a single token path" should {
+    "count events by get" in sampleData { sampleEvents =>
+      lazy val tweetedCount = sampleEvents.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      jsonTestService.get[JValue]("/vfs/t/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+        }
+      } 
+    }
+
+    "retrieve path children" in {
+      jsonTestService.get[JValue]("/vfs/t?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(JArray(elements)), _) => (elements collect { case JString(s) => s }) must contain(".tweeted")
+        }
+      } 
+    }
+
+    "retrieve property children" in {
+      jsonTestService.get[JValue]("/vfs/t/.tweeted?location=usa") must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(JArray(elements)), _) => (elements collect { case JString(s) => s }) must contain(".twitterClient")
         }
