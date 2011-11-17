@@ -2,6 +2,7 @@ package com.reportgrid
 package analytics
 package service
 
+import blueeyes._
 import blueeyes.concurrent.Future
 import blueeyes.core.service._
 import blueeyes.core.http._
@@ -81,6 +82,15 @@ object TokenService extends HttpRequestHandlerCombinators {
             } orElse {
               HttpResponse[JValue](HttpStatus(BadRequest, "No token with id " + request.parameters('descendantTokenId) + " could be found."), content = None)
             } 
+          }
+        } ~ 
+        path("/children") {
+          get { 
+            (request: HttpRequest[Future[JValue]]) => (token: Token) => {
+              tokenManager.lookup(request.parameters('descendantTokenId))
+              .flatMap(_.map(tokenManager.listChildren).getOrElse(Future.sync(List.empty[Token])))
+              .map(children => HttpResponse[JValue](content = Some(children.map(_.tokenId).serialize)))
+            }
           }
         }
       }
