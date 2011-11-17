@@ -268,7 +268,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         JField("location", "usa") :: Nil
       )
 
-      forallLike(expectedTotals) {
+      forallWhen(expectedTotals) {
         case ((jpath, value), count) if jpath.nodes.last == JPathField("gender") && !jpath.endsInInfiniteValueSpace =>
           val vtext = compact(render(value))
           val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour"
@@ -292,7 +292,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         JField("location", "usa") :: Nil
       )
 
-      forallLike(expectedTotals) {
+      forallWhen(expectedTotals) {
         case ((jpath, value), count) if jpath.nodes.last == JPathField("gender") && !jpath.endsInInfiniteValueSpace =>
           val vtext = compact(render(value))
           val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour?groupBy=day"
