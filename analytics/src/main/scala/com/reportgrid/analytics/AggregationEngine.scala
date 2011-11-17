@@ -646,10 +646,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         jvalue option {
           case JInt(i)    => (dataPath \ "sumsq") inc (count * (i * i))
           case JDouble(i) => (dataPath \ "sumsq") inc (count * (i * i))
-        }, 
-        jvalue option {
-          case JString(s) if !variable.name.endsInInfiniteValueSpace => 
-            (dataPath \ "values" \ MongoEscaper.encode(s)) inc count
         }
       )
       

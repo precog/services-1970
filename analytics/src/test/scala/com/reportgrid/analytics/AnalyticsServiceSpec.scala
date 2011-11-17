@@ -85,7 +85,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   val shortFutureTimeouts = FutureTimeouts(5, toDuration(50L).milliseconds)
 }
 
-class BaseAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
   override val genTimeClock = clock 
 
   println("New test class instance")
