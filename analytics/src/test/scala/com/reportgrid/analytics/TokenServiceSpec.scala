@@ -30,7 +30,6 @@ class TokenServiceSpec extends TestAnalyticsService with FutureMatchers with sca
 
     def lookup(tokenId: String): Future[Option[Token]] = Future.sync(tokenCache.get(tokenId))
     def listChildren(parent: Token): Future[List[Token]] = Future.sync {
-      println("Listing children for " + parent)
       tokenCache flatMap { case (_, v) => v.parentTokenId.exists(_ == parent.tokenId).option(v) } toList 
     }
 
