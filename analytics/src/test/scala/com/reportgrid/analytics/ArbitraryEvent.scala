@@ -76,7 +76,7 @@ trait ArbitraryEvent extends ArbitraryTime {
          NamedLocation("state", statePath),
          NamedLocation("city", cityPath),
          NamedLocation("zip", zipPath))
-  ) | error("can't happen")
+  ) | sys.error("can't happen")
 
   val fullEventGen = for {
     eventName      <- oneOf(EventTypes)

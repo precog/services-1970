@@ -61,7 +61,7 @@ class TimeSeriesSpecs extends Specification with ArbitraryTime with ScalaCheck {
 
           case ((false, Some(periodicity)), period) =>
             //if it is currently decreasing, periodicity granularity must decrease
-            if (period.periodicity > periodicity) error("Time series has the wrong shape.")
+            if (period.periodicity > periodicity) sys.error("Time series has the wrong shape.")
             (false, Some(period.periodicity))
         }
 
