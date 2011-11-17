@@ -357,7 +357,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
         HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
       )
 
-      forallLike(valueCounts(events)) {
+      forallWhen(valueCounts(events)) {
         case ((jpath, value), count) if !jpath.endsInInfiniteValueSpace =>
           val observation = JointObservation(HasValue(Variable(jpath), value))
 
@@ -381,7 +381,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
         HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
-      forallLike(expectedTotals) {
+      forallWhen(expectedTotals) {
         case ((jpath, value), count) if !jpath.endsInInfiniteValueSpace => 
           val observation = JointObservation(HasValue(Variable(jpath), value))
 
@@ -547,7 +547,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
           }
       }
 
-      forallLike(expectedValues) {
+      forallWhen(expectedValues) {
         case ((eventName, jpath, jvalue), infiniteValues) if !jpath.endsInInfiniteValueSpace  => 
           engine.findRelatedInfiniteValues(
             TestToken, "/test", 

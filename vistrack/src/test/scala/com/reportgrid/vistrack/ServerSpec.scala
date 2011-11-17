@@ -14,7 +14,7 @@ import MimeTypes._
 import blueeyes.json.JsonAST._
 import net.lag.configgy.ConfigMap
 
-import org.specs2._
+import org.specs2.mutable._
 
 import BijectionsChunkJson._
 import BijectionsChunkString._

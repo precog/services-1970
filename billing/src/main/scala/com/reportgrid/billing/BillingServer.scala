@@ -39,6 +39,20 @@ object BillingServer extends BlueEyesServer with BillingService with ServerHealt
     new Accounts(config.configMap("accounts"), tokenGenerator, billingService, database, accountsCollection)
   }
 
+  override def naccountsFactory(config: ConfigMap) = {
+    val mongoConfig = config.configMap("mongo")
+    val mongo = mongoFactory(mongoConfig)
+
+    val databaseName = getConfigSetting("Mongo", "database", mongoConfig)
+    val accountsCollection = getConfigSetting("Mongo", "collection", mongoConfig)
+    
+    val database = mongo.database(databaseName)
+    val billingService = braintreeFactory(config.configMap("braintree"))
+    val tokenGenerator = tokenGeneratorFactory(config.configMap("tokenGenerator"))
+        
+    new PrivateAccounts(config.configMap("accounts"), new MongoAccountInformationStore(database, accountsCollection), billingService, tokenGenerator)
+  }
+
   def mongoFactory(config: ConfigMap): Mongo = {
     new RealMongo(config)
   }

@@ -16,7 +16,7 @@ trait AnalyticsServiceCombinators extends HttpRequestHandlerCombinators {
   }
 
   def vfsPath[A, B](next: HttpService[A, (Token, Path) => Future[B]]) = {
-    path("""/vfs/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])+)/?)?)""") { 
+    path("""/vfs/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])*)/?)?)""") { 
       new DelegatingService[A, Token => Future[B], A, (Token, Path) => Future[B]] {
         val delegate = next
         val service = (request: HttpRequest[A]) => {

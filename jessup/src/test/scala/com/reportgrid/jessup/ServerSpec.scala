@@ -8,7 +8,7 @@ import blueeyes.core.service.test.BlueEyesServiceSpecification
 import blueeyes.core.data.{ByteChunk, BijectionsChunkJson}
 import blueeyes.json.JsonAST._
 
-import org.specs._
+import org.specs2.{json => specs2json, _}
 import org.scalacheck._
 
 import scala.collection.mutable
@@ -17,59 +17,50 @@ object ServerSpec extends BlueEyesServiceSpecification with Service with ScalaCh
   import Prop._
   import Arbitrary.arbitrary
   
-  noDetailedDiffs()
+//  noDetailedDiffs()
 
   def buildGeoIPComponent(databasePath: String) = this
   
   "GeoIP Service" should {
-    "retrieve location by ip" in {
+    "retrieve location by ip" ! check { (ip: IPv4, loc: Location) =>
       //skip("There seem to be some JSON encoding issues in BlueEyes that break this test...")
+      val ipStr = ip.toString
       
-      val prop = forAll { (ip: IPv4, loc: Location) =>
-        val ipStr = ip.toString
-        
-        memory += (ipStr -> loc)
-        
-        val result = service.contentType[JValue](application/json).get("/" + ipStr)
-        result.value must eventually(beSomething)
-        
-        memory -= ipStr        // clean up just to avoid unnecessary memory bloat
-        
-        val response = result.value.get
-        response.status mustEqual HttpStatus(OK)
-        response.content must beSomething
-        
-        val jobj = ChunkToJValue(response.content.get)
-        
-        (jobj \ "country-code") mustEqual JString(loc.countryCode)
-        (jobj \ "country-name") mustEqual JString(loc.countryName)
-        (jobj \ "region") mustEqual JString(loc.region)
-        (jobj \ "city") mustEqual JString(loc.city)
-        (jobj \ "postal-code") mustEqual JString(loc.postalCode)
-        
-        (jobj \ "latitude") mustEqual JDouble(loc.latitude)
-        (jobj \ "longitude") mustEqual JDouble(loc.longitude)
-        
-        (jobj \ "dma-code") mustEqual JInt(loc.dmaCode)
-        (jobj \ "area-code") mustEqual JInt(loc.areaCode)
-        (jobj \ "metro-code") mustEqual JInt(loc.metroCode)
-      }
+      memory += (ipStr -> loc)
       
-      prop must pass
+      val result = service.contentType[JValue](application/json).get("/" + ipStr)
+      result.value must eventually(beSome)
+      
+      memory -= ipStr        // clean up just to avoid unnecessary memory bloat
+      
+      val response = result.value.get
+      response.status mustEqual HttpStatus(OK)
+      response.content must beSome
+      
+      val jobj = ChunkToJValue(response.content.get)
+      
+      (jobj \ "country-code") mustEqual JString(loc.countryCode)
+      (jobj \ "country-name") mustEqual JString(loc.countryName)
+      (jobj \ "region") mustEqual JString(loc.region)
+      (jobj \ "city") mustEqual JString(loc.city)
+      (jobj \ "postal-code") mustEqual JString(loc.postalCode)
+      
+      (jobj \ "latitude") mustEqual JDouble(loc.latitude)
+      (jobj \ "longitude") mustEqual JDouble(loc.longitude)
+      
+      (jobj \ "dma-code") mustEqual JInt(loc.dmaCode)
+      (jobj \ "area-code") mustEqual JInt(loc.areaCode)
+      (jobj \ "metro-code") mustEqual JInt(loc.metroCode)
     }
     
-    "fail on non-existent ip" in {
-      val prop = forAll { ip: IPv4 =>
-        val ipStr = ip.toString
+    "fail on non-existent ip" ! check { (ip: IPv4) =>
+      val ipStr = ip.toString
         
-        memory -= ipStr
+      memory -= ipStr
         
-        val result = service.contentType[JValue](application/json).get("/" + ipStr)
-        result.value must eventually(beSomething)
-        result.value.get.content must beNone
-      }
-      
-      prop must pass
+      val result = service.contentType[JValue](application/json).get("/" + ipStr)
+      result.value must eventually(beSome)
+      result.value.get.content must beNone
     }
   }
   

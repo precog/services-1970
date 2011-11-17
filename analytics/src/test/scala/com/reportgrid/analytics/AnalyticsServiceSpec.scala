@@ -90,7 +90,10 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
   object sampleData extends Outside[List[Event]] with Scope {
     val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
-      _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
+      _.foreach(event => {
+        jsonTestService.post[JValue]("/vfs/t")(event.message)
+        jsonTestService.post[JValue]("/vfs/test")(event.message)
+      })
     }
   }
 
@@ -265,7 +268,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         JField("location", "usa") :: Nil
       )
 
-      forallLike(expectedTotals) {
+      forallWhen(expectedTotals) {
         case ((jpath, value), count) if jpath.nodes.last == JPathField("gender") && !jpath.endsInInfiniteValueSpace =>
           val vtext = compact(render(value))
           val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour"
@@ -289,7 +292,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         JField("location", "usa") :: Nil
       )
 
-      forallLike(expectedTotals) {
+      forallWhen(expectedTotals) {
         case ((jpath, value), count) if jpath.nodes.last == JPathField("gender") && !jpath.endsInInfiniteValueSpace =>
           val vtext = compact(render(value))
           val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour?groupBy=day"
@@ -326,6 +329,20 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
           }
         }
       }
+    }
+
+    "works with single character path element" in sampleData { sampleEvents =>
+      //skip("disabled")
+      lazy val tweetedCount = sampleEvents.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      jsonTestService.get[JValue]("/vfs/t/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+        }
+      } 
     }
   }
 }
