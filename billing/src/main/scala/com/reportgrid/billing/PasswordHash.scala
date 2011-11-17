@@ -23,10 +23,14 @@ object PasswordHash {
 
   def checkSaltedHash(password: String, saltedHash: String): Boolean = {
     val saltLength = saltBytes * 2
-    val salt = saltedHash.substring(0, saltLength)
-    val hash = saltedHash.substring(saltLength)
-    val testHash = hashWithSalt(salt, password)
-    hash == testHash
+    if(saltLength > saltedHash.length) {
+      false 
+    } else {
+      val salt = saltedHash.substring(0, saltLength)
+      val hash = saltedHash.substring(saltLength)
+      val testHash = hashWithSalt(salt, password)
+      hash == testHash
+    }
   }
 
   private def hashWithSalt(salt: String, password: String): String = {

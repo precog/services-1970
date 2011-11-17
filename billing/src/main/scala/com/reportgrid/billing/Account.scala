@@ -58,6 +58,10 @@ trait Account {
   def hasSubscription: Boolean = service.subscriptionId.isDefined
   def hasBillingInfo: Boolean = billing.isDefined
 
+  def asAccountInformation = {
+    AccountInformation(id, contact, service)
+  }
+  
   def asTrackingAccount: TrackingAccount = {
     TrackingAccount(id, contact, service)
   }
@@ -67,9 +71,42 @@ trait Account {
   }
 }
 
+case class AccountTokens(
+    master: String,
+    tracking: String,
+    production: String,
+    development: Option[String]) 
+    
+trait AccountTokensSerialization {
+
+  val UnsafeAccountTokensDecomposer: Decomposer[AccountTokens] = new Decomposer[AccountTokens] {
+  override def decompose(tokens: AccountTokens): JValue = JObject(
+      List(
+        JField("master", tokens.master.serialize),
+        JField("tracking", tokens.tracking.serialize),
+        JField("production", tokens.production.serialize),
+        JField("development", tokens.development.serialize)).filter(fieldHasValue))
+  }
+
+  implicit val SafeAccountTokensDecomposer: Decomposer[AccountTokens] = new Decomposer[AccountTokens] {
+    override def decompose(tokens: AccountTokens): JValue = JObject(
+      List(
+        JField("production", tokens.production.serialize),
+        JField("development", tokens.development.serialize)).filter(fieldHasValue))
+  }
+
+  implicit val AccountTokensExtractor: Extractor[AccountTokens] = new Extractor[AccountTokens] with ValidatedExtraction[AccountTokens] {
+    override def validated(obj: JValue): Validation[Error, AccountTokens] = (
+      (obj \ "production").validated[String] |@|
+      (obj \ "development").validated[Option[String]]).apply(AccountTokens((obj \ "master").validated[String] | "", (obj \ "tracking").validated[String] | "", _, _))
+  }
+}
+
+object AccountTokens extends AccountTokensSerialization
+
 case class AccountId(
-  token: String,
   email: String,
+  tokens: AccountTokens,
   passwordHash: String)
 
 trait AccountIdSerialization {
@@ -77,22 +114,22 @@ trait AccountIdSerialization {
   val UnsafeAccountIdDecomposer: Decomposer[AccountId] = new Decomposer[AccountId] {
     override def decompose(id: AccountId): JValue = JObject(
       List(
-        JField("token", id.token.serialize),
         JField("email", id.email.serialize),
+        JField("tokens", id.tokens.serialize(AccountTokens.UnsafeAccountTokensDecomposer)),
         JField("passwordHash", id.passwordHash.serialize)).filter(fieldHasValue))
   }
 
   implicit val SafeAccountIdDecomposer: Decomposer[AccountId] = new Decomposer[AccountId] {
     override def decompose(id: AccountId): JValue = JObject(
       List(
-        JField("token", id.token.serialize),
-        JField("email", id.email.serialize)).filter(fieldHasValue))
+        JField("email", id.email.serialize),
+        JField("tokens", id.tokens.serialize)).filter(fieldHasValue))
   }
 
   implicit val AccountIdExtractor: Extractor[AccountId] = new Extractor[AccountId] with ValidatedExtraction[AccountId] {
     override def validated(obj: JValue): Validation[Error, AccountId] = (
-      (obj \ "token").validated[String] |@|
-      (obj \ "email").validated[String]).apply(AccountId(_, _, (obj \ "passwordHash").validated[String] | ""))
+      (obj \ "email").validated[String] |@|
+      (obj \ "tokens").validated[AccountTokens]).apply(AccountId(_, _, (obj \ "passwordHash").validated[String] | ""))
   }
 
 }
@@ -255,11 +292,83 @@ trait AccountSerialization {
 
 object Account extends AccountSerialization
 
+case class AccountInformationUpdate(
+    authentication: AccountAuthentication,
+    newEmail: Option[String],
+    newPassword: Option[Password],
+    newPlanId: Option[String],
+    newContact: Option[ContactInformation]
+)
+
+trait AccountInformationUpdateSerialization {
+  implicit val AccountInformationUpdateExtractor: Extractor[AccountInformationUpdate] = new Extractor[AccountInformationUpdate] with ValidatedExtraction[AccountInformationUpdate] {
+    override def validated(obj: JValue): Validation[Error, AccountInformationUpdate] = (
+      (obj \ "authentication").validated[AccountAuthentication] |@|
+      (obj \ "newEmail").validated[Option[String]] |@|
+      (obj \ "newPassword").validated[Option[Password]] |@|
+      (obj \ "newPlanId").validated[Option[String]] |@|
+      (obj \ "newContact").validated[Option[ContactInformation]]).apply(AccountInformationUpdate(_, _, _, _, _))
+  
+  }    
+}
+
+object AccountInformationUpdate extends AccountInformationUpdateSerialization
+
+case class AccountInformation(
+  id: AccountId,
+  contact: ContactInformation,
+  service: ServiceInformation
+)
+
+trait AccountInformationSerialization {
+
+  val UnsafeAccountInfoDecomposer: Decomposer[AccountInformation] = new Decomposer[AccountInformation] {
+    override def decompose(account: AccountInformation): JValue = JObject(
+      List(
+        JField("id", account.id.serialize(AccountId.UnsafeAccountIdDecomposer)),
+        JField("contact", account.contact.serialize),
+        JField("service", account.service.serialize)))
+  }
+
+  implicit val AccountInfoDecomposer: Decomposer[AccountInformation] = new Decomposer[AccountInformation] {
+    override def decompose(account: AccountInformation): JValue = JObject(
+      List(
+        JField("id", account.id.serialize),
+        JField("contact", account.contact.serialize),
+        JField("service", account.service.serialize)))
+  }
+
+  implicit val AccountInfoExtractor: Extractor[AccountInformation] = new Extractor[AccountInformation] with ValidatedExtraction[AccountInformation] {
+    override def validated(obj: JValue): Validation[Error, AccountInformation] = (
+      (obj \ "id").validated[AccountId] |@|
+      (obj \ "contact").validated[ContactInformation] |@|
+      (obj \ "service").validated[ServiceInformation]).apply(AccountInformation(_, _, _))
+  }  
+}
+
+object AccountInformation extends AccountInformationSerialization
+
+case class BillingInformationUpdate(
+  authentication: AccountAuthentication,
+  newBilling: BillingInformation
+)
+
+trait BillingInformationUpdateSerialization {
+  implicit val BillingInformationUpdateExtractor: Extractor[BillingInformationUpdate] = new Extractor[BillingInformationUpdate] with ValidatedExtraction[BillingInformationUpdate] {
+    override def validated(obj: JValue): Validation[Error, BillingInformationUpdate] = (
+      (obj \ "authentication").validated[AccountAuthentication] |@|
+      (obj \ "newContact").validated[BillingInformation]).apply(BillingInformationUpdate(_, _))
+  }      
+}
+
+object BillingInformaitonUpdate extends BillingInformationUpdateSerialization
+
 case class BillingInformation(
   cardholder: String,
   number: String,
   expMonth: Int,
   expYear: Int,
+  billingPostalCode: String,
   cvv: String) {
 
   def expDate = expMonth + "/" + expYear
@@ -273,25 +382,38 @@ case class BillingInformation(
   }
 }
 
-trait BillingInfoSerialization {
+trait BillingInformationSerialization {
 
-  implicit val BillingInfoDecomposer: Decomposer[BillingInformation] = new Decomposer[BillingInformation] {
+  val UnsafeBillingInfoDecomposer: Decomposer[BillingInformation] = new Decomposer[BillingInformation] {
+    override def decompose(billing: BillingInformation): JValue = JObject(
+      List(
+        JField("cardholder", billing.cardholder.serialize),
+        JField("number", billing.number.serialize),
+        JField("expMonth", billing.expMonth.serialize),
+        JField("expYear", billing.expYear.serialize),
+        JField("cvv", billing.cvv.serialize),
+        JField("billingPostalCode", billing.billingPostalCode.serialize)))
+  }
+  
+  implicit val BillingInformationDecomposer: Decomposer[BillingInformation] = new Decomposer[BillingInformation] {
     override def decompose(billing: BillingInformation): JValue = JObject(
       List(
         JField("cardholder", billing.cardholder.serialize),
         JField("number", billing.safeNumber.serialize),
         JField("expMonth", billing.expMonth.serialize),
-        JField("expYear", billing.expYear.serialize)))
+        JField("expYear", billing.expYear.serialize),
+        JField("billingPostalCode", billing.billingPostalCode.serialize)).filter(fieldHasValue))
   }
 
-  implicit val BillingInfoExtractor: Extractor[BillingInformation] = new Extractor[BillingInformation] with ValidatedExtraction[BillingInformation] {
+  implicit val BillingInformationExtractor: Extractor[BillingInformation] = new Extractor[BillingInformation] with ValidatedExtraction[BillingInformation] {
     override def validated(obj: JValue): Validation[Error, BillingInformation] = (
       (obj \ "cardholder").validated[String] |@|
       (obj \ "number").validated[String] |@|
       (obj \ "expMonth").validated[Int] |@|
-      (obj \ "expYear").validated[Int]).apply(
-        BillingInformation(_, _, _, _, (obj \ "cvv").validated[String] | ""))
+      (obj \ "expYear").validated[Int] |@|
+      (obj \ "billingPostalCode").validated[String]).apply(
+        BillingInformation(_, _, _, _, _, (obj \ "cvv").validated[String] | ""))
   }
 }
 
-object BillingInformation extends BillingInfoSerialization
+object BillingInformation extends BillingInformationSerialization

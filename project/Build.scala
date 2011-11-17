@@ -51,15 +51,14 @@ object ServicesBuild extends Build {
     val analytics = Project("analytics", file("analytics"), settings = sbtassembly.Plugin.assemblySettings ++ analyticsSettings) dependsOn(common) dependsOnAlt(client(base))
 
     val billingSettings = serviceSettings ++ sbtassembly.Plugin.assemblySettings ++ Seq(
-      version      := "1.0.2",
+      version      := "1.1.0",
       libraryDependencies ++= Seq(
         "commons-codec"           % "commons-codec"       % "1.5",
         "commons-httpclient"      % "commons-httpclient"  % "3.1",
         "joda-time"               % "joda-time"           % "1.6.2",
-        "net.liftweb"             %% "lift-mapper"        % "2.4-M4",
-        "org.mockito"             % "mockito-all"         % "1.9.0-rc1" % "test", 
-        "org.specs2"              %% "specs2"              % "1.6.1"     % "test",
-        "org.scala-tools.testing" %% "scalacheck"         % "1.9"       % "test"
+        "org.scalaz"              %% "scalaz-core"        % "6.0.2",
+        "org.specs2"              %% "specs2"             % "1.7-SNAPSHOT"  % "test",
+        "org.scala-tools.testing" %% "scalacheck"         % "1.9"           % "test"
       ),
       mainClass := Some("com.reportgrid.billing.BillingServer")
     )

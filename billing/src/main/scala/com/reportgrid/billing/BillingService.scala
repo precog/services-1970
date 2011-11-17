@@ -25,40 +25,77 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString w
 
   implicit def httpClient: HttpClient[ByteChunk]
 
+  def naccountsFactory(config: ConfigMap): PublicAccounts
   def accountsFactory(config: ConfigMap): Accounts
   def mailerFactory(config: ConfigMap): Mailer
 
-  val billing = service("billing", "1.0.2") {
+  val billing = service("billing", "1.1.0") {
     healthMonitor { monitor =>
       serviceLocator { locator =>
         context =>
           startup {
             val config = context.config
 
+            val naccounts = naccountsFactory(config)
             val accounts = accountsFactory(config)
             val mailer = mailerFactory(config)
 
-            val bc = BillingConfiguration(accounts, mailer)
+            val bc = BillingConfiguration(naccounts, accounts, mailer)
             Future.sync(bc)
           } -> request { config =>
             headerParameterRequired("ReportGridDecrypter", "Service may only be accessed via SSL.") {
               jsonp {
                 path("/accounts/") {
-                  post {
-                    new CreateAccountHandler(config, monitor) 
-                  } ~
-//                  delete { new CloseAccountHandler(config, monitor) } ~
-//                  post { new UpdateAccountHandler(config, monitor) } ~
-                  path("get") {
-                    post { 
-                      new GetAccountHandler(config, monitor) 
+                  post { new CreateAccountHandler(config, monitor) } ~
+                  path("close") {
+                    post {
+                      new CloseAccountHandler(config, monitor)
                     }
                   } ~
-//                  path("usage") {
-//                      put { new AccountUsageHandler(config, monitor) }
-//                  } ~
-//                  path("audit") {
-//                      post { new AccountAuditHandler(config, monitor) }              
+                  path("get") {
+                    post { 
+                      new LegacyGetAccountHandler(config, monitor) 
+                    }
+                  } ~
+                  path("billing/") {
+                    put {
+                      new UpdateBillingHandler(config, monitor)
+                    } ~
+                    path("get") {
+                      post {
+                        new GetBillingHandler(config, monitor)
+                      }
+                    } ~
+                    path("delete") {
+                      post {
+                        new RemoveBillingHandler(config, monitor)
+                      }
+                    }
+                  } ~
+                  path("info/") {
+                    put {
+                      new UpdateAccountHandler(config, monitor)
+                    } ~
+                    path("get") {
+                      post {
+                        new GetAccountHandler(config, monitor)
+                      }
+                    } 
+                  } ~
+//                  path("password") {
+//                    put {
+//                      new UpdateAccountHandler(config, monitor)
+//                    }
+//                  } ~ 
+//                  path("email") {
+//                    put {
+//                      new UpdateAccountHandler(config, monitor)
+//                    }
+//                  } ~ 
+//                  path("plan") {
+//                    put {
+//                      new UpdateAccountHandler(config, monitor)
+//                    }
 //                  } ~
                   path("assess") {
                     post { 
