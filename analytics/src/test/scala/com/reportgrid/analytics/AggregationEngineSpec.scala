@@ -55,51 +55,51 @@ trait LocalMongo {
 
     variable_series {
       collection = "variable_series"
-      time_to_idle_millis = 250
-      time_to_live_millis = 500
+      time_to_idle_millis = 100
+      time_to_live_millis = 100
 
-      initial_capacity = 1000
-      maximum_capacity = 10000
+      initial_capacity = 100
+      maximum_capacity = 100
     }
 
     variable_value_series {
       collection = "variable_value_series"
 
-      time_to_idle_millis = 250
-      time_to_live_millis = 500
+      time_to_idle_millis = 100
+      time_to_live_millis = 100
 
-      initial_capacity = 1000
-      maximum_capacity = 100000
+      initial_capacity = 100
+      maximum_capacity = 100
     }
 
     variable_values {
       collection = "variable_values"
 
-      time_to_idle_millis = 250
-      time_to_live_millis = 500
+      time_to_idle_millis = 100
+      time_to_live_millis = 100
 
-      initial_capacity = 1000
-      maximum_capacity = 10000
+      initial_capacity = 100
+      maximum_capacity = 100
     }
 
     variable_children {
       collection = "variable_children"
 
-      time_to_idle_millis = 250
-      time_to_live_millis = 500
+      time_to_idle_millis = 100
+      time_to_live_millis = 100
 
-      initial_capacity = 1000
-      maximum_capacity = 10000
+      initial_capacity = 100
+      maximum_capacity = 100
     }
 
     path_children {
       collection = "path_children"
 
-      time_to_idle_millis = 250
-      time_to_live_millis = 500
+      time_to_idle_millis = 100
+      time_to_live_millis = 100
 
-      initial_capacity = 1000
-      maximum_capacity = 10000
+      initial_capacity = 100
+      maximum_capacity = 100
     }
 
     log {

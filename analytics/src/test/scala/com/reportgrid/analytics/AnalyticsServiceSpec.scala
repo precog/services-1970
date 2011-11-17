@@ -72,8 +72,8 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   override val clock = Clock.System
   override val configuration = "services{analytics{v1{" + requestLoggingData + mongoConfigFileData + "}}}"
 
-  //override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
-  override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
+  override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
+  //override def mongoFactory(config: ConfigMap): Mongo = new MockMongo()
 
   def auditClient(config: ConfigMap) = external.NoopTrackingClient
   def jessup(configMap: ConfigMap) = external.Jessup.Noop
@@ -81,12 +81,14 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", TestToken.tokenId)
 
-  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(15, toDuration(1000L).milliseconds)
-  val shortFutureTimeouts = FutureTimeouts(5, toDuration(100L).milliseconds)
+  override implicit val defaultFutureTimeouts: FutureTimeouts = FutureTimeouts(20, toDuration(1000L).milliseconds)
+  val shortFutureTimeouts = FutureTimeouts(5, toDuration(50L).milliseconds)
 }
 
-class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+class BaseAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
   override val genTimeClock = clock 
+
+  println("New test class instance")
 
   object sampleData extends Outside[List[Event]] with Scope {
     val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
@@ -103,8 +105,6 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         jsonTestService.post[JValue]("/tokens")(newToken.serialize) must whenDelivered {
           beLike {
             case HttpResponse(HttpStatus(status, _), _, Some(JString(tokenId)), _) => 
-              val overrideFutureTimeouts = FutureTimeouts(5, toDuration(50).milliseconds)
-
               (status must_== HttpStatusCodes.OK) and 
               (tokenId.length must_== TestToken.tokenId.length) and
               (jsonTestService.get[JValue]("/tokens") must whenDelivered[HttpResponse[JValue]]({
@@ -121,9 +121,9 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
                               (token.tokenId must_== tokenId)
                           }
                       }
-                    })(overrideFutureTimeouts))
+                    })(shortFutureTimeouts))
                 }
-              })(overrideFutureTimeouts))
+              })(shortFutureTimeouts))
           }
         }
     }
@@ -190,36 +190,30 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
     }
 
-    "count created events" in sampleData { sampleEvents =>
-      //skip("disabled")
-      lazy val tweetedCount = sampleEvents.count {
-        case Event("tweeted", _, _) => true
-        case _ => false
+    "count events by post" in sampleData { sampleEvents =>
+      val queryTerms = JObject(JField("location", "usa") :: Nil)
+
+      val counts = sampleEvents.foldLeft(Map.empty[String, Int]) { case (m, Event(name, _, _)) => m + (name -> (m.getOrElse(name, 0) + 1)) }
+      counts forall {
+        case (name, count) => 
+          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count")(queryTerms)) must whenDelivered {
+            beLike {
+              case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== count
+            }
+          } 
       }
-
-      val queryTerms = JObject(
-        JField("location", "usa") :: Nil
-      )
-
-      (jsonTestService.post[JValue]("/vfs/test/.tweeted/count")(queryTerms)) must whenDelivered {
-        beLike {
-          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
-        }
-      } 
     }
 
     "count events by get" in sampleData { sampleEvents =>
-      //skip("disabled")
-      lazy val tweetedCount = sampleEvents.count {
-        case Event("tweeted", _, _) => true
-        case _ => false
+      val counts = sampleEvents.foldLeft(Map.empty[String, Int]) { case (m, Event(name, _, _)) => m + (name -> (m.getOrElse(name, 0) + 1)) }
+      counts forall {
+        case (name, count) => 
+          jsonTestService.get[JValue]("/vfs/test/."+name+"/count?location=usa") must whenDelivered {
+            beLike {
+              case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== count
+            }
+          } 
       }
-
-      jsonTestService.get[JValue]("/vfs/test/.tweeted/count?location=usa") must whenDelivered {
-        beLike {
-          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
-        }
-      } 
     }
 
     "not roll up by default" in {
@@ -231,7 +225,6 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "return variable series means" in sampleData { sampleEvents =>
-      //skip("disabled")
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
       val expected = expectedMeans(events, "recipientCount", keysf(Hour))
 
@@ -257,7 +250,6 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "return variable value series counts" in sampleData { sampleEvents =>
-      //skip("disabled")
       val granularity = Hour
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events) 
@@ -280,8 +272,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
     }
 
-    "group variable value series counts" in sampleData { sampleEvents =>
-      //skip("disabled")
+    "group variable value series counts" in (sampleData { sampleEvents =>
       val granularity = Hour
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
       val expectedTotals = valueCounts(events) 
@@ -302,10 +293,10 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             }
           }
       }
-    }
+    })//.pendingUntilFixed
 
     "grouping in intersection queries" >> {
-      "timezone shifting must not discard data" in sampleData { sampleEvents =>
+      "timezone shifting must not discard data" in (sampleData { sampleEvents =>
         val granularity = Hour
         val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
@@ -328,11 +319,10 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
               r2.content must be_!=(r1.content)
           }
         }
-      }
+      })//.pendingUntilFixed
     }
 
     "works with single character path element" in sampleData { sampleEvents =>
-      //skip("disabled")
       lazy val tweetedCount = sampleEvents.count {
         case Event("tweeted", _, _) => true
         case _ => false
@@ -347,7 +337,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
   }
 }
 
-class RootTrackingServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+class RootTrackingAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
@@ -408,7 +398,7 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
         beLike {
           case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
         }
-      } 
+      }
     }
   }
 }
