@@ -82,12 +82,20 @@ object TokenService extends HttpRequestHandlerCombinators {
         } ~
         delete { 
           (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-            tokenManager.deleteDescendant(token, request.parameters('descendantTokenId)).map { _ =>
-              HttpResponse[JValue](content = None)
-            } ifCanceled { error => 
-              error.foreach(logger.warning("An error occurred deleting the token: " + request.parameters('descendantTokenId), _))
-            } orElse {
-              HttpResponse[JValue](HttpStatus(BadRequest, "No token with id " + request.parameters('descendantTokenId) + " could be found."), content = None)
+            tokenManager.lookup(request.parameters('descendantTokenId)) flatMap { 
+              _ map { descendant =>
+                tokenManager.deleteDescendant(token, descendant.tokenId) map { _ =>
+                  HttpResponse[JValue](content = None)
+                } ifCanceled { error => 
+                  error.foreach(logger.warning("An error occurred deleting the token: " + request.parameters('descendantTokenId), _))
+                } 
+              } getOrElse {
+                Future.sync {
+                  HttpResponse[JValue](
+                    HttpStatus(BadRequest, "No token with id " + request.parameters('descendantTokenId) + " could be found."), 
+                    content = None)
+                }
+              } 
             } 
           }
         } 
