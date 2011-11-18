@@ -42,7 +42,7 @@ class VistrackServiceSpec extends BlueEyesServiceSpecification with Vistrack wit
 
       def listChildren(parent: Token): Future[List[Token]] = sys.error("Unsupported operation")
       def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Validation[String, Token]] = sys.error("Unsupported operation")
-      def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = sys.error("Unsupported operation")
+      def deleteToken(token: Token): Future[Token] = sys.error("Unsupported operation")
     }
   }
 
