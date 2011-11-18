@@ -37,6 +37,8 @@ trait ArbitraryEvent extends ArbitraryTime {
 
       case Tag(name, Hierarchy(locations)) => 
         JField(Tag.tname(name), JObject(locations.collect { case Hierarchy.NamedLocation(name, path) => JField(name, path.path.serialize) }))
+
+      case Tag(name, NameSet(values)) => sys.error("NameSet tags not yet tested.")
     }
     
     lazy val messageData = JObject(data.fields ::: tagFields)

@@ -4,7 +4,7 @@ import com.braintreegateway._
 
 import blueeyes.concurrent.Future
 
-import scalaz._
+import scalaz.{Validation, Success, Failure, Semigroup}
 import scala.collection.JavaConverters._
 
 import com.reportgrid.billing.BillingInformationStore
@@ -204,8 +204,8 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) exte
     })
   }
 
-  def stopSubscriptionByToken(token: String): FV[String, String] = error("billing.stopSubscriptionByToken Not yet implemented.")
-  def stopSubscriptionBySubscriptionId(subscriptionId: String): FV[String, String] = error("billing.stopSubscriptionById Not yet implemented.")
+  def stopSubscriptionByToken(token: String): FV[String, String] = sys.error("billing.stopSubscriptionByToken Not yet implemented.")
+  def stopSubscriptionBySubscriptionId(subscriptionId: String): FV[String, String] = sys.error("billing.stopSubscriptionById Not yet implemented.")
   
   // Customer management
   

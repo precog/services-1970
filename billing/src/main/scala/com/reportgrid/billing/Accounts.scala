@@ -2,7 +2,7 @@ package com.reportgrid.billing
 
 import scala.collection.JavaConverters._
 
-import scalaz._
+import scalaz.{Validation, Success, Failure, Semigroup}
 import scalaz.Scalaz._
 
 import org.joda.time.DateTime
@@ -522,8 +522,8 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
     internalUpdate(updatedAccountInfo)
   }
 
-  def removeByEmail(email: String): FV[String, AccountInformation] = error("accountStore.removeByEmail Not yet implemented.")
-  def removeByToken(token: String): FV[String, AccountInformation] = error("accountStore.removeByToken Not yet implemented.")
+  def removeByEmail(email: String): FV[String, AccountInformation] = sys.error("accountStore.removeByEmail Not yet implemented.")
+  def removeByToken(token: String): FV[String, AccountInformation] = sys.error("accountStore.removeByToken Not yet implemented.")
      
 }
 

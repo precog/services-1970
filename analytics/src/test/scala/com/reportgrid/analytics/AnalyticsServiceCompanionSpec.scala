@@ -127,11 +127,6 @@ class AnalyticsServiceCompanionSpec extends Specification {
       (JObject(JField("timestamp", baseDate.plusHours(3).serialize) :: Nil), 20L)
     )
 
-    val original = testResults.map {
-      case (JObject(JField("timestamp", date) :: Nil), count) => 
-        (JObject(JField("timestamp", date.deserialize[Instant].toDateTime(DateTimeZone.UTC).toString) :: Nil), count)
-    }
-
     "not shift if the time zone is UTC" in {
       val shifted = shiftTimeSeries[Long](Periodicity.Hour, Some(DateTimeZone.UTC)).apply(testResults).toList 
       shifted must_== testResults.tail
@@ -152,13 +147,6 @@ class AnalyticsServiceCompanionSpec extends Specification {
         (JObject(JField("datetime", baseDate.plusHours(2).withZone(zone).toString) :: Nil), 25L),
         (JObject(JField("datetime", baseDate.plusHours(3).withZone(zone).toString) :: Nil), 25L)
       )
-
-      //println("original")
-      //println(original.mkString("\n"))
-      //println("shifted")
-      //println(shifted.mkString("\n"))
-      //println("expected")
-      //println(expected.mkString("\n"))
 
       shifted must_== expected
     }

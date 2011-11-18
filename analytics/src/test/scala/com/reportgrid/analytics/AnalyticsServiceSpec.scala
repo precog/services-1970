@@ -153,6 +153,8 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
           } yield {
             tokenIds.contains(JString(tokenId))
           }
+
+        case other => sys.error("Token insert failed: " + other)
       } must whenDelivered {
         beFalse
       }
