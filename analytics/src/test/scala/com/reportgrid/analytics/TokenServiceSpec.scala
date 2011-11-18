@@ -8,6 +8,7 @@ import blueeyes.concurrent.test._
 import blueeyes.json.JsonAST._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
+import blueeyes.util.Clock
 
 import org.joda.time._
 import net.lag.configgy.ConfigMap
@@ -20,9 +21,10 @@ import org.scalacheck.Gen._
 import scalaz.{Success, Validation}
 import scalaz.Scalaz._
 
-class TokenServiceSpec extends TestAnalyticsService with FutureMatchers with scalaz.Trees {
+class TokenServiceSpec extends Specification with FutureMatchers with TestTokens with scalaz.Trees {
   import scalaz.Tree
   
+  val clock = Clock.System
   val tokenCache = new scala.collection.mutable.HashMap[String, Token]
   val tokenManager = new TokenStorage {
     tokenCache.put(Token.Root.tokenId, Token.Root)
@@ -39,8 +41,8 @@ class TokenServiceSpec extends TestAnalyticsService with FutureMatchers with sca
       Future.sync(newToken.success[String])
     }
 
-    def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
-      Future.sync(tokenCache.remove(descendantTokenId))
+    protected def deleteToken(token: Token): Future[Token] = {
+      Future.sync(tokenCache.remove(token.tokenId).getOrElse(token))
     }
   }
 
@@ -85,7 +87,7 @@ class TokenServiceSpec extends TestAnalyticsService with FutureMatchers with sca
     "return token children" in sampleData { sampleTokens =>
       val node = sampleTokens.subForest.head
 
-      tokenService.service(HttpRequest(HttpMethods.GET, URI("/" + node.rootLabel.tokenId + "/children"))) must beLike {
+      tokenService.service(HttpRequest(HttpMethods.GET, URI("/children"))) must beLike {
         case Success(f) => f(node.rootLabel) must whenDelivered {
           beLike {
             case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(content), _) =>

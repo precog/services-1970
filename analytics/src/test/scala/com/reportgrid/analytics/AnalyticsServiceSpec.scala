@@ -45,7 +45,7 @@ case class PastClock(duration: Duration) extends Clock {
   def nanoTime = sys.error("nanotime not available in the past")
 }
 
-trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsService with LocalMongo {
+trait TestTokens {
   val TestToken = Token(
     tokenId        = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
     parentTokenId  = Some(Token.Root.tokenId),
@@ -55,13 +55,9 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
     expires        = Token.Never,
     limits         = Limits(order = 2, depth = 5, limit = 20, tags = 2, rollup = 2)
   )
+}
 
-  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager] = {
-    TokenManager(database, tokensCollection, deletedTokensCollection) deliverTo {
-      tokenManager => tokenManager.tokenCache.put(TestToken.tokenId, TestToken)
-    }
-  }
-
+trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsService with LocalMongo with TestTokens {
   val requestLoggingData = """
     requestLog {
       enabled = true
@@ -70,6 +66,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   """
 
   override val clock = Clock.System
+
   override val configuration = "services{analytics{v1{" + requestLoggingData + mongoConfigFileData + "}}}"
 
   override def mongoFactory(config: ConfigMap): Mongo = new RealMongo(config)
@@ -77,6 +74,12 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
 
   def auditClient(config: ConfigMap) = external.NoopTrackingClient
   def jessup(configMap: ConfigMap) = external.Jessup.Noop
+
+  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager] = {
+    TokenManager(database, tokensCollection, deletedTokensCollection) deliverTo {
+      tokenManager => tokenManager.tokenCache.put(TestToken.tokenId, TestToken)
+    }
+  }
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", TestToken.tokenId)

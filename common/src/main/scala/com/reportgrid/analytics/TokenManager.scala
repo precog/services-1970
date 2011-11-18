@@ -42,8 +42,6 @@ trait TokenStorage {
   def lookup(tokenId: String): Future[Option[Token]]
   def listChildren(parent: Token): Future[List[Token]]
   def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Validation[String, Token]]
-  def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]]
-
   /** List all descendants of the specified token.  */
   def listDescendants(parent: Token): Future[List[Token]] = {
     listChildren(parent) flatMap { 
@@ -56,8 +54,23 @@ trait TokenStorage {
   def getDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
     listDescendants(parent).map(_.find(_.tokenId == descendantTokenId))
   }
-}
 
+  /** Delete a specified child token and all of its descendants.
+   */
+  def deleteDescendant(auth: Token, descendantTokenId: String): Future[List[Token]] = {
+    getDescendant(auth, descendantTokenId).flatMap { parent =>
+      val removals = parent.toList.map { tok => 
+        listDescendants(tok) flatMap { descendants =>
+          (tok :: descendants) map (deleteToken) sequence
+        }
+      }
+    
+      removals.sequence.map(_.flatten)
+    }
+  }
+
+  protected def deleteToken(token: Token): Future[Token]
+}
 
 class TokenManager private (database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection) extends TokenStorage {
   //TODO: Add expiry settings.
@@ -113,15 +126,10 @@ class TokenManager private (database: Database, tokensCollection: MongoCollectio
     }
   }
 
-  /** Delete a specified child token.
-   */
-  def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = {
-    for {
-      Some(descendant) <- getDescendant(parent, descendantTokenId)
-      _ <- database(insert(descendant.serialize.asInstanceOf[JObject]).into(deletedTokensCollection))
-      _ <- database(remove.from(tokensCollection).where("tokenId" === descendantTokenId))
-    } yield {
-      tokenCache.remove(descendantTokenId)
-    } 
-  }
+  protected def deleteToken(token: Token) = for {
+    _ <- database(insert(token.serialize.asInstanceOf[JObject]).into(deletedTokensCollection))
+    _ <- database(remove.from(tokensCollection).where("tokenId" === token.tokenId))
+  } yield {
+    tokenCache.remove(token.tokenId).getOrElse(token)
+  } 
 }

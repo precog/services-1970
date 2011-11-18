@@ -52,6 +52,13 @@ object TokenService extends HttpRequestHandlerCombinators {
       }
     } ~
     path("/") {
+      path("children") {
+        get { 
+          (request: HttpRequest[Future[JValue]]) => (token: Token) => {
+            tokenManager.listChildren(token).map(children => HttpResponse[JValue](content = Some(children.map(_.tokenId).serialize)))
+          }
+        }
+      } ~ 
       path('descendantTokenId) {
         get { 
           (request: HttpRequest[Future[JValue]]) => (token: Token) => {
@@ -83,16 +90,7 @@ object TokenService extends HttpRequestHandlerCombinators {
               HttpResponse[JValue](HttpStatus(BadRequest, "No token with id " + request.parameters('descendantTokenId) + " could be found."), content = None)
             } 
           }
-        } ~ 
-        path("/children") {
-          get { 
-            (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-              tokenManager.lookup(request.parameters('descendantTokenId))
-              .flatMap(_.map(tokenManager.listChildren).getOrElse(Future.sync(List.empty[Token])))
-              .map(children => HttpResponse[JValue](content = Some(children.map(_.tokenId).serialize)))
-            }
-          }
-        }
+        } 
       }
     }
   }
