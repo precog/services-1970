@@ -68,7 +68,7 @@ object ServicesBuild extends Build {
       version      := "1.0.1-SNAPSHOT",
       libraryDependencies ++= Seq(
         "org.dspace.dependencies" % "dspace-geoip" % "1.2.3",
-        "org.specs2"              %% "specs2"      % "1.6.1"  % "test",
+        "org.specs2"              %% "specs2"      % "1.7-SNAPSHOT"  % "test",
         "org.scala-tools.testing" %% "scalacheck"  % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.jessup.Server")
@@ -80,7 +80,7 @@ object ServicesBuild extends Build {
       version      := "1.0.0-SNAPSHOT",
       libraryDependencies ++= Seq(
         "commons-codec" % "commons-codec"         % "1.5",
-        "org.specs2"              %% "specs2"     % "1.6.1"  % "test",
+        "org.specs2"              %% "specs2"     % "1.7-SNAPSHOT"  % "test",
         "org.scala-tools.testing" %% "scalacheck" % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.vistrack.VistrackServer")
