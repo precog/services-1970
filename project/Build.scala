@@ -11,7 +11,8 @@ object ServicesSettings {
   val serviceSettings = Defaults.defaultSettings ++ Seq (
     organization := buildOrganization,
     scalaVersion := buildScalaVersion,
-    scalacOptions ++= Seq("-deprecation", "-unchecked")
+    scalacOptions ++= Seq("-deprecation", "-unchecked"),
+    resolvers += "Scala-Tools Snapshots" at "http://scala-tools.org/repo-snapshots/"
   )
 }
 
@@ -29,8 +30,7 @@ object ServicesBuild extends Build {
           "joda-time" % "joda-time" % "1.6.2",
           "org.scalaz" %% "scalaz-core" % "6.0.2",
           "org.specs2" %% "specs2"      % "1.7-SNAPSHOT"  % "test"
-        ),
-        resolvers += "Scala-Tools Snapshots" at "http://scala-tools.org/repo-snapshots/"
+        )
       )
 
     val common = Project("common", file("common"), settings = commonSettings) dependsOnAlt(blueeyes(base)) 
@@ -43,7 +43,6 @@ object ServicesBuild extends Build {
         "org.specs2"              %% "specs2"             % "1.7-SNAPSHOT"  % "test",
         "org.scala-tools.testing" %% "scalacheck"         % "1.9"    % "test"
       ),
-      resolvers += "Scala-Tools Snapshots" at "http://scala-tools.org/repo-snapshots/",
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer"), 
       test in assembly := {}
     )

@@ -14,7 +14,9 @@ import MimeTypes._
 import blueeyes.json.JsonAST._
 import net.lag.configgy.ConfigMap
 
+import org.joda.time.DateTime
 import org.specs2.mutable._
+import scalaz.Validation
 
 import BijectionsChunkJson._
 import BijectionsChunkString._
@@ -37,6 +39,10 @@ class VistrackServiceSpec extends BlueEyesServiceSpecification with Vistrack wit
           case _ => Future.sync(None)
         }
       }
+
+      def listChildren(parent: Token): Future[List[Token]] = sys.error("Unsupported operation")
+      def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Validation[String, Token]] = sys.error("Unsupported operation")
+      def deleteDescendant(parent: Token, descendantTokenId: String): Future[Option[Token]] = sys.error("Unsupported operation")
     }
   }
 
