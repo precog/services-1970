@@ -94,7 +94,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
   }
 }
 
-class AggregationEngine private (config: ConfigMap, val logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock, healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) {
+class AggregationEngine private (config: ConfigMap, val logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock, val healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
 
   private def AggregationStage(prefix: String): AggregationStage = {
@@ -159,33 +159,17 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
 
-  def aggregateFromStorage(tokenManager: TokenStorage, obj: JObject) = {
-    tokenManager.lookup(obj \ "token") flatMap { 
-      _.map { token => 
-        val path = (obj \ "path").deserialize[Path]
-        val count = (obj \ "count").deserialize[Int]
-        val timestamp = (obj \ "timestamp").deserialize[Instant]
-        val eventName = (obj \ "event" \ "name").deserialize[String]
-        val eventBody = (obj \ "event" \ "data")
-
-        val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, timestamp, false) ::
-                            Tag.locationTagExtractor(Future.sync(None))      :: Nil
-
-        val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
-        aggregate(token, path, eventName, tagResults, remainder, count) deliverTo {
-          complexity => healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
-        }
-      } getOrElse {
-        Future.sync(("No token found for tokenId: " + (obj \ "token")).wrapNel.fail[Long])
-      }
+  def withTagResults[A](tagResults: Tag.ExtractionResult)(f: Seq[Tag] => Future[A]): Future[ValidationNEL[String, A]] = {
+    tagResults match {
+      case Tag.Tags(tf)       => tf.flatMap(f).map(_.success[NonEmptyList[String]])
+      case Tag.Skipped        => f(Nil).map(_.success[NonEmptyList[String]])
+      case Tag.Errors(errors) => Future.sync(errors.map(_.toString).fail[A])
     }
   }
 
   def aggregate(token: Token, path: Path, eventName: String, tagResults: Tag.ExtractionResult, eventBody: JObject, count: Int): Future[Validation[NonEmptyList[String], Long]] = {
-    tagResults match {
-      case Tag.Tags(tf) => tf.flatMap(aggregate(token, path, eventName, _, eventBody, count).map(_.success[NonEmptyList[String]]))
-      case Tag.Skipped  => aggregate(token, path, eventName, Nil, eventBody, count).map(_.success[NonEmptyList[String]])
-      case Tag.Errors(errors) => Future.sync(errors.map(_.toString).fail[Long])
+    withTagResults(tagResults) { 
+      aggregate(token, path, eventName, _, eventBody, count)
     }
   }
 
@@ -198,7 +182,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     val tags = allTags.take(token.limits.tags)
     val event = JObject(JField(eventName, eventBody) :: Nil)
 
-    val (finiteObs, infiniteObs) = JointObservations.ofValues(event, order, depth, limit)
+    val (finiteObs, infiniteObs) = JointObservations.ofValues(event, 1 /*order*/, depth, limit)
     val finiteOrder1 = finiteObs.filter(_.order == 1)
     val vvSeriesPatches = variableValueSeriesPatches(token, path, Report(tags, finiteObs), count)
     val childObservations = JointObservations.ofChildren(event, 1)
@@ -296,7 +280,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
    *  over the given time period.
    */
   def getObservationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
-    if (observation.order <= token.limits.order) {
+    if (observation.order <= 1 /*token.limits.order*/) {
       internalSearchSeries[CountType](
         tagTerms,
         valueSeriesKey(token, path, _, observation), 
