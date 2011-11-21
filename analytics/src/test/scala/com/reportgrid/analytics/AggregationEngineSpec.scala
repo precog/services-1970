@@ -534,7 +534,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
               (forall(sizes.zip(sizes.tail)) { case (a, b) => a must_== b }) and
               (results.map(((_: ResultSet[JObject, CountType]).total).second).collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
           }
-        })(FutureTimeouts(10, toDuration(3000).milliseconds))
+        })(FutureTimeouts(10, toDuration(6000).milliseconds))
       }
     }
 
