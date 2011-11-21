@@ -81,7 +81,7 @@ object ReaggregationTool {
     println("Beginning processing " + batchSize + " events.")
     import env.engine._
     val ingestBatch: Function0[Future[Int]] = () => {
-      eventsdb(selectAll.from(events_collection).where("reprocess" === true & ("unparseable".doesNotExist)).limit(batchSize)) flatMap { results => 
+      eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
         println("Reaggregating...")
         val reaggregated = results.map { jv => restore(env.engine, env.tokenManager, jv --> classOf[JObject]) }
 

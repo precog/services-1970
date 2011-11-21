@@ -171,7 +171,7 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
   override implicit val defaultFutureTimeouts = FutureTimeouts(15, toDuration(1000).milliseconds)
 
   object sampleData extends Outside[List[Event]] with Scope {
-    val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+    val outside = containerOfN[List, Event](30, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(TestToken, "/test", event.eventName, event.tags, event.data, 1)
         engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 0, false)
@@ -395,7 +395,6 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
     }
 
     "count observations of a given value" in sampleData { sampleEvents =>
-
       //skip("disabled")
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
@@ -403,10 +402,10 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
         HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
-      val expectedCounts = sampleEvents.foldLeft(Map.empty[List[JValue], Int]) {
+      val expectedCounts: Map[List[JValue], CountType] = sampleEvents.foldLeft(Map.empty[List[JValue], CountType]) {
         case (map, Event("tweeted", data, _)) =>
           val values = variables.map(v => data.value(JPath(v.name.nodes.drop(1))))
-          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+          map + (values -> map.get(values).map(_ + 1L).getOrElse(1L))
 
         case (map, _) => map
       }
@@ -414,9 +413,16 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       forall(expectedCounts) {
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
-          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered[CountType] {
-            be_== (count)
+          forall(observation.obs) { hasValue => 
+            engine.getObservationCount(TestToken, "/test", JointObservation(hasValue), queryTerms) must whenDelivered[CountType] {
+              beGreaterThanOrEqualTo(count)
+            }
+          } and {
+            engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered[CountType] {
+              be_== (count)
+            }
           }
+
       }
     }
 
@@ -431,10 +437,10 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
 
       val variables = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Nil
 
-      val expectedCounts = events.foldLeft(Map.empty[List[JValue], Int]) {
+      val expectedCounts: Map[List[JValue], Long] = events.foldLeft(Map.empty[List[JValue], Long]) {
         case (map, Event("tweeted", data, _)) =>
           val values = variables.map(v => data.value(JPath(v.name.nodes.drop(1))))
-          map + (values -> map.get(values).map(_ + 1).getOrElse(1))
+          map + (values -> map.get(values).map(_ + 1L).getOrElse(1L))
 
         case (map, _) => map
       }
@@ -442,7 +448,6 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
       forall(expectedCounts) {
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
-
           engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
       }
     }
