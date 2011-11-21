@@ -9,7 +9,10 @@ import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.persistence.mongo._
 import blueeyes.concurrent.Future
+import blueeyes.concurrent.ScheduledExecutorSingleThreaded
+import blueeyes.util.metrics.Duration._
 
+import java.util.concurrent.CountDownLatch
 import net.lag.configgy.{Config, ConfigMap}
 import net.lag.logging.Logger
 import org.joda.time.Instant
@@ -54,7 +57,10 @@ object ReaggregationTool {
     val batchSize   = argMap.get("--batchSize").map(_.toInt).getOrElse(50)
     val maxRecords  = argMap.get("--maxRecords").map(_.toLong).getOrElse(5000L)
 
-    AggregationEnvironment(new java.io.File(analyticsConfig)).foreach(reprocess(_, pauseLength, batchSize, 0L, maxRecords))
+    for (env <- AggregationEnvironment(new java.io.File(analyticsConfig))) {
+      reprocess(env, pauseLength, batchSize, maxRecords)
+      System.exit(0)
+    }
   }
 
   def parseOptions(opts: List[String], optMap: Map[String, String]): Map[String, String] = opts match {
@@ -69,35 +75,48 @@ object ReaggregationTool {
     case Nil => optMap
   }
 
-  def reprocess(env: AggregationEnvironment, pause: Int, batchSize: Int, totalRecords: Long, maxRecords: Long) {
+  def reprocess(env: AggregationEnvironment, pause: Int, batchSize: Int, maxRecords: Long) {
+    val doneLatch = new CountDownLatch(1) 
+
+    println("Beginning processing " + batchSize + " events.")
     import env.engine._
-    eventsdb(selectAll.from(events_collection).where("reprocess" === true & ("unparseable".doesNotExist)).limit(batchSize)) flatMap { results => 
-      val reaggregated = results.map { jv => restore(env.engine, env.tokenManager, jv --> classOf[JObject]) }
+    val ingestBatch: Function0[Future[Int]] = () => {
+      eventsdb(selectAll.from(events_collection).where("reprocess" === true & ("unparseable".doesNotExist)).limit(batchSize)) flatMap { results => 
+        println("Reaggregating...")
+        val reaggregated = results.map { jv => restore(env.engine, env.tokenManager, jv --> classOf[JObject]) }
 
-      reaggregated.toSeq.sequence deliverTo { results => 
-        val total = results.size + totalRecords
-        val (errors, complexity) = results.foldLeft((List.empty[String], 0L)) {
-          case ((errors, total), Failure(err)) => (errors ++ err.list, total)
-          case ((errors, total), Success(complexity)) => (errors, total + complexity)
+        reaggregated.toSeq.sequence map { results => 
+          val (errors, complexity) = results.foldLeft((List.empty[String], 0L)) {
+            case ((errors, total), Failure(err)) => (errors ++ err.list, total)
+            case ((errors, total), Success(complexity)) => (errors, total + complexity)
+          }
+
+          println("Processed " + results.size + " events with a total complexity of " + complexity)
+          errors.foreach(println)
+
+          results.size
+        } ifCanceled {
+          errors => 
+            errors.foreach(ex => ex.printStackTrace) 
+            println("Errors caused event reprocessing to be terminated.")
+            akka.actor.Actor.registry.shutdownAll()
         }
-
-        println("Processed " + results.size + " events with a total complexity of " + complexity)
-        errors.foreach(println)
-
-        if (total < maxRecords) {
-          Thread.sleep(pause * 1000)
-          reprocess(env, pause, batchSize, total, maxRecords)
-        } else {
-          println("Reprocessing reached its max limit for the number of events to reprocess; shutting down after " + total + " events.")
-          akka.actor.Actor.registry.shutdownAll()
-        }
-      } ifCanceled {
-        errors => 
-          errors.foreach(ex => ex.printStackTrace) 
-          println("Errors caused event reprocessing to be terminated after " + totalRecords + " of " + maxRecords + " events.")
-          akka.actor.Actor.registry.shutdownAll()
       }
     }
+
+    val continue = (i: Int) => if (i < maxRecords) true else {
+      doneLatch.countDown()
+      false
+    }
+
+    ScheduledExecutorSingleThreaded.repeatWhile(ingestBatch, pause.seconds, continue)(0) {
+      (_: Int) + (_: Int)
+    }
+
+    doneLatch.await()
+    println("Ready to shut down, going to shutdown all Akka actors.")
+    akka.actor.Actor.registry.shutdownAll()
+    println("Akka registry shutdownAll() called.")
   }
 
   def restore(engine: AggregationEngine, tokenManager: TokenStorage, obj: JObject): Future[ValidationNEL[String, Long]] = {
@@ -129,6 +148,7 @@ object ReaggregationTool {
         } flatMap {
           case (complexity, mongoUpdate) => 
             eventsdb(update(events_collection).set(mongoUpdate).where("_id" === (obj \ "_id"))) map { _ =>
+              print(".")
               healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
               complexity
             }
