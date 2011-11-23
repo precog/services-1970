@@ -109,18 +109,6 @@ trait LocalMongo {
   """.format(eventsName, indexName)
 }
 
-object FutureUtils {
-  def get[A](f: Future[A]): A = {
-    val latch = new java.util.concurrent.CountDownLatch(1)
-
-    f.deliverTo(_ => latch.countDown())
-
-    latch.await()
-
-    f.value.get
-  }
-}
-
 trait AggregationEngineTests extends Specification with FutureMatchers with ArbitraryEvent {
   val TestToken = Token(
     tokenId        = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
@@ -150,12 +138,7 @@ trait AggregationEngineTests extends Specification with FutureMatchers with Arbi
   }
 }
 
-class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
-  import AggregationEngine._
-  import FutureUtils._
-
-  val genTimeClock = Clock.System
-
+trait AggregationEngineFixtures extends LocalMongo {
   val config = (new Config()) ->- (_.load(mongoConfigFileData))
 
   val eventsConfig = config.configMap("eventsdb")
@@ -166,7 +149,14 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
   val indexMongo = new RealMongo(indexConfig)
   val indexdb = indexMongo.database(indexConfig("database"))
 
-  val engine = get(AggregationEngine(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop))
+  val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
+}
+
+
+class AggregationEngineSpec extends AggregationEngineTests with AggregationEngineFixtures {
+  import AggregationEngine._
+
+  val genTimeClock = Clock.System
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(15, toDuration(1000).milliseconds)
 
@@ -591,47 +581,37 @@ class AggregationEngineSpec extends AggregationEngineTests with LocalMongo {
     //  }
     //}
   }
-
 }
 
-/*
-
-class ReaggregationSpec extends AggregationEngineTests with LocalMongo {
+class ReaggregationSpec extends AggregationEngineTests with AggregationEngineFixtures with TestTokenStorage {
   import AggregationEngine._
-  import FutureUtils._
 
-  val config = (new Config()) ->- (_.load(mongoConfigFileData))
-
-  val mongo = new RealMongo(config.configMap("mongo")) 
-
-  val database = mongo.database(dbName)
-
-  val engine = get(AggregationEngine(config, Logger.get, database))
+  val genTimeClock = Clock.System
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
-  object TestTokenStorage extends TokenStorage {
-    def lookup(tokenId: String) = Future.sync(Some(TestToken))
+  object sampleData extends Outside[List[Event]] with Scope {
+    def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+      _ foreach { event => 
+        engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 0, true)
+      }
+    }
   }
 
   "Re-storing aggregated events" should {
-    shareVariables()
-    
-    val sampleEvents: List[Event] = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
-      _.foreach { event => 
-        engine.store(TestToken, "/test", event.eventName, event.messageData, 1, true)
-      }
-    }
+    "retrieve and re-aggregate data" in sampleData { sampleEvents =>
+      eventsdb(selectAll.from("events").where("reprocess" === true)) map { _.size } must whenDelivered {
+        beLike {
+          case outstanding if outstanding == sampleEvents.size =>
+            ReaggregationTool.reprocess(AggregationEnvironment(engine, tokenManager), 0, outstanding, outstanding)
 
-    "retrieve and re-aggregate data" in {
-      database(selectAll.from(MongoCollectionReference("events")).where("reprocess" === true)) foreach {
-        _ foreach {
-          engine.aggregateFromStorage(TestTokenStorage, _)
+            eventsdb(selectAll.from("events").where("reprocess" === true)) map { _.size } must whenDelivered {
+              be_== (0)
+            }
+
+            countStoredEvents(sampleEvents, engine)
         }
       }
-
-      countStoredEvents(sampleEvents, engine)
     }
   }
 }
-*/

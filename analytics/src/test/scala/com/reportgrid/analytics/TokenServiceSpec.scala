@@ -21,31 +21,10 @@ import org.scalacheck.Gen._
 import scalaz.{Success, Validation}
 import scalaz.Scalaz._
 
-class TokenServiceSpec extends Specification with FutureMatchers with TestTokens with scalaz.Trees {
+class TokenServiceSpec extends Specification with FutureMatchers with TestTokenStorage with TestTokens with scalaz.Trees {
   import scalaz.Tree
   
   val clock = Clock.System
-  val tokenCache = new scala.collection.mutable.HashMap[String, Token]
-  val tokenManager = new TokenStorage {
-    tokenCache.put(Token.Root.tokenId, Token.Root)
-    tokenCache.put(TestToken.tokenId, TestToken)
-
-    def lookup(tokenId: String): Future[Option[Token]] = Future.sync(tokenCache.get(tokenId))
-    def listChildren(parent: Token): Future[List[Token]] = Future.sync {
-      tokenCache flatMap { case (_, v) => v.parentTokenId.exists(_ == parent.tokenId).option(v) } toList 
-    }
-
-    def issueNew(parent: Token, path: Path, permissions: Permissions, expires: DateTime, limits: Limits): Future[Validation[String, Token]] = {
-      val newToken = parent.issue(path, permissions, expires, limits)
-      tokenCache.put(newToken.tokenId, newToken)
-      Future.sync(newToken.success[String])
-    }
-
-    protected def deleteToken(token: Token): Future[Token] = {
-      Future.sync(tokenCache.remove(token.tokenId).getOrElse(token))
-    }
-  }
-
   val tokenService = TokenService(tokenManager, clock, Logger.get("test"))
 
   object sampleData extends Outside[Tree[Token]] with Scope {

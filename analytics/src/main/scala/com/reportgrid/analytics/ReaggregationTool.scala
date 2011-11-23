@@ -1,6 +1,7 @@
 package com.reportgrid.analytics
 
 import blueeyes._
+import blueeyes.bkka._
 import blueeyes.health._
 import blueeyes.json._
 import blueeyes.json.JsonAST._
@@ -9,6 +10,7 @@ import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 import blueeyes.persistence.mongo._
 import blueeyes.concurrent.Future
+import blueeyes.concurrent.Future._
 import blueeyes.concurrent.ScheduledExecutorSingleThreaded
 import blueeyes.util.metrics.Duration._
 
@@ -38,12 +40,12 @@ object AggregationEnvironment {
     val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
 
     TokenManager(indexdb, tokensCollection, deletedTokensCollection) map { 
-      AggregationEnvironment(AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop), _)
+      new AggregationEnvironment(AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop), _)
     }
   }
 }
 
-case class AggregationEnvironment(engine: AggregationEngine, tokenManager: TokenManager)
+case class AggregationEnvironment(engine: AggregationEngine, tokenManager: TokenStorage)
 
 object ReaggregationTool {
   def main(argv: Array[String]) {
@@ -59,7 +61,7 @@ object ReaggregationTool {
 
     for (env <- AggregationEnvironment(new java.io.File(analyticsConfig))) {
       reprocess(env, pauseLength, batchSize, maxRecords)
-      System.exit(0)
+      
     }
   }
 
@@ -76,10 +78,16 @@ object ReaggregationTool {
   }
 
   def reprocess(env: AggregationEnvironment, pause: Int, batchSize: Int, maxRecords: Long) {
-    val doneLatch = new CountDownLatch(1) 
-
-    println("Beginning processing " + batchSize + " events.")
     import env.engine._
+
+    implicit val timeout = akka.actor.Actor.Timeout(Long.MaxValue)
+    lazy val stoppable = Stoppable(
+      env.engine,
+      Stoppable(eventsdb) ::
+      Stoppable(indexdb) :: Nil
+    )
+
+    println("Beginning processing " + maxRecords + " events.")
     val ingestBatch: Function0[Future[Int]] = () => {
       eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
         println("Reaggregating...")
@@ -99,62 +107,54 @@ object ReaggregationTool {
           errors => 
             errors.foreach(ex => ex.printStackTrace) 
             println("Errors caused event reprocessing to be terminated.")
-            akka.actor.Actor.registry.shutdownAll()
         }
       }
     }
 
-    val continue = (i: Int) => if (i < maxRecords) true else {
-      doneLatch.countDown()
-      false
+    ScheduledExecutorSingleThreaded.repeatWhile(ingestBatch, pause.seconds, (_: Int) < maxRecords)(0) { (_: Int) + (_: Int) } flatMap {
+      totalEvents => Stoppable.stop(stoppable).map(_ => println("Finished processing " + totalEvents + " events.")).toBlueEyes
     }
-
-    ScheduledExecutorSingleThreaded.repeatWhile(ingestBatch, pause.seconds, continue)(0) {
-      (_: Int) + (_: Int)
-    }
-
-    doneLatch.await()
-    println("Ready to shut down, going to shutdown all Akka actors.")
-    akka.actor.Actor.registry.shutdownAll()
-    println("Akka registry shutdownAll() called.")
   }
 
   def restore(engine: AggregationEngine, tokenManager: TokenStorage, obj: JObject): Future[ValidationNEL[String, Long]] = {
     import engine._
     tokenManager.lookup(obj \ "token") flatMap { 
-      _.map { token => 
-        val path = (obj \ "path").deserialize[Path]
-        val count = (obj \ "count").deserialize[Int]
-        val timestamp = (obj \ "timestamp").deserialize[Instant]
-        val eventName = (obj \ "event" \ "name").deserialize[String]
-        val eventBody = (obj \ "event" \ "data")
+      _ map { token => 
+        ((obj \ "event" \ "data") -->? classOf[JObject]) map { eventBody =>
+          val path = (obj \ "path").deserialize[Path]
+          val count = (obj \ "count").deserialize[Int]
+          val timestamp = (obj \ "timestamp").deserialize[Instant]
+          val eventName = (obj \ "event" \ "name").deserialize[String]
 
-        val tagExtractors = Tag.timeTagExtractor(AggregationEngine.timeSeriesEncoding, timestamp, false) ::
-                            Tag.locationTagExtractor(Future.sync(None))      :: Nil
+          val tagExtractors = Tag.timeTagExtractor(AggregationEngine.timeSeriesEncoding, timestamp, false) ::
+                              Tag.locationTagExtractor(Future.sync(None))      :: Nil
 
-        val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
-        withTagResults(tagResults) { tags =>
-          aggregate(token, path, eventName, tags, remainder, count) map { complexity => (complexity, tags) }
-        } map { 
-          case Success((complexity, tags))  => 
-            (obj \ "tags") match {
-              case JNothing => (complexity.success[NonEmptyList[String]], (JPath("reprocess") set (false)) |+| (JPath("tags") set (tags.serialize)))
-              case _        => (complexity.success[NonEmptyList[String]], (JPath("reprocess") set (false)))
-            }
-
-          case Failure(error) => 
-            (error.fail[Long], (JPath("reprocess") set (false)) |+| (JPath("unparseable") set (true)))
-
-        } flatMap {
-          case (complexity, mongoUpdate) => 
-            eventsdb(update(events_collection).set(mongoUpdate).where("_id" === (obj \ "_id"))) map { _ =>
-              print(".")
-              healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
-              complexity
-            }
-        } 
+          val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
+          withTagResults(tagResults) { tags =>
+            aggregate(token, path, eventName, tags, remainder, count) map { complexity => (complexity, tags) }
+          } 
+        } getOrElse {
+          Future.sync(("Event body was not a jobject: " + (obj \ "data")).wrapNel.fail)
+        }
       } getOrElse {
-        Future.sync(("No token found for tokenId: " + (obj \ "token")).wrapNel.fail[Long])
+        Future.sync(("No token found for tokenId: " + (obj \ "token")).wrapNel.fail)
+      } map {
+        case Success((complexity, tags))  => 
+          (obj \ "tags") match {
+            case JNothing => (complexity.success[NonEmptyList[String]], (JPath("reprocess") set (false)) |+| (JPath("tags") set (tags.serialize)))
+            case _        => (complexity.success[NonEmptyList[String]], (JPath("reprocess") set (false)))
+          }
+
+        case Failure(error) => 
+          (error.fail[Long], (JPath("reprocess") set (false)) |+| (JPath("unparseable") set (true)))
+
+      } flatMap {
+        case (complexity, mongoUpdate) => 
+          eventsdb(update(events_collection).set(mongoUpdate).where("_id" === (obj \ "_id"))) map { _ =>
+            print(".")
+            healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
+            complexity
+          }
       }
     }
   }

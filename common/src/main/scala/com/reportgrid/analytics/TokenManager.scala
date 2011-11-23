@@ -32,9 +32,10 @@ object TokenManager {
     val rootTokenFuture  = database(upsert(tokensCollection).set(RootTokenJ))
     val testTokenFuture  = database(upsert(tokensCollection).set(TestTokenJ))
 
-    (rootTokenFuture zip testTokenFuture) map {
-      tokens => new TokenManager(database, tokensCollection, deletedTokensCollection)
-    }
+    //(rootTokenFuture zip testTokenFuture) map {
+    //  tokens => new TokenManager(database, tokensCollection, deletedTokensCollection)
+    Future.sync(new TokenManager(database, tokensCollection, deletedTokensCollection))
+    //}
   }
 }
 

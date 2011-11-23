@@ -652,18 +652,25 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
 
-  def stop(): Future[Unit] =  for {
-    _ <- variable_value_series.stage.flushAll
-    _ <- variable_series.stage.flushAll
-    _ <- variable_children.stage.flushAll
-    _ <- variable_values.stage.flushAll
-    _ <- path_children.stage.flushAll
-  } yield ()
+  def stop(timeout: akka.actor.Actor.Timeout) = {
+    val stageStops = variable_value_series.stage.stop ::
+                     variable_series.stage.stop ::
+                     variable_children.stage.stop ::
+                     variable_values.stage.stop ::
+                     path_children.stage.stop :: Nil
+
+    akka.dispatch.Future.sequence(stageStops, timeout.duration.toMillis)
+  }
 }
 
 object AggregationEngine {
   type CountType = Long
   type ResultSet[K <: JValue, V] = Seq[(K, V)]
+
+  import blueeyes.bkka.Stop
+  implicit def stop(implicit timeout: akka.actor.Actor.Timeout): Stop[AggregationEngine] = new Stop[AggregationEngine] {
+    def stop(engine: AggregationEngine) = engine.stop(timeout)
+  }
 
   implicit def rsRich[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]): RichResultSet[K, V] = new RichResultSet(resultSet)
   class RichResultSet[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]) {

@@ -3,6 +3,7 @@ package com.reportgrid.analytics
 import com.reportgrid.analytics.service._
 
 import blueeyes._
+import blueeyes.bkka._
 import blueeyes.concurrent.Future
 import blueeyes.core.data.{BijectionsChunkJson, BijectionsChunkFutureJson, BijectionsChunkString, ByteChunk}
 import blueeyes.core.http._
@@ -59,6 +60,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
   import BijectionsChunkJson._
   import BijectionsChunkString._
   import BijectionsChunkFutureJson._
+
+  implicit val timeout = akka.actor.Actor.Timeout(Long.MaxValue) //for now
 
   def mongoFactory(configMap: ConfigMap): Mongo
 
@@ -299,8 +302,17 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
             }
           }
         } ->
-        shutdown { state =>
-          state.aggregationEngine.stop
+        shutdown { state => {
+            Future.sync(
+              Option(
+                Stoppable(
+                  state.aggregationEngine, 
+                  Stoppable(state.aggregationEngine.indexdb) ::
+                  Stoppable(state.aggregationEngine.eventsdb) :: Nil
+                )
+              )
+            )
+          }
         }
       }
     }
