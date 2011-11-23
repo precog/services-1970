@@ -603,7 +603,7 @@ class ReaggregationSpec extends AggregationEngineTests with AggregationEngineFix
       eventsdb(selectAll.from("events").where("reprocess" === true)) map { _.size } must whenDelivered {
         beLike {
           case outstanding if outstanding == sampleEvents.size =>
-            ReaggregationTool.reprocess(AggregationEnvironment(engine, tokenManager), 0, outstanding, outstanding)
+            ReaggregationTool.reprocess(engine, tokenManager, 0, outstanding, outstanding)
 
             eventsdb(selectAll.from("events").where("reprocess" === true)) map { _.size } must whenDelivered {
               be_== (0)

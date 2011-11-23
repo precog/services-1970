@@ -23,6 +23,8 @@ import scalaz._
 import Scalaz._
 
 object AggregationEnvironment {
+  implicit val stopTimeout = akka.actor.Actor.Timeout(Long.MaxValue)
+
   def apply(file: java.io.File): Future[AggregationEnvironment] = {
     apply((new Config()) ->- (_.loadFile(file.getPath)))
   }
@@ -39,15 +41,25 @@ object AggregationEnvironment {
     val tokensCollection = config.getString("tokens.collection", "tokens")
     val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
 
-    TokenManager(indexdb, tokensCollection, deletedTokensCollection) map { 
-      new AggregationEnvironment(AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop), _)
+
+    TokenManager(indexdb, tokensCollection, deletedTokensCollection) map { tokenManager =>
+      val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
+      val stoppable = Stoppable(
+        engine,
+        Stoppable(eventsdb) ::
+        Stoppable(indexdb) :: Nil
+      )
+
+      new AggregationEnvironment(engine, tokenManager, stoppable)
     }
   }
 }
 
-case class AggregationEnvironment(engine: AggregationEngine, tokenManager: TokenStorage)
+case class AggregationEnvironment(engine: AggregationEngine, tokenManager: TokenStorage, stoppable: Stoppable)
 
 object ReaggregationTool {
+  import AggregationEnvironment._
+
   def main(argv: Array[String]) {
     val argMap = parseOptions(argv.toList, Map.empty)
 
@@ -59,9 +71,12 @@ object ReaggregationTool {
     val batchSize   = argMap.get("--batchSize").map(_.toInt).getOrElse(50)
     val maxRecords  = argMap.get("--maxRecords").map(_.toLong).getOrElse(5000L)
 
-    for (env <- AggregationEnvironment(new java.io.File(analyticsConfig))) {
-      reprocess(env, pauseLength, batchSize, maxRecords)
-      
+    for  {
+      env <- AggregationEnvironment(new java.io.File(analyticsConfig))
+      totalEvents <- reprocess(env.engine, env.tokenManager, pauseLength, batchSize, maxRecords)
+      stopResult <- Stoppable.stop(env.stoppable).map(_ => println("Finished processing " + totalEvents + " events.")).toBlueEyes
+    } yield {
+      stopResult
     }
   }
 
@@ -77,21 +92,14 @@ object ReaggregationTool {
     case Nil => optMap
   }
 
-  def reprocess(env: AggregationEnvironment, pause: Int, batchSize: Int, maxRecords: Long) {
-    import env.engine._
-
-    implicit val timeout = akka.actor.Actor.Timeout(Long.MaxValue)
-    lazy val stoppable = Stoppable(
-      env.engine,
-      Stoppable(eventsdb) ::
-      Stoppable(indexdb) :: Nil
-    )
+  def reprocess(engine: AggregationEngine, tokenManager: TokenStorage, pause: Int, batchSize: Int, maxRecords: Long) = {
+    import engine._
 
     println("Beginning processing " + maxRecords + " events.")
     val ingestBatch: Function0[Future[Int]] = () => {
       eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
         println("Reaggregating...")
-        val reaggregated = results.map { jv => restore(env.engine, env.tokenManager, jv --> classOf[JObject]) }
+        val reaggregated = results.map { jv => restore(engine, tokenManager, jv --> classOf[JObject]) }
 
         reaggregated.toSeq.sequence map { results => 
           val (errors, complexity) = results.foldLeft((List.empty[String], 0L)) {
@@ -111,9 +119,7 @@ object ReaggregationTool {
       }
     }
 
-    ScheduledExecutorSingleThreaded.repeatWhile(ingestBatch, pause.seconds, (_: Int) < maxRecords)(0) { (_: Int) + (_: Int) } flatMap {
-      totalEvents => Stoppable.stop(stoppable).map(_ => println("Finished processing " + totalEvents + " events.")).toBlueEyes
-    }
+    ScheduledExecutorSingleThreaded.repeatWhile(ingestBatch, pause.seconds, (_: Int) < maxRecords)(0) { (_: Int) + (_: Int) } 
   }
 
   def restore(engine: AggregationEngine, tokenManager: TokenStorage, obj: JObject): Future[ValidationNEL[String, Long]] = {
