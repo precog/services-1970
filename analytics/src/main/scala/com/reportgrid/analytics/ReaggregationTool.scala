@@ -23,8 +23,6 @@ import scalaz._
 import Scalaz._
 
 object AggregationEnvironment {
-  implicit val stopTimeout = akka.actor.Actor.Timeout(Long.MaxValue)
-
   def apply(file: java.io.File): Future[AggregationEnvironment] = {
     apply((new Config()) ->- (_.loadFile(file.getPath)))
   }
@@ -41,19 +39,25 @@ object AggregationEnvironment {
     val tokensCollection = config.getString("tokens.collection", "tokens")
     val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
 
+    implicit val shutdownTimeout = akka.actor.Actor.Timeout(indexdbConfig.getLong("shutdownTimeout", 30000))
+
     TokenManager(indexdb, tokensCollection, deletedTokensCollection) map { tokenManager =>
       val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
       val stoppable = Stoppable(engine, Stoppable(eventsdb) :: Stoppable(indexdb) :: Nil)
 
-      new AggregationEnvironment(engine, tokenManager, stoppable)
+      new AggregationEnvironment(engine, tokenManager, stoppable, shutdownTimeout)
     }
   }
 }
 
-case class AggregationEnvironment(engine: AggregationEngine, tokenManager: TokenStorage, stoppable: Stoppable)
+case class AggregationEnvironment(engine: AggregationEngine, tokenManager: TokenStorage, stoppable: Stoppable, timeout: akka.actor.Actor.Timeout)
 
 object ReaggregationTool {
-  import AggregationEnvironment._
+  def halt = {
+    println("Forcibly halting reaggregation tool.")
+    akka.actor.Actor.registry.shutdownAll()
+    System.exit(0)
+  }
 
   def main(argv: Array[String]) {
     val argMap = parseOptions(argv.toList, Map.empty)
@@ -66,15 +70,14 @@ object ReaggregationTool {
     val batchSize   = argMap.get("--batchSize").map(_.toInt).getOrElse(50)
     val maxRecords  = argMap.get("--maxRecords").map(_.toLong).getOrElse(5000L)
 
-    for  {
+    for {
       env         <- AggregationEnvironment(new java.io.File(analyticsConfig))
       totalEvents <- reprocess(env.engine, env.tokenManager, pauseLength, batchSize, maxRecords)
-      stopResult  <- Stoppable.stop(env.stoppable).toBlueEyes
+      stopResult  <- Stoppable.stop(env.stoppable)(env.timeout).onTimeout(_ => halt).toBlueEyes
     } yield {
       println("Finished processing " + totalEvents + " events.")
-      akka.actor.Actor.registry.shutdownAll()
-      System.exit(0)
-    }
+      halt
+    } 
   }
 
   def parseOptions(opts: List[String], optMap: Map[String, String]): Map[String, String] = opts match {
