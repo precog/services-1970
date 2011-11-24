@@ -41,7 +41,6 @@ object AggregationEnvironment {
     val tokensCollection = config.getString("tokens.collection", "tokens")
     val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
 
-
     TokenManager(indexdb, tokensCollection, deletedTokensCollection) map { tokenManager =>
       val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
       val stoppable = Stoppable(engine, Stoppable(eventsdb) :: Stoppable(indexdb) :: Nil)
@@ -96,7 +95,7 @@ object ReaggregationTool {
     println("Beginning processing " + maxRecords + " events.")
     val ingestBatch: Function0[Future[Int]] = () => {
       eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
-        println("Reaggregating...")
+        print("Reaggregating...")
         val reaggregated = results.map { jv => restore(engine, tokenManager, jv --> classOf[JObject]) }
 
         reaggregated.toSeq.sequence map { results => 
@@ -105,7 +104,7 @@ object ReaggregationTool {
             case ((errors, total), Success(complexity)) => (errors, total + complexity)
           }
 
-          println("Processed " + results.size + " events with a total complexity of " + complexity)
+          println("\nProcessed " + results.size + " events with a total complexity of " + complexity)
           errors.foreach(println)
 
           results.size
@@ -114,6 +113,11 @@ object ReaggregationTool {
             errors.foreach(ex => ex.printStackTrace) 
             println("Errors caused event reprocessing to be terminated.")
             akka.actor.Actor.registry.shutdownAll()
+        } flatMap { size =>
+          engine.flushStages.map { writes => 
+            println("Flushed " + writes + " writes to mongo.")
+            size
+          }
         }
       }
     }

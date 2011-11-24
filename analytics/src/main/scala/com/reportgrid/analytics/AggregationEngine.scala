@@ -129,6 +129,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   private val variable_children         = AggregationStage("variable_children")
   private val path_children             = AggregationStage("path_children")
 
+  def flushStages = List(variable_series, variable_value_series, variable_values, variable_children, path_children).map(_.stage.flushAll).sequence.map(_.sum)
+
   val events_collection: MongoCollection = config.getString("events.collection", "events")
 
   def store(token: Token, path: Path, eventName: String, eventBody: JValue, tagResults: Tag.ExtractionResult, count: Int, rollup: Int, reprocess: Boolean) = {
@@ -513,7 +515,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   /*********************
    * UPDATE GENERATION *
-   *********************/
+   ******************** */
 
   /** Creates a bunch of patches to keep track of parent/child path relationships.
    * E.g. if you send "/foo/bar/baz", it will keep track of the following:
