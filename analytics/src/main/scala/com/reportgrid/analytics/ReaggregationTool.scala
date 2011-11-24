@@ -44,11 +44,7 @@ object AggregationEnvironment {
 
     TokenManager(indexdb, tokensCollection, deletedTokensCollection) map { tokenManager =>
       val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
-      val stoppable = Stoppable(
-        engine,
-        Stoppable(eventsdb) ::
-        Stoppable(indexdb) :: Nil
-      )
+      val stoppable = Stoppable(engine, Stoppable(eventsdb) :: Stoppable(indexdb) :: Nil)
 
       new AggregationEnvironment(engine, tokenManager, stoppable)
     }
@@ -126,7 +122,6 @@ object ReaggregationTool {
   }
 
   def restore(engine: AggregationEngine, tokenManager: TokenStorage, obj: JObject): Future[ValidationNEL[String, Long]] = {
-    print("#")
     import engine._
     tokenManager.lookup(obj \ "token") flatMap { 
       _ map { token => 
