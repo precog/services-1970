@@ -72,11 +72,13 @@ object ReaggregationTool {
     val maxRecords  = argMap.get("--maxRecords").map(_.toLong).getOrElse(5000L)
 
     for  {
-      env <- AggregationEnvironment(new java.io.File(analyticsConfig))
+      env         <- AggregationEnvironment(new java.io.File(analyticsConfig))
       totalEvents <- reprocess(env.engine, env.tokenManager, pauseLength, batchSize, maxRecords)
-      stopResult <- Stoppable.stop(env.stoppable).map(_ => println("Finished processing " + totalEvents + " events.")).toBlueEyes
+      stopResult  <- Stoppable.stop(env.stoppable).toBlueEyes
     } yield {
-      stopResult
+      println("Finished processing " + totalEvents + " events.")
+      akka.actor.Actor.registry.shutdownAll()
+      System.exit(0)
     }
   }
 
@@ -115,6 +117,7 @@ object ReaggregationTool {
           errors => 
             errors.foreach(ex => ex.printStackTrace) 
             println("Errors caused event reprocessing to be terminated.")
+            akka.actor.Actor.registry.shutdownAll()
         }
       }
     }
@@ -123,6 +126,7 @@ object ReaggregationTool {
   }
 
   def restore(engine: AggregationEngine, tokenManager: TokenStorage, obj: JObject): Future[ValidationNEL[String, Long]] = {
+    print("#")
     import engine._
     tokenManager.lookup(obj \ "token") flatMap { 
       _ map { token => 
