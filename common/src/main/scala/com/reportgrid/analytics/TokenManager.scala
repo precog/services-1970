@@ -24,21 +24,6 @@ import scala.math._
 import scalaz.Scalaz._
 import scalaz.Validation
 
-object TokenManager {
-  def apply(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection) = {
-    val RootTokenJ: JObject      = Token.Root.serialize.asInstanceOf[JObject]
-    val TestTokenJ: JObject      = Token.Test.serialize.asInstanceOf[JObject]
-
-    val rootTokenFuture  = database(upsert(tokensCollection).set(RootTokenJ))
-    val testTokenFuture  = database(upsert(tokensCollection).set(TestTokenJ))
-
-    //(rootTokenFuture zip testTokenFuture) map {
-    //  tokens => new TokenManager(database, tokensCollection, deletedTokensCollection)
-    Future.sync(new TokenManager(database, tokensCollection, deletedTokensCollection))
-    //}
-  }
-}
-
 trait TokenStorage {
   def lookup(tokenId: String): Future[Option[Token]]
   def listChildren(parent: Token): Future[List[Token]]
@@ -73,7 +58,7 @@ trait TokenStorage {
   protected def deleteToken(token: Token): Future[Token]
 }
 
-class TokenManager private (database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection) extends TokenStorage {
+class TokenManager (database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection) extends TokenStorage {
   //TODO: Add expiry settings.
   val tokenCache = Cache.concurrent[String, Token](CacheSettings(ExpirationPolicy(None, None, MILLISECONDS)))
   tokenCache.put(Token.Root.tokenId, Token.Root)

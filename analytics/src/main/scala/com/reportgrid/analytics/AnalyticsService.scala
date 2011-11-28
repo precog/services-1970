@@ -69,7 +69,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
 
   def jessup(configMap: ConfigMap): Jessup
 
-  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager]
+  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): TokenManager
 
   val clock: Clock
 
@@ -90,13 +90,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
 
           val tokensCollection = config.getString("tokens.collection", "tokens")
           val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
+          val tokenMgr = tokenManager(indexdb, tokensCollection, deletedTokensCollection)
 
-          for {
-            tokenManager      <- tokenManager(indexdb, tokensCollection, deletedTokensCollection)
-            aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb, monitor)
-          } yield {
+          for (aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb, monitor)) yield {
             AnalyticsState(
-              aggregationEngine, tokenManager, 
+              aggregationEngine, tokenMgr, 
               auditClient(config.configMap("audit")),
               jessup(config.configMap("jessup")))
           }
@@ -302,17 +300,16 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
             }
           }
         } ->
-        shutdown { state => {
-            Future.sync(
-              Option(
-                Stoppable(
-                  state.aggregationEngine, 
-                  Stoppable(state.aggregationEngine.indexdb) ::
-                  Stoppable(state.aggregationEngine.eventsdb) :: Nil
-                )
+        shutdown { state => 
+          Future.sync(
+            Option(
+              Stoppable(
+                state.aggregationEngine, 
+                Stoppable(state.aggregationEngine.indexdb) ::
+                Stoppable(state.aggregationEngine.eventsdb) :: Nil
               )
             )
-          }
+          )
         }
       }
     }

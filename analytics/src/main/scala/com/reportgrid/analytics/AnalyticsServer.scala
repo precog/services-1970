@@ -38,8 +38,8 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
       configMap.getString("path", "/services/jessup/v1"))
   }
 
-  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager] = 
-    TokenManager(database, tokensCollection, deletedTokensCollection)
+  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): TokenManager = 
+    new TokenManager(database, tokensCollection, deletedTokensCollection)
 
   val clock = Clock.System
 }

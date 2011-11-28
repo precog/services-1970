@@ -75,10 +75,10 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   def auditClient(config: ConfigMap) = external.NoopTrackingClient
   def jessup(configMap: ConfigMap) = external.Jessup.Noop
 
-  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager] = {
-    TokenManager(database, tokensCollection, deletedTokensCollection) deliverTo {
-      tokenManager => tokenManager.tokenCache.put(TestToken.tokenId, TestToken)
-    }
+  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): TokenManager = {
+    val mgr = new TokenManager(database, tokensCollection, deletedTokensCollection) 
+    mgr.tokenCache.put(TestToken.tokenId, TestToken)
+    mgr
   }
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).

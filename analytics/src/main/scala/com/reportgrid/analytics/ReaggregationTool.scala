@@ -41,12 +41,11 @@ object AggregationEnvironment {
 
     implicit val shutdownTimeout = akka.actor.Actor.Timeout(indexdbConfig.getLong("shutdownTimeout", 30000))
 
-    TokenManager(indexdb, tokensCollection, deletedTokensCollection) map { tokenManager =>
-      val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
-      val stoppable = Stoppable(engine, Stoppable(eventsdb) :: Stoppable(indexdb) :: Nil)
+    val tokenManager = new TokenManager(indexdb, tokensCollection, deletedTokensCollection) 
+    val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
+    val stoppable = Stoppable(engine, Stoppable(eventsdb) :: Stoppable(indexdb) :: Nil)
 
-      new AggregationEnvironment(engine, tokenManager, stoppable, shutdownTimeout)
-    }
+    Future.sync(new AggregationEnvironment(engine, tokenManager, stoppable, shutdownTimeout))
   }
 }
 

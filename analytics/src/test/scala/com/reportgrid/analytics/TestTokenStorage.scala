@@ -6,6 +6,7 @@ import blueeyes.concurrent.test._
 import blueeyes.json.JsonAST._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.JPathImplicits._
+import blueeyes.persistence.mongo._
 import blueeyes.util.Clock
 
 import org.joda.time._
@@ -21,6 +22,16 @@ import scalaz.Scalaz._
 
 trait TestTokenStorage {
   def TestToken: Token
+
+  def populateTestTokens(database: Database, tokensCollection: MongoCollection) = {
+    val RootTokenJ: JObject      = Token.Root.serialize.asInstanceOf[JObject]
+    val TestTokenJ: JObject      = Token.Test.serialize.asInstanceOf[JObject]
+
+    val rootTokenFuture  = database(upsert(tokensCollection).set(RootTokenJ))
+    val testTokenFuture  = database(upsert(tokensCollection).set(TestTokenJ))
+
+    (rootTokenFuture zip testTokenFuture) 
+  }
 
   val tokenCache = new scala.collection.mutable.HashMap[String, Token]
   lazy val tokenManager = new TokenStorage {
