@@ -44,7 +44,7 @@ object ServicesBuild extends Build {
         "org.scala-tools.testing" %% "scalacheck"         % "1.9"    % "test"
       ),
       mainClass := Some("com.reportgrid.analytics.AnalyticsServer"), 
-      parallelExecution in test := false,
+      parallelExecution in Test := false,
       test in assembly := {}
     )
 
