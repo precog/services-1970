@@ -17,12 +17,18 @@ object BillingServer extends BlueEyesServer with BillingService with ServerHealt
 
   override def httpClient: HttpClient[ByteChunk] = new HttpClientXLightWeb
   
-  override def mailerFactory(config: ConfigMap) = {
+  override def notificationsFactory(config: ConfigMap) = {
     val url = "https://sendgrid.com/api/mail.send.json?"
     val apiUser = "operations@reportgrid.com"
     val apiKey = "seGrid8"
 
-    new SendGridMailer(httpClient, url, apiUser, apiKey)
+    val mailer = new SendGridMailer(httpClient, url, apiUser, apiKey)
+    new MailerNotificationSender(mailer)
+  }
+  
+  override def usageClientFactory(config: ConfigMap) = {
+    val baseUrl = getConfigSetting("usageService", "baseUrl", config)
+    new RealUsageClient(httpClient, baseUrl)
   }
   
   override def accountsFactory(config: ConfigMap) = {
@@ -33,24 +39,17 @@ object BillingServer extends BlueEyesServer with BillingService with ServerHealt
     val accountsCollection = getConfigSetting("Mongo", "collection", mongoConfig)
     
     val database = mongo.database(databaseName)
+    val usageClient = usageClientFactory(config.configMap("usageService"))
     val billingService = braintreeFactory(config.configMap("braintree"))
     val tokenGenerator = tokenGeneratorFactory(config.configMap("tokenGenerator"))
         
-    new Accounts(config.configMap("accounts"), tokenGenerator, billingService, database, accountsCollection)
-  }
-
-  override def naccountsFactory(config: ConfigMap) = {
-    val mongoConfig = config.configMap("mongo")
-    val mongo = mongoFactory(mongoConfig)
-
-    val databaseName = getConfigSetting("Mongo", "database", mongoConfig)
-    val accountsCollection = getConfigSetting("Mongo", "collection", mongoConfig)
-    
-    val database = mongo.database(databaseName)
-    val billingService = braintreeFactory(config.configMap("braintree"))
-    val tokenGenerator = tokenGeneratorFactory(config.configMap("tokenGenerator"))
-        
-    new PrivateAccounts(config.configMap("accounts"), new MongoAccountInformationStore(database, accountsCollection), billingService, tokenGenerator)
+    new PrivateAccounts(
+        config.configMap("accounts"), 
+        new MongoAccountInformationStore(database, accountsCollection), 
+        billingService, 
+        usageClient, 
+        notificationsFactory(config.configMap("notifications")), 
+        tokenGenerator)
   }
 
   def mongoFactory(config: ConfigMap): Mongo = {

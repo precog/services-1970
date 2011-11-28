@@ -1,6 +1,7 @@
 package com.reportgrid.billing
 
 import org.joda.time.DateTime
+import org.joda.time.DateTimeZone
 
 import scalaz._
 import scalaz.Scalaz._
@@ -22,7 +23,7 @@ object SerializationHelpers {
 
 object AccountStatus extends Enumeration {
   type AccountStatus = Value
-  val ACTIVE, GRACE_PERIOD, DISABLED, ERROR = Value
+  val ACTIVE, DISABLED, ERROR = Value
 
   implicit val AccountDecomposer: Decomposer[AccountStatus] = new Decomposer[AccountStatus] {
     override def decompose(status: AccountStatus): JValue = JString(status.toString())
@@ -60,15 +61,7 @@ trait Account {
 
   def asAccountInformation = {
     AccountInformation(id, contact, service)
-  }
-  
-  def asTrackingAccount: TrackingAccount = {
-    TrackingAccount(id, contact, service)
-  }
-
-  def asBillingAccount: BillingAccount = {
-    BillingAccount(billing, service.subscriptionId)
-  }
+  }  
 }
 
 case class AccountTokens(
@@ -209,33 +202,17 @@ case class ServiceInformation(
   credit: Int,
   lastCreditAssessment: DateTime,
   usage: Long,
+  lastUsageAssessment: DateTime,
+  lastUsageWarning: Option[DateTime],
+  lastNoUpgradeWarning: Option[DateTime],
   status: AccountStatus,
-  gracePeriodExpires: Option[DateTime],
-  subscriptionId: Option[String]) {
-
-  def withNoCreditChange(assessedOn: DateTime): ServiceInformation = {
-    withNewCredit(assessedOn, credit)
-  }
-
-  def withNewCredit(assessedOn: DateTime, newCredit: Int): ServiceInformation = {
-    ServiceInformation(planId, accountCreated, newCredit, assessedOn, usage, status, gracePeriodExpires, subscriptionId)
-  }
-
-  def withNewSubscription(newSubscriptionId: Option[String]): ServiceInformation = {
-    ServiceInformation(planId, accountCreated, credit, lastCreditAssessment, usage, status, gracePeriodExpires, newSubscriptionId)
-  }
-
-  def disableAccount(): ServiceInformation = {
-    ServiceInformation(planId, accountCreated, credit, lastCreditAssessment, usage, AccountStatus.DISABLED, None, subscriptionId)
-  }
-
-  def activeGracePeriod(expiresOn: DateTime): ServiceInformation = {
-    ServiceInformation(planId, accountCreated, credit, lastCreditAssessment, usage, AccountStatus.GRACE_PERIOD, Some(expiresOn), subscriptionId)
-  }
-}
+  lastAccountStatusChange: Option[DateTime],
+  billingDay: Int,
+  subscriptionId: Option[String])
 
 trait ServiceInformationSerialization {
 
+  
   implicit val ServiceInformationDecomposer: Decomposer[ServiceInformation] = new Decomposer[ServiceInformation] {
     override def decompose(address: ServiceInformation): JValue = JObject(
       List(
@@ -244,21 +221,36 @@ trait ServiceInformationSerialization {
         JField("credit", address.credit.serialize),
         JField("lastCreditAssessment", address.lastCreditAssessment.serialize),
         JField("usage", address.usage.serialize),
+        JField("lastUsageAssessment", address.lastUsageAssessment.serialize),
+        JField("lastUsageWarning", address.lastUsageWarning.serialize),
+        JField("lastNoUpgradeWarning", address.lastNoUpgradeWarning.serialize),
         JField("status", address.status.serialize),
-        JField("gracePeriodExpires", address.gracePeriodExpires.serialize),
+        JField("lastAccountStatusChange", address.lastAccountStatusChange.serialize),
+        JField("billingDay", address.billingDay.serialize),
         JField("subscriptionId", address.subscriptionId.serialize)))
   }
 
   implicit val ServiceInformationExtractor: Extractor[ServiceInformation] = new Extractor[ServiceInformation] with ValidatedExtraction[ServiceInformation] {
+
+    import braintree.BraintreeUtils.billingDay
+
     override def validated(obj: JValue): Validation[Error, ServiceInformation] = (
       (obj \ "planId").validated[String] |@|
       (obj \ "accountCreated").validated[DateTime] |@|
       (obj \ "credit").validated[Int] |@|
       (obj \ "lastCreditAssessment").validated[DateTime] |@|
       (obj \ "usage").validated[Long] |@|
+      (obj \ "lastUsageWarning").validated[Option[DateTime]] |@|
+      (obj \ "lastNoUpgradeWarning").validated[Option[DateTime]] |@|
       (obj \ "status").validated[AccountStatus] |@|
-      (obj \ "gracePeriodExpires").validated[Option[DateTime]] |@|
-      (obj \ "subscriptionId").validated[Option[String]]).apply(ServiceInformation(_, _, _, _, _, _, _, _))
+      (obj \ "lastAccountStatusChange").validated[Option[DateTime]] |@|
+      (obj \ "subscriptionId").validated[Option[String]]).apply(
+            ServiceInformation(
+                _, _, _, _, _, 
+                (obj \ "lastUsageAssessment").validated[DateTime] | new DateTime(0, DateTimeZone.UTC), 
+                _, _, _, _,
+                (obj \ "billingDay").validated[Int] | billingDay(new DateTime(0, DateTimeZone.UTC)), 
+                _))
   }
 }
 

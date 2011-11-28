@@ -25,91 +25,78 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString w
 
   implicit def httpClient: HttpClient[ByteChunk]
 
-  def naccountsFactory(config: ConfigMap): PublicAccounts
-  def accountsFactory(config: ConfigMap): Accounts
-  def mailerFactory(config: ConfigMap): Mailer
+  def accountsFactory(config: ConfigMap): PublicAccounts
+  def usageClientFactory(config: ConfigMap): UsageClient
+  def notificationsFactory(config: ConfigMap): NotificationSender
 
-  val billing = service("billing", "1.1.0") {
+  val billing = service("billing", "1.1.2") {
     healthMonitor { monitor =>
-      serviceLocator { locator =>
-        context =>
-          startup {
-            val config = context.config
+      context =>
+        startup {
+          val config = context.config
 
-            val naccounts = naccountsFactory(config)
-            val accounts = accountsFactory(config)
-            val mailer = mailerFactory(config)
+          val accounts = accountsFactory(config)
+          val notifications = notificationsFactory(config)
 
-            val bc = BillingConfiguration(naccounts, accounts, mailer)
-            Future.sync(bc)
-          } -> request { config =>
-            headerParameterRequired("ReportGridDecrypter", "Service may only be accessed via SSL.") {
-              jsonp {
-                path("/accounts/") {
-                  post { new CreateAccountHandler(config, monitor) } ~
-                  path("close") {
-                    post {
-                      new CloseAccountHandler(config, monitor)
-                    }
+          val bc = BillingConfiguration(accounts, notifications)
+          Future.sync(bc)
+        } -> request { config =>
+          headerParameterRequired("ReportGridDecrypter", "Service may only be accessed via SSL.") {
+            jsonp {
+              path("/accounts/") {
+                post { new CreateAccountHandler(config, monitor) } ~
+                path("close") {
+                  post {
+                    new CloseAccountHandler(config, monitor)
+                  }
+                } ~
+                path("get") {
+                  post { 
+                    new LegacyGetAccountHandler(config, monitor) 
+                  }
+                } ~
+                path("billing/") {
+                  put {
+                    new UpdateBillingHandler(config, monitor)
                   } ~
                   path("get") {
-                    post { 
-                      new LegacyGetAccountHandler(config, monitor) 
+                    post {
+                      new GetBillingHandler(config, monitor)
                     }
                   } ~
-                  path("billing/") {
-                    put {
-                      new UpdateBillingHandler(config, monitor)
-                    } ~
-                    path("get") {
-                      post {
-                        new GetBillingHandler(config, monitor)
-                      }
-                    } ~
-                    path("delete") {
-                      post {
-                        new RemoveBillingHandler(config, monitor)
-                      }
+                  path("delete") {
+                    post {
+                      new RemoveBillingHandler(config, monitor)
                     }
+                  }
+                } ~
+                path("info/") {
+                  put {
+                    new UpdateAccountHandler(config, monitor)
                   } ~
-                  path("info/") {
-                    put {
-                      new UpdateAccountHandler(config, monitor)
-                    } ~
-                    path("get") {
-                      post {
-                        new GetAccountHandler(config, monitor)
-                      }
-                    } 
-                  } ~
-//                  path("password") {
-//                    put {
-//                      new UpdateAccountHandler(config, monitor)
-//                    }
-//                  } ~ 
-//                  path("email") {
-//                    put {
-//                      new UpdateAccountHandler(config, monitor)
-//                    }
-//                  } ~ 
-//                  path("plan") {
-//                    put {
-//                      new UpdateAccountHandler(config, monitor)
-//                    }
-//                  } ~
-                  path("assess") {
-                    post { 
-                      new AccountAssessmentHandler(config, monitor) 
+                  path("get") {
+                    post {
+                      new GetAccountHandler(config, monitor)
                     }
+                  } 
+                } ~
+                path("credit/accounting") {
+                  post { 
+                    new CreditAccountingHandler(config, monitor) 
+                  }
+                } ~
+                path("usage/accounting") {
+                  post { 
+                    new UsageAccountingHandler(config, monitor) 
                   }
                 }
               }
             }
-          } -> shutdown { config =>
-            config.shutdown
-            ().future
           }
-      }
+        } -> shutdown { config =>
+          config.shutdown
+          ().future
+        }
     }
   }
 }

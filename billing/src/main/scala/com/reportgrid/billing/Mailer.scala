@@ -11,11 +11,15 @@ import blueeyes.core.http.MimeTypes._
 
 trait Mailer {
   def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], subject: String, body: String): Future[Option[String]]
+  def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], subject: String, textBody: String, htmlBody: String): Future[Option[String]]
 }
 
 class OverrideMailTo(overrideTo: Array[String], delegate: Mailer) extends Mailer {
   def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], subject: String, body: String): Future[Option[String]] = {
     delegate.sendEmail(from, overrideTo, cc, bcc, subject, body)
+  }
+  def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], subject: String, textBody: String, htmlBody: String): Future[Option[String]] = {
+    delegate.sendEmail(from, overrideTo, cc, bcc, subject, textBody, htmlBody)
   }
 }
 
@@ -49,6 +53,34 @@ class SendGridMailer(client: HttpClient[ByteChunk], url: String, apiUser: String
 
   }
 
+  def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], subject: String, textBody: String, htmlBody: String): Future[Option[String]] = {
+    val params: List[(String, Option[String])] =
+      ("api_user", Some(apiUser)) ::
+        ("api_key", Some(apiKey)) ::
+        ("from", Some(from)) ::
+        ("subject", Some(subject)) ::
+        ("text", Some(textBody)) ::
+        ("html", Some(htmlBody)) ::
+        Nil
+
+    val pclient = params.foldLeft(client)(addQuery)
+
+    val arrayParams: List[(String, Option[Array[String]])] =
+      ("to", Some(to)) ::
+        ("cc", Some(cc)) ::
+        ("bcc", Some(bcc)) ::
+        Nil
+
+    val pclient2 = arrayParams.foldLeft(pclient)(addQueryList)
+
+    val result: Future[HttpResponse[String]] =
+      pclient2.
+        contentType[ByteChunk](application / json).
+        post[String](url)("")
+
+    result.map(h => h.content)
+  }
+
   def addQuery(client: HttpClient[ByteChunk], key: String, value: String): HttpClient[ByteChunk] = {
     client.query(key, value)
   }
@@ -64,6 +96,6 @@ class SendGridMailer(client: HttpClient[ByteChunk], url: String, apiUser: String
 }
 
 class NullMailer extends Mailer {
-  def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], title: String, content: String): Future[Option[String]] = Future.sync(None)
-
+  def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], title: String, textBody: String): Future[Option[String]] = Future.sync(None)
+  def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], title: String, textBody: String, htmlBody: String): Future[Option[String]] = Future.sync(None)
 }
