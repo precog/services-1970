@@ -1,8 +1,9 @@
 package com.reportgrid.billing
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ListBuffer
 
-import scalaz.{Validation, Success, Failure, Semigroup}
+import scalaz.{ Validation, Success, Failure, Semigroup }
 import scalaz.Scalaz._
 
 import org.joda.time.DateTime
@@ -12,6 +13,7 @@ import org.joda.time.Days
 
 import com.braintreegateway._
 import com.reportgrid.billing.braintree.BraintreeService
+import com.reportgrid.billing.braintree.BraintreeUtils._
 
 import net.lag.configgy._
 
@@ -43,13 +45,13 @@ object FutureValidationHelpers {
 
   def fvJoin[E: Semigroup, A, B](fa: Future[Validation[E, A]], fb: Future[Validation[E, B]]): Future[Validation[E, (A, B)]] = {
     (fa join fb).map {
-      case (Success(a), Success(b)) => Success((a,b))
+      case (Success(a), Success(b)) => Success((a, b))
       case (Success(_), Failure(e)) => Failure(e)
       case (Failure(e), Success(_)) => Failure(e)
-      case (Failure(e1), Failure(e2)) => Failure((e1: E) ⊹ (e2)) 
+      case (Failure(e1), Failure(e2)) => Failure((e1: E) ⊹ (e2))
     }
   }
-  
+
 }
 
 trait PublicAccounts {
@@ -65,12 +67,94 @@ trait PublicAccounts {
   def getBillingInformation(auth: AccountAuthentication): FV[String, Option[BillingInformation]]
   def updateBillingInformation(update: UpdateBilling): FV[String, BillingInformation]
   def removeBillingInformation(authetnication: AccountAuthentication): FV[String, Option[BillingInformation]]
+
+  def creditAccounting(): FV[String, CreditAccountingResults]
+  def usageAccounting(): FV[String, UsageAccountingResults]
 }
 
-class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, billingStore: BillingInformationStore, tokens: TokenGenerator) extends PublicAccounts {
+trait NotificationSender {
+  def send(n: Notification): Future[Unit]
+}
+
+class MockNotificationSender extends NotificationSender {
+
+  val notifications = ListBuffer[Notification]()
+
+  def send(n: Notification) = {
+    notifications += n
+    Future.sync(Unit)
+  }
+}
+
+class MailerNotificationSender(mailer: Mailer) extends NotificationSender {
+  def send(n: Notification) = {
+    mailer.sendEmail(n.from, n.to, n.cc, n.bcc, n.subject, n.body).toUnit
+  }
+}
+
+abstract case class Notification(from: String, to: Array[String], cc: Array[String], bcc: Array[String]) {
+  def subject: String
+  def body: String
+  
+  override def toString(): String = 
+    """
+Subject: %s
+Body:
+%s
+    """.format(subject, body)
+}
+
+class UpgradeWarning(from: String, to: Array[String], cc: Array[String], bcc: Array[String]) extends Notification(from, to, cc, bcc) {
+  def subject = "ReportGrid: Automatic account upgrade warning"
+  def body = 
+"""
+At your current usage rate we anticipate you will exceed your monthly usage quota. 
+    
+If you exceed your monthly quota you will be automatically upgraded to the next level of service.
+    
+This is just a warning no changes have been made to your account.
+    
+The ReportGrid Team
+support@reportgrid.com
+"""
+}
+
+class UpgradeConfirmation(from: String, to: Array[String], cc: Array[String], bcc: Array[String]) extends Notification(from, to, cc, bcc) {
+  def subject = "ReprotGrid: Usage quota exceeded account upgraded"
+  def body =
+"""
+Your usage exceeded your current plan quota.
+    
+You have been upgrade to the next level of service.
+    
+The ReportGrid Team
+support@reportgrid.com
+"""
+}
+
+class NoUpgradeWarning(from: String, to: Array[String], cc: Array[String], bcc: Array[String]) extends Notification(from, to, cc, bcc) {
+  def subject = "ReportGrid: Usage quota exceeded account now in metered usage"
+  def body =
+"""
+Your usage exceeded your current plan quota.
+    
+You are currently in our highest tier, your usage will now be billed at a metered rate."
+    
+The ReportGrid Team
+support@reportgrid.com
+"""
+}
+
+class PrivateAccounts(
+  config: ConfigMap,
+  accountStore: AccountInformationStore,
+  billingStore: BillingInformationStore,
+  usageClient: UsageClient,
+  notifications: NotificationSender,
+  tokens: TokenGenerator) extends PublicAccounts {
 
   import FutureValidationHelpers._
-  
+
   def credits = config.getConfigMap("credits")
 
   def openAccount(openAccount: CreateAccount): FV[String, Account] = {
@@ -128,7 +212,7 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
 
   def createAccountInformation(create: CreateAccount, billingData: BillingData, tokens: AccountTokens, credit: Int): FV[String, AccountInformation] = {
     val created = new DateTime(DateTimeZone.UTC)
-    val today = created.toDateMidnight().toDateTime()
+    val today = created.toDateMidnight().toDateTime(DateTimeZone.UTC)
     val aid = AccountId(create.email, tokens, PasswordHash.saltedHash(create.password))
     val srv = ServiceInformation(
       create.planId,
@@ -136,8 +220,12 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
       credit,
       today,
       0,
+      today,
+      None,
+      None,
       AccountStatus.ACTIVE,
       None,
+      billingDay(today),
       billingData.subscriptionId)
 
     val accountInfo = AccountInformation(aid, create.contact, srv)
@@ -173,25 +261,16 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
         }
       })
     }).getOrElse(
-      if(hasCredit) {
-        Future.sync(Success(BillingData(None, None)))  
+      if (hasCredit) {
+        Future.sync(Success(BillingData(None, None)))
       } else {
         Future.sync(Failure("Unable to create account without account credit or billing information."))
-      }
-    )
+      })
   }
 
   def buildAccount(billingData: BillingData, accountInfo: AccountInformation): Account = {
     val service = accountInfo.service
-    val newService = ServiceInformation(
-      service.planId,
-      service.accountCreated,
-      service.credit,
-      service.lastCreditAssessment,
-      service.usage,
-      service.status,
-      service.gracePeriodExpires,
-      billingData.subscriptionId)
+    val newService = service.copy(subscriptionId = billingData.subscriptionId)
 
     ValueAccount(
       accountInfo.id,
@@ -201,7 +280,7 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
   }
 
   def undoBilling(token: String): Unit = {
-    println("Rolling back billing")
+    billingStore.removeByToken(token)
   }
 
   private def toPath(email: String): String = {
@@ -222,16 +301,18 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
       val dev = newChildToken(m, "/dev/")
       fvJoin(fvJoin(fvJoin(master, tracking), prod), dev)
     });
-    
-    tokens.map(_.map{ t => {
-      AccountTokens(t._1._1._1, t._1._1._2, t._1._2, Some(t._2))
-    }})
+
+    tokens.map(_.map { t =>
+      {
+        AccountTokens(t._1._1._1, t._1._1._2, t._1._2, Some(t._2))
+      }
+    })
   }
-  
+
   def newChildToken(parent: String, path: String): FV[String, String] = {
     tokens.newChildToken(parent, path)
   }
-    
+
   def newToken(path: String): Future[Validation[String, String]] = {
     tokens.newToken(path)
   }
@@ -287,7 +368,7 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
       val mongoAccountDisabled = accountStore.disableByToken(a.id.tokens.master)
       val billingAccountDisabled = billingStore.removeByToken(a.id.tokens.master)
       val returnAccount: FV[String, Account] = Future.sync(Success(a))
-      
+
       tokenDisabled
         .then(mongoAccountDisabled)
         .then(billingAccountDisabled)
@@ -304,7 +385,7 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
       fvApply(combineAccountUpdates(a.asAccountInformation, update), (ai: AccountInformation) => {
         val billingData = updateBillingIfRequired(a, ai)
         fvApply(billingData, (bd: BillingData) => {
-          val nai = if(bd.subscriptionId.isDefined) {
+          val nai = if (bd.subscriptionId.isDefined) {
             ai.copy(service = ai.service.copy(subscriptionId = bd.subscriptionId))
           } else {
             ai
@@ -316,19 +397,33 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
   }
 
   private def updateBillingIfRequired(currentAccount: Account, accountUpdateInfo: AccountInformation): FV[String, BillingData] = {
-    // Cases that need to be handled here
-    // - planId changed
-    // - credit changed to zero? (Not currently supported.)
-    accountUpdateInfo.service.subscriptionId.map[FV[String, BillingData]] { s =>
-      if(currentAccount.service.planId == accountUpdateInfo.service.planId) {
-        Future.sync(Success(BillingData(currentAccount.billing, Some(s))))        
-      } else {
-        val result = billingStore.changeSubscriptionPlan(s, accountUpdateInfo.service.planId)
-        result.map(_.map(ns => BillingData(currentAccount.billing, Some(ns))))
-      }
-    }.getOrElse {
-      Future.sync(Success(BillingData(currentAccount.billing, None)))                
+    val default: FV[String, Option[BillingInformation]] = Future.sync(Success(currentAccount.billing))
+    val contactUpdates: FV[String, Option[BillingInformation]] = if(
+       accountUpdateInfo.contact != currentAccount.contact || 
+       accountUpdateInfo.id.email != currentAccount.id.email) {
+      
+      currentAccount.billing.map {_ => {
+        billingStore.update(currentAccount.id.tokens.master, accountUpdateInfo.id.email, accountUpdateInfo.contact)
+                    .map(_.map(Some(_))): FV[String, Option[BillingInformation]]
+      }}.getOrElse(default)
+    } else {
+      default
     }
+
+    val billingUpdate = fvApply(contactUpdates, (obi: Option[BillingInformation]) => {
+      accountUpdateInfo.service.subscriptionId.map[FV[String, BillingData]] { s =>
+        if (currentAccount.service.planId == accountUpdateInfo.service.planId) {
+          Future.sync(Success(BillingData(obi, Some(s))))
+        } else {
+          val result = billingStore.changeSubscriptionPlan(s, accountUpdateInfo.service.planId)
+          result.map(_.map(ns => BillingData(obi, Some(ns))))
+        }
+      }.getOrElse {
+        Future.sync(Success(BillingData(obi, None))): FV[String, BillingData]
+      }      
+    })
+    
+    contactUpdates.then(billingUpdate)
   }
 
   private def combineAccountUpdates(info: AccountInformation, update: UpdateAccount): FV[String, AccountInformation] = {
@@ -384,12 +479,16 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
 
   private def getAuthenticatedAccount(auth: AccountAuthentication): FV[String, Account] = {
     fvApply(
-      fvApply(getAccountInfo(auth), authorizeAccountAccess(auth, _: AccountInformation)),
-      combineWithBillingInfo(auth, _: AccountInformation))
+      fvApply(getAccountInfo(auth.email), authorizeAccountAccess(auth, _: AccountInformation)),
+      combineWithBillingInfo(auth.email, _: AccountInformation))
   }
 
-  private def getAccountInfo(auth: AccountAuthentication): FV[String, AccountInformation] = {
-    accountStore.getByEmail(auth.email)
+  def trustedGetAccount(email: String): FV[String, Account] = {
+    fvApply(getAccountInfo(email), combineWithBillingInfo(email, _: AccountInformation))
+  }
+
+  private def getAccountInfo(email: String): FV[String, AccountInformation] = {
+    accountStore.getByEmail(email)
   }
 
   private def authorizeAccountAccess(auth: AccountAuthentication, accountInfo: AccountInformation): FV[String, AccountInformation] = {
@@ -400,24 +499,357 @@ class PrivateAccounts(config: ConfigMap, accountStore: AccountInformationStore, 
     }
   }
 
-  private def combineWithBillingInfo(auth: AccountAuthentication, accountInfo: AccountInformation): FV[String, Account] = {
-    if (PasswordHash.checkSaltedHash(auth.password, accountInfo.id.passwordHash)) {
-      fvApply(getBillingInfo(auth), (billing: Option[BillingInformation]) => {
-        Future.sync(Success(
-          ValueAccount(
-            accountInfo.id,
-            accountInfo.contact,
-            accountInfo.service,
-            billing)))
-      })
-    } else {
-      Future.sync(Failure("You must provide a valid email or account token and a valid password."))
+  private def combineWithBillingInfo(email: String, accountInfo: AccountInformation): FV[String, Account] = {
+    fvApply(getBillingInfo(email), (billing: Option[BillingInformation]) => {
+      Future.sync(Success(
+        ValueAccount(
+          accountInfo.id,
+          accountInfo.contact,
+          accountInfo.service,
+          billing)))
+    })
+  }
+
+  private def combineWithBillingInfo(accountInfo: AccountInformation): FV[String, Account] = {
+    val billing: FV[String, Option[BillingInformation]] = billingStore.getByEmail(accountInfo.id.email).map(v => Success(v.toOption))
+    fvApply(billing, (billing: Option[BillingInformation]) => {
+      Future.sync(Success(
+        ValueAccount(
+          accountInfo.id,
+          accountInfo.contact,
+          accountInfo.service,
+          billing)))
+    })
+  }
+
+  private def getBillingInfo(email: String): FV[String, Option[BillingInformation]] = {
+    billingStore.getByEmail(email).map(v => Success(v.toOption))
+  }
+
+  def creditAccounting(): FV[String, CreditAccountingResults] = {
+    val now = new DateTime(DateTimeZone.UTC).toDateMidnight.toDateTime(DateTimeZone.UTC)
+    getAll().flatMap { accs =>
+      val assessment = accs.foldLeft(Future.sync(new CreditAccountingResults))(creditAccounting(now))
+      assessment.map(Success(_))
     }
   }
 
-  private def getBillingInfo(auth: AccountAuthentication): FV[String, Option[BillingInformation]] = {
-    billingStore.getByEmail(auth.email).map(v => Success(v.toOption))
+  private def creditAccounting(now: DateTime)(ass: Future[CreditAccountingResults], acc: Validation[String, Account]): Future[CreditAccountingResults] = {
+    acc.fold(_ => ass, a => accountCreditAccounting(now)(ass, a))
   }
+
+  private def accountCreditAccounting(now: DateTime)(ass: Future[CreditAccountingResults], acc: Account): Future[CreditAccountingResults] = {
+    val daysBetween = Days.daysBetween(acc.service.lastCreditAssessment, now).getDays
+    if (daysBetween <= 0) {
+      ass
+    } else {
+      val creditAssessed = adjustCredit(acc, now, daysBetween)
+      val subscriptionAdjusted = adjustSubscription(creditAssessed, now)
+      subscriptionAdjusted.map(_.map(s => {
+        if (acc != s) {
+          trustedUpdateAccount(s).map(Success(_))
+        } else {
+          Future.sync(Success(s))
+        }
+      })).then(ass)
+    }
+  }
+
+  private def adjustCredit(acc: Account, now: DateTime, daysBetween: Int): Account = {
+    val service = acc.service
+    if (service.credit <= 0) {
+      val newService = service.copy(lastCreditAssessment = now, credit = 0)
+      ValueAccount(
+        acc.id,
+        acc.contact,
+        newService,
+        acc.billing)
+    } else {
+      val dayRate = dailyRate(service)
+      val adjustedCredit = service.credit - (daysBetween * dayRate)
+      val newCredit = math.max(0, adjustedCredit)
+
+      val newService = service.copy(lastCreditAssessment = now, credit = newCredit)
+
+      ValueAccount(
+        acc.id,
+        acc.contact,
+        newService,
+        acc.billing)
+    }
+  }
+
+  private val daysPerYear = 365
+  private val monthsPerYear = 12
+  private val averageDaysPerMonth = 1.0 * 365 / 12
+
+  private def dailyRate(service: ServiceInformation): Int = {
+    val plan = billingStore.findPlan(service.planId)
+    val monthlyRate: Float = plan.map(p => p.getPrice().floatValue).getOrElse(0)
+    val dailyRate = monthlyRate / averageDaysPerMonth
+    (dailyRate * 100).toInt
+  }
+
+  private def adjustSubscription(acc: Account, now: DateTime): FV[String, Account] = {
+    if (acc.service.status == AccountStatus.ACTIVE) {
+      if (acc.service.credit > 0) {
+        if (acc.service.subscriptionId.isDefined) {
+          stopSubscription(acc)
+        } else {
+          Future.sync(Success(acc))
+        }
+      } else {
+        if (acc.billing.isDefined) {
+          startSubscription(acc)
+        } else {
+          disableAccount(acc, now)
+        }
+      }
+    } else {
+      Future.sync(Success(acc))
+    }
+  }
+
+  private def stopSubscription(acc: Account): FV[String, Account] = {
+    val newAccount: Account = ValueAccount(
+      acc.id,
+      acc.contact,
+      acc.service.copy(subscriptionId = None),
+      acc.billing)
+
+    acc.service.subscriptionId.map(id => {
+      billingStore.stopSubscriptionBySubscriptionId(id).map(_.map(_ => newAccount))
+    }).getOrElse(Future.sync(Success(newAccount)))
+  }
+
+  private def startSubscription(acc: Account): FV[String, Account] = {
+    val result: Option[FV[String, Account]] = acc.billing.map(_ => {
+      billingStore.startSubscription(acc.id.tokens.master, acc.service.planId).map {
+        case Success(s) => {
+          Success(ValueAccount(
+            acc.id,
+            acc.contact,
+            acc.service.copy(subscriptionId = Some(s)),
+            acc.billing))
+        }
+        case Failure(e) => Failure(e)
+      }
+    })
+
+    result.getOrElse(Future.sync(Failure("No billing information to start subscription from.")))
+  }
+
+  private def disableAccount(acc: Account, now: DateTime): FV[String, Account] = {
+    Future.sync(Success(ValueAccount(
+      acc.id,
+      acc.contact,
+      acc.service.copy(status = AccountStatus.DISABLED, lastAccountStatusChange = Some(now)),
+      acc.billing)))
+  }
+
+  def getAll(): Future[List[Validation[String, Account]]] = {
+    accountStore.getAll().flatMap(l => {
+      Future.apply(l.toArray[AccountInformation].map(combineWithBillingInfo): _*)
+    })
+  }
+
+  def usageAccounting(): FV[String, UsageAccountingResults] = {
+    val now = new DateTime(DateTimeZone.UTC)
+    getAll().flatMap { accs =>
+      val assessment = accs.foldLeft(Future.sync(new UsageAccountingResults))(usageAccounting(now))
+      assessment.map(Success(_))
+    }
+  }
+
+  private val usageProcessingLag = 5
+  private val usageMinimumCheckDelay = 5
+
+  private class Plans(plans: List[(String, Long)]) {
+
+    def findPlanMax(planId: String): Option[Long] = {
+      plans.filter(_._1.equals(planId)) match {
+        case x :: Nil => Some(x._2)
+        case _ => None
+      }
+    }
+
+    def upgrade(amount: Long): Option[String] = {
+      plans.filter(_._2 > amount) match {
+        case x :: xs => Some(x._1)
+        case Nil => None
+      }
+    }
+  }
+
+  private val plans = new Plans(
+    ("starter", 100000l) ::
+      ("bronze", 1000000l) ::
+      ("silver", 3000000l) ::
+      ("gold", 12000000l) :: Nil)
+
+  private def usageAccounting(now: DateTime)(ass: Future[UsageAccountingResults], acc: Validation[String, Account]): Future[UsageAccountingResults] = {
+    acc.fold(_ => ass, a => accountUsageAccounting(now)(ass, a))
+  }
+
+  private def accountUsageAccounting(now: DateTime)(ass: Future[UsageAccountingResults], acc: Account): Future[UsageAccountingResults] = {
+    if (acc.service.status == AccountStatus.ACTIVE) {
+      val startDate = billingStartDate(now, acc.service.billingDay)
+      val updatedUsage = getUsage(usageClient.apiCalls(acc.id.tokens.tracking, startDate.toDateMidnight, now.toDateMidnight().plusDays(1)))
+      val newService = acc.service.copy(usage = acc.service.usage + updatedUsage, lastUsageAssessment = now)
+      val usageUpdated = ValueAccount(
+        id = acc.id,
+        contact = acc.contact,
+        service = newService,
+        billing = acc.billing)
+
+      val alreadySentWarning = acc.service.lastUsageWarning.map(last =>
+        inThisBillingCycle(last, acc)).getOrElse(false)
+
+      val warningUpdated = if (alreadySentWarning) {
+        usageUpdated
+      } else {
+        warnAboutUsage(now, usageUpdated)
+      }
+
+      val upgradeUpdated = automatticallyUpgradePlan(now, warningUpdated)
+      trustedUpdateAccount(upgradeUpdated).then(ass)
+    } else {
+      ass
+    }
+  }
+
+  private def trustedUpdateAccount(acc: Account): Future[Unit] = {
+    val accUpdate = accountStore.update(acc.asAccountInformation)
+    val billingUpdate = acc.billing.map(billingStore.update(acc.id.tokens.master, acc.id.email, acc.contact, _))
+    billingUpdate.map(accUpdate.then(_).toUnit).getOrElse(accUpdate.toUnit)
+  }
+
+  def trustedCreateAccount(acc: Account): FV[String, Account] = {
+    // create billing information if required
+    // if billing information and subscription required create subscription
+    // update acc if with subscription id if necessary
+    // create account information
+    // get full account and return
+    val billingCreate = acc.billing.map(billingStore.create(acc.id.tokens.master, acc.id.email, acc.contact, _))
+
+    val subscriptionCreate: FV[String, Option[String]] = billingCreate.map {
+      fvApply(_, (fbi: BillingInformation) => {
+        val r1: Option[FV[String, String]] = acc.service.subscriptionId
+          .map(_ => billingStore.startSubscription(acc.id.tokens.master, acc.service.planId))
+        val r2: Option[FV[String, Option[String]]] = r1.map(_.map(_.map(Some(_))))
+        val r3: FV[String, Option[String]] = r2.getOrElse(Future.sync(Success(None)))
+        r3
+      })
+    }.getOrElse(Future.sync(Success(None)))
+
+    val accCreate = fvApply(subscriptionCreate, (subsId: Option[String]) => {
+      val accInfo = AccountInformation(
+        acc.id,
+        acc.contact,
+        acc.service.copy(subscriptionId = subsId))
+      accountStore.create(accInfo)
+    })
+
+    fvApply(accCreate, (_: AccountInformation) => trustedGetAccount(acc.id.email))
+  }
+
+  private val warningMinDaysForTrending = 7
+  private val warningUsageThreshold = 0.90
+
+  private def warnAboutUsage(now: DateTime, acc: Account): Account = {
+    val startDate = billingStartDate(now, acc.service.billingDay)
+    val finishDate = billingFinishDate(now, acc.service.billingDay)
+    val total = Days.daysBetween(startDate, finishDate).getDays
+    val used = Days.daysBetween(startDate, now).getDays
+
+    if (used >= warningMinDaysForTrending) {
+      val percentage = used.toDouble / total
+      val max = plans.findPlanMax(acc.service.planId)
+      max.flatMap(m => {
+        val proratedLimit = m * percentage
+        val warningLevel = proratedLimit * warningUsageThreshold
+        if (acc.service.usage > warningLevel) {
+          val updatedAccount = ValueAccount(
+            id = acc.id,
+            contact = acc.contact,
+            service = acc.service.copy(lastUsageWarning = Some(now)),
+            billing = acc.billing)
+          sendUsageWarning(updatedAccount)
+          Some(updatedAccount)
+        } else {
+          None
+        }
+      }).getOrElse(acc)
+    } else {
+      acc
+    }
+  }
+
+  private def inThisBillingCycle(dateTime: DateTime, acc: Account): Boolean = {
+    val startDate = billingStartDate(dateTime, acc.service.billingDay)
+    (!dateTime.isBefore(startDate)) && dateTime.isBefore(startDate.plusMonths(1))
+  }
+
+  private def automatticallyUpgradePlan(now: DateTime, acc: Account): Account = {
+    val max = plans.findPlanMax(acc.service.planId)
+
+    max.map {
+      case max if acc.service.usage > max => {
+        plans.upgrade(acc.service.usage) match {
+          case Some(newPlanId) => upgradePlan(newPlanId, acc)
+          case None => noUpgradePath(now, acc)
+        }
+      }
+      case _ => {
+        acc
+      }
+    }.getOrElse(acc)
+  }
+
+  private def upgradePlan(newPlanId: String, acc: Account): Account = {
+    sendUpgradeConfirmation(newPlanId, acc)
+    ValueAccount(
+      acc.id,
+      acc.contact,
+      acc.service.copy(planId = newPlanId),
+      acc.billing)
+  }
+
+  private def noUpgradePath(now: DateTime, acc: Account): Account = {
+    val warnedAlreadyThisMonth = acc.service.lastNoUpgradeWarning.map(last => {
+      inThisBillingCycle(last, acc)
+    }).getOrElse(false)
+
+    if (!warnedAlreadyThisMonth) {
+      sendNoUpgradePathWarning(acc)
+      ValueAccount(
+        acc.id,
+        acc.contact,
+        acc.service.copy(lastNoUpgradeWarning = Some(now)),
+        acc.billing)
+    } else {
+      acc
+    }
+  }
+
+  private def sendUsageWarning(acc: Account) {
+    notifications.send(new UpgradeWarning(acc.id.email, Array("support@reportgrid.com"), Array(), Array("nick@reportgrid.com")))
+  }
+
+  private def sendUpgradeConfirmation(newPlanId: String, acc: Account) {
+    notifications.send(new UpgradeConfirmation(acc.id.email, Array("support@reportgrid.com"), Array(), Array("nick@reportgrid.com")))
+  }
+
+  private def sendNoUpgradePathWarning(acc: Account) {
+    notifications.send(new NoUpgradeWarning(acc.id.email, Array("support@reportgrid.com"), Array(), Array("nick@reportgrid.com")))
+  }
+
+  private def getUsage(f: Future[Long]): Long = {
+    val nf = f.orElse(0)
+    while (!nf.isDone) {}
+    nf.value.get
+  }
+
 }
 
 trait AccountInformationStore {
@@ -427,6 +859,8 @@ trait AccountInformationStore {
 
   def getByEmail(email: String): FV[String, AccountInformation]
   def getByToken(token: String): FV[String, AccountInformation]
+
+  def getAll(): Future[List[AccountInformation]]
 
   def update(info: AccountInformation): FV[String, AccountInformation]
 
@@ -440,7 +874,7 @@ trait AccountInformationStore {
 class MongoAccountInformationStore(database: Database, collection: String) extends AccountInformationStore {
 
   import FutureValidationHelpers._
-  
+
   def create(info: AccountInformation): FV[String, AccountInformation] = {
     val query = insert((info.serialize(AccountInformation.UnsafeAccountInfoDecomposer)) --> classOf[JObject]).into(collection)
     val futureResult = database(query)
@@ -463,14 +897,19 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
 
   def getByEmail(email: String): FV[String, AccountInformation] = {
     val query = select().from(collection).where(("id.email" === email))
-    singleAccountQuery(query)    
+    singleAccountQuery(query)
   }
-  
+
   def getByToken(token: String): FV[String, AccountInformation] = {
     val query = select().from(collection).where(("id.tokens.master" === token))
-    singleAccountQuery(query)    
+    singleAccountQuery(query)
   }
-  
+
+  def getAll(): Future[List[AccountInformation]] = {
+    val query = select().from(collection)
+    multipleAccountQuery(query)
+  }
+
   private def singleAccountQuery(q: MongoSelectQuery): Future[Validation[String, AccountInformation]] = {
     val result = database(q)
     result.map { result =>
@@ -485,21 +924,28 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
     }
   }
 
+  private def multipleAccountQuery(q: MongoSelectQuery): Future[List[AccountInformation]] = {
+    val result = database(q)
+    result.map { result =>
+      result.toList.map(_.deserialize[AccountInformation])
+    }
+  }
+
   def update(newInfo: AccountInformation): FV[String, AccountInformation] = {
     fvApply(getByToken(newInfo.id.tokens.master), (current: AccountInformation) => {
       val updatedAccountInfo = validateAccountUpdates(current, newInfo)
       updatedAccountInfo match {
         case Success(ai) => internalUpdate(ai)
-        case Failure(e)  => Future.sync(Failure(e))
+        case Failure(e) => Future.sync(Failure(e))
       }
     })
   }
-  
+
   private def validateAccountUpdates(current: AccountInformation, newInfo: AccountInformation): Validation[String, AccountInformation] = {
     // Is it fair to assume that all the validation has been done so far???
     Success(newInfo)
   }
-  
+
   private def internalUpdate(info: AccountInformation): FV[String, AccountInformation] = {
     val jObject = info.serialize(AccountInformation.UnsafeAccountInfoDecomposer).asInstanceOf[JObject]
     val query = MongoQueryBuilder.update(collection).set(jObject).where("id.tokens.master" === info.id.tokens.master)
@@ -513,10 +959,10 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
     fvApply(getByEmail(email), disable)
   }
   def disableByToken(token: String): FV[String, AccountInformation] = {
-    
+
     fvApply(getByToken(token), disable)
   }
-  
+
   private def disable(acc: AccountInformation): FV[String, AccountInformation] = {
     val updatedAccountInfo = acc.copy(service = acc.service.copy(status = AccountStatus.DISABLED))
     internalUpdate(updatedAccountInfo)
@@ -524,7 +970,7 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
 
   def removeByEmail(email: String): FV[String, AccountInformation] = sys.error("accountStore.removeByEmail Not yet implemented.")
   def removeByToken(token: String): FV[String, AccountInformation] = sys.error("accountStore.removeByToken Not yet implemented.")
-     
+
 }
 
 trait BillingInformationStore {
@@ -535,607 +981,25 @@ trait BillingInformationStore {
   def getByEmail(email: String): FV[String, BillingInformation]
   def getByToken(token: String): FV[String, BillingInformation]
 
+  def update(token: String, email: String, contact: ContactInformation): FV[String, BillingInformation]
   def update(token: String, email: String, contact: ContactInformation, info: BillingInformation): FV[String, BillingInformation]
 
   def removeByEmail(email: String): FV[String, BillingInformation]
   def removeByToken(token: String): FV[String, BillingInformation]
 
   def startSubscription(token: String, planId: String): FV[String, String]
-  
+
   def changeSubscriptionPlan(subscriptionId: String, planId: String): FV[String, String]
-  
-  def stopSubscriptionByToken(token: String): FV[String, String]
+
   def stopSubscriptionBySubscriptionId(subscriptionId: String): FV[String, String]
 
   def findPlans(): List[Plan]
   def findPlan(planId: String): Option[Plan]
 }
 
-class Accounts(config: ConfigMap, tokens: TokenGenerator, billingService: BraintreeService, database: Database, accountsCollection: String) {
-  
-  import FutureValidationHelpers._
-  
-  type FV[E, A] = Future[Validation[E, A]]
-
-  def credits = config.getConfigMap("credits")
-
-  def create(create: CreateAccount): FV[String, Account] = {
-    val errs = validateCreate(create)
-    errs match {
-      case Some(s) => Future.sync(Failure(s))
-      case _ => {
-        val existingAccount = findByEmail(create.email)
-
-        val credit = create.planCreditOption.flatMap { creditProgram =>
-          credits.map { c =>
-            val r = c.getInt(creditProgram, 0)
-            r
-          }
-        }.getOrElse(0)
-
-        existingAccount.flatMap {
-          case Success(a) => Future.sync(Failure("An account associated with this email already exists."))
-          case Failure(_) => {
-            val tokens = newAccountTokens(toPath(create.email))
-
-            tokens.flatMap[Validation[String, Account]] {
-              case Success(ats) => {
-                val billing = establishBilling(create, ats.master, credit > 0)
-
-                billing match {
-                  case Success(ob) => {
-                    val tracking = createTrackingAccount(create, ob, ats, credit)
-                    tracking.map {
-                      case Success(ta) => {
-                        Success(buildAccount(ob, ta))
-                      }
-                      case Failure(e) => {
-                        undoBilling(ats.master)
-                        undoNewTokens(ats)
-                        Failure(e)
-                      }
-                    }
-                  }
-                  case Failure(e) => {
-                    undoNewTokens(ats)
-                    Future.sync(Failure[String, Account](e))
-                  }
-                }
-              }
-              case Failure(e) => {
-                Future.sync(Failure[String, Account](e))
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  
-  def undoNewTokens(accountTokens: AccountTokens): Unit = {
-    accountTokens.development.foreach(tokens.deleteToken(_))
-    tokens.deleteToken(accountTokens.production)
-    tokens.deleteToken(accountTokens.tracking)
-    tokens.deleteToken(accountTokens.master)
-  }
-  
-  private def find(email: Option[String], token: Option[String]): FV[String, Account] = {
-    token.map(findByToken).getOrElse {
-      email.map(findByEmail(_)).getOrElse {
-        Future.sync(Failure("You must provide either an email or token in order to update your account."))
-      }
-    }
-  }
-
-  private def toPath(email: String): String = {
-    val parts = email.split("[@.]")
-    val sanitizedParts = parts.map(sanitize)
-    "/" + sanitizedParts.reduceLeft((a, b) => b + "_" + a)
-  }
-
-  private def sanitize(s: String): String = {
-    s.replaceAll("\\W", "_")
-  }
-
-  private def validateCreate(create: CreateAccount): Option[String] = {
-    validateOther(create).orElse(validateBilling(create.billing))
-  }
-
-  private def validateOther(c: CreateAccount): Option[String] = {
-    if (!validEmailAddress(c.email)) {
-      Some("Invalid email address: " + c.email)
-    } else if (c.password.length == 0) {
-      Some("Password may not be zero length.")
-    } else if (!planAvailable(c.planId)) {
-      Some("The selected plan (" + c.planId + ") is not available.")
-    } else {
-      None
-    }
-  }
-
-  private def validateBilling(ob: Option[BillingInformation]): Option[String] = {
-    ob match {
-      case Some(b) if b.cardholder.trim().size == 0 => Some("Cardholder name required.")
-      case Some(b) if b.billingPostalCode.trim().size == 0 => Some("Postal code required.")
-      case _ => None
-    }
-  }
-
-  private val emailPattern = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,4}".r
-  private def validEmailAddress(e: String): Boolean = {
-    emailPattern.pattern.matcher(e).matches()
-  }
-
-  private def planAvailable(p: String): Boolean = {
-    val plans = billingService.findPlans()
-    plans.any(plan => plan.getId() == p)
-  }
-
-  def updateAccount(a: Account): FV[String, Account] = Future.sync(Failure("Not yet implemented"))
-
-  def cancelWithEmail(e: String, p: String): FV[String, Account] = Future.sync(Failure("Not yet implemented"))
-  def cancelWithToken(t: String, p: String): FV[String, Account] = Future.sync(Failure("Not yet implemented"))
-
-  def findByToken(t: String): FV[String, Account] = {
-    val query = select().from(accountsCollection).where(("id.tokens.master" === t))
-    findByQuery(query)
-  }
-
-  def findByEmail(e: String, forceNotFound: Boolean = false): FV[String, Account] = {
-    if (forceNotFound) Future.sync(Failure("Account not found.")) else {
-      val query = select().from(accountsCollection).where(("id.email" === e))
-      findByQuery(query)
-    }
-  }
-
-  private def findByQuery(q: MongoSelectQuery): FV[String, Account] = {
-    val tracking = singleTrackingAccountQuery(q)
-    tracking.map { vt =>
-      {
-        vt.flatMap { t =>
-          val billing = getBilling(t)
-          billing.map(b => buildAccount(t, b))
-        }
-      }
-    }
-  }
-
-  def findAll(): Future[List[Validation[String, Account]]] = {
-    val tracking = getAllTracking
-    tracking.map { t =>
-      t.map { t =>
-        {
-          val billing = getBilling(t)
-          billing.map(b => buildAccount(t, b))
-        }
-      }
-    }
-  }
-
-  def findPlans(): FV[String, List[Plan]] = Future.sync(Failure("Not yet implemented"))
-
-  def audit(): FV[String, AuditResults] = Future.sync(Failure("Not yet implemented"))
-
-  def assessment(): FV[String, AssessmentResults] = {
-    val now = new DateTime(DateTimeZone.UTC).toDateMidnight.toDateTime
-    findAll().map { accs =>
-      val assessment = accs.foldLeft(new AssessmentResults)(accountValidationAssessment(now))
-      Success(assessment)
-    }
-  }
-
-  private def accountValidationAssessment(now: DateTime)(ass: AssessmentResults, acc: Validation[String, Account]): AssessmentResults = {
-    acc.fold(_ => ass, a => accountAssessment(now)(ass, a))
-  }
-
-  private def accountAssessment(now: DateTime)(ass: AssessmentResults, acc: Account): AssessmentResults = {
-    val daysBetween = Days.daysBetween(acc.service.lastCreditAssessment, now).getDays
-    if (daysBetween <= 0) {
-      ass
-    } else {
-      val creditAssessed = assessCredit(acc, now, daysBetween)
-      val subscriptionAdjusted = adjustSubscription(creditAssessed, now)
-      if (acc ne subscriptionAdjusted) {
-        trustedUpdateAccount(acc.id.tokens.master, subscriptionAdjusted)
-      } else {
-      }
-      ass
-    }
-  }
-
-  private def assessCredit(acc: Account, now: DateTime, daysBetween: Int): Account = {
-    val service = acc.service
-    if (service.credit <= 0) {
-      ValueAccount(
-        acc.id,
-        acc.contact,
-        service.withNewCredit(now, 0),
-        acc.billing)
-    } else {
-      val dayRate = dailyRate(service)
-      val adjustedCredit = service.credit - (daysBetween * dayRate)
-      val newCredit = math.max(0, adjustedCredit)
-
-      ValueAccount(
-        acc.id,
-        acc.contact,
-        service.withNewCredit(now, newCredit),
-        acc.billing)
-    }
-  }
-
-  private val daysPerYear = 365
-  private val monthsPerYear = 12
-  private val averageDaysPerMonth = 1.0 * 365 / 12
-
-  private def dailyRate(service: ServiceInformation): Int = {
-    val plan = billingService.findPlan(service.planId)
-    val monthlyRate: Float = plan.map(p => p.getPrice().floatValue).getOrElse(0)
-    val dailyRate = monthlyRate / averageDaysPerMonth
-    (dailyRate * 100).toInt
-  }
-
-  private val graceDays = 7
-
-  private def adjustSubscription(acc: Account, now: DateTime): Account = {
-    if (acc.service.status == AccountStatus.GRACE_PERIOD) {
-      disableIfGracePeriodExpired(acc, now)
-    } else if (acc.service.status == AccountStatus.ACTIVE) {
-      if (acc.service.credit > 0) {
-        if (acc.service.subscriptionId.isDefined) {
-          stopSubscription(acc)
-        } else {
-          acc
-        }
-      } else {
-        if (acc.billing.isDefined) {
-          startSubscription(acc)
-        } else {
-          startGracePeriod(acc, now)
-        }
-      }
-    } else {
-      acc
-    }
-  }
-
-  private def disableIfGracePeriodExpired(acc: Account, now: DateTime): Account = {
-    acc.service.gracePeriodExpires.map(exp => {
-      if (now.isAfter(exp)) {
-        ValueAccount(
-          acc.id,
-          acc.contact,
-          acc.service.disableAccount,
-          acc.billing)
-      } else {
-        acc
-      }
-    }).getOrElse(acc)
-  }
-
-  private def stopSubscription(acc: Account): Account = {
-    billingService.stopSubscription(acc.service.subscriptionId)
-    ValueAccount(
-      acc.id,
-      acc.contact,
-      acc.service.withNewSubscription(None),
-      acc.billing)
-  }
-
-  private def startSubscription(acc: Account): Account = {
-    acc.billing.flatMap(b => {
-      val cust = billingService.findCustomer(acc.id.tokens.master)
-      cust.flatMap(c => {
-        billingService.newSubscription(c, acc.service.planId) match {
-          case Success(s) => {
-            Some(ValueAccount(
-              acc.id,
-              acc.contact,
-              acc.service.withNewSubscription(Some(s.getId())),
-              acc.billing))
-          }
-          case _ => None
-        }
-      })
-    }).getOrElse(acc)
-  }
-
-  private def startGracePeriod(acc: Account, now: DateTime): Account = {
-    ValueAccount(
-      acc.id,
-      acc.contact,
-      acc.service.activeGracePeriod(now.plusDays(graceDays)),
-      acc.billing)
-  }
-
-  def trustedCreateAccount(acc: Account): Future[Unit] = {
-    val tracking = acc.asTrackingAccount
-    val billing = acc.asBillingAccount
-
-    val b: Option[String] = billing.billing.flatMap(b => {
-      val c = CreateAccount(
-        acc.id.email,
-        "",
-        None,
-        acc.service.planId,
-        None,
-        acc.contact,
-        billing.billing)
-
-      val newba = billingService.newCustomer(c, b, acc.id.tokens.master)
-      val subs = billing.subscriptionId.flatMap { s =>
-        val c = billingService.findCustomer(acc.id.tokens.master)
-        c.map(c => {
-          billingService.newSubscription(c, acc.service.planId)
-        })
-      }
-      subs.flatMap {
-        case Success(s) => Some(s.getId())
-      }
-    })
-
-    val newTracking = TrackingAccount(
-      tracking.id, tracking.contact, tracking.service.withNewSubscription(b))
-
-    val jval: JValue = newTracking.serialize
-    val q = insert(jval --> classOf[JObject]).into(accountsCollection)
-    database(q)
-  }
-
-  private def trustedUpdateAccount(acc: Account): Future[Validation[String, Account]] = {
-    trustedUpdateAccount(acc.id.tokens.master, acc)
-  }
-
-  private def trustedUpdateAccount(token: String, acc: Account): Future[Validation[String, Account]] = {
-    updateTracking(token, acc.asTrackingAccount).map(_.map(_ => acc))
-    // clearly missing billing update here
-  }
-
-  private def updateTracking(t: String, a: TrackingAccount): Future[Validation[String, Unit]] = {
-    val jval: JValue = a.serialize
-    val q = MongoQueryBuilder.update(accountsCollection).set(jval --> classOf[JObject]).where("id.tokens.master" === t)
-    val res: Future[Unit] = database(q)
-    res.map { u =>
-      Success(u)
-    }
-  }
-
-  def closeAccount(account: Account): Future[Validation[String, String]] = {
-    Future.sync(Success("Account closed."))
-  }
-
-  def newAccountTokens(path: String): FV[String, AccountTokens] = {
-    val master = newToken(path)
-    val tokens: FV[String, (((String, String), String), String)] = fvApply(newToken(path), (m: String) => {
-      val prod = newChildToken(m, "/prod/")
-      val tracking: FV[String, String] = Future.sync(Success("tracking-tbd"))
-      val dev = newChildToken(m, "/dev/")
-      fvJoin(fvJoin(fvJoin(master, tracking), prod), dev)
-    });
-    
-    tokens.map(_.map{ t => {
-      AccountTokens(t._1._1._1, t._1._1._2, t._1._2, Some(t._2))
-    }})
-  }
-  
-  def newChildToken(parent: String, path: String): FV[String, String] = {
-    tokens.newChildToken(parent, path)
-  }
-
-  def newToken(path: String): Future[Validation[String, String]] = {
-    tokens.newToken(path)
-  }
-
-  def undoNewToken(token: String): Unit = {
-    tokens.deleteToken(token)
-  }
-
-  def establishBilling(create: CreateAccount, token: String, hasCredit: Boolean): Validation[String, Option[BillingAccount]] = {
-    create.billing match {
-      case Some(b) if hasCredit => {
-        val cust = billingService.newCustomer(create, b, token)
-        cust match {
-          case Success(c) => {
-            Success(Some(BillingAccount(Some(b), None)))
-          }
-          case Failure(e) => Failure(e)
-        }
-      }
-      case Some(b) => {
-        val cust = billingService.newCustomer(create, b, token)
-        cust match {
-          case Success(c) => {
-            val subs = billingService.newSubscription(c, create.planId)
-            subs match {
-              case Success(s) => {
-                Success(Some(BillingAccount(Some(b), Some(s.getId()))))
-              }
-              case Failure(e) => {
-                val remove = billingService.removeCustomer(c.getId())
-                remove match {
-                  case Success(s) => Failure(e)
-                  case Failure(e) => Failure(e + "(Unable to remove customer info.)")
-                }
-              }
-            }
-          }
-          case Failure(e) => Failure(e)
-        }
-      }
-      case None if hasCredit => {
-        Success(None)
-      }
-      case None => {
-        Failure("Unable to create account without account credit or billing information.")
-      }
-    }
-  }
-
-  def undoBilling(token: String): Unit = {
-    println("Rolling back billing")
-  }
-
-  def createTrackingAccount(create: CreateAccount, billing: Option[BillingAccount], tokens: AccountTokens, credit: Int): Future[Validation[String, TrackingAccount]] = {
-    val created = new DateTime(DateTimeZone.UTC)
-    val today = created.toDateMidnight().toDateTime()
-    val aid = AccountId(create.email, tokens, PasswordHash.saltedHash(create.password))
-    val srv = ServiceInformation(
-      create.planId,
-      created,
-      credit,
-      today,
-      0,
-      AccountStatus.ACTIVE,
-      None,
-      billing.flatMap(b => b.subscriptionId))
-
-    val trackingAccount = TrackingAccount(aid, create.contact, srv)
-
-    val query = insert((trackingAccount.serialize) --> classOf[JObject]).into(accountsCollection)
-    val futureResult = database(query)
-
-    futureResult.map[Validation[String, TrackingAccount]] { _ =>
-      Success(trackingAccount)
-    }.orElse { ot: Option[Throwable] =>
-      ot.map { t: Throwable =>
-        val message = t.getMessage
-        if (message.startsWith("E11000")) {
-          Failure("An account associated with this email already exists.")
-        } else {
-          Failure(message)
-        }
-      }.getOrElse {
-        Failure("Error initializing account.")
-      }
-    }
-  }
-
-  def buildAccount(billing: Option[BillingAccount], tracking: TrackingAccount): Account = {
-    val service = tracking.service
-    val newService = ServiceInformation(
-      service.planId,
-      service.accountCreated,
-      service.credit,
-      service.lastCreditAssessment,
-      service.usage,
-      service.status,
-      service.gracePeriodExpires,
-      billing.flatMap(b => b.subscriptionId))
-
-    ValueAccount(
-      tracking.id,
-      tracking.contact,
-      newService,
-      billing.flatMap(b => b.billing))
-  }
-
-  def emailConfirmation(account: Account): Future[Validation[String, Account]] = {
-    confirmationEmail(account)
-    Future.sync(Success(account))
-  }
-
-  private def confirmationEmail(account: Account): Unit = {
-
-  }
-
-  private def getAllTracking(): Future[List[TrackingAccount]] = {
-    val query = select().from(accountsCollection)
-    multipleTrackingAccountQuery(query)
-  }
-
-  private def getBilling(tracking: TrackingAccount): Validation[String, BillingAccount] = {
-    val cust = billingService.findCustomer(tracking.id.tokens.master)
-    val b = cust.map(c => toBillingAccount(c)).
-      getOrElse(BillingAccount(None, None))
-    Success(b)
-  }
-
-  private def toBillingAccount(customer: Customer): BillingAccount = {
-    val cards = customer.getCreditCards()
-    val card = if (cards.size == 1) Some(cards.get(0)) else None
-    val billingInfo = card.map { c =>
-      {
-        BillingInformation(
-          c.getCardholderName(),
-          c.getLast4(),
-          c.getExpirationMonth().toInt,
-          c.getExpirationYear().toInt,
-          c.getBillingAddress().getPostalCode(),
-          "")
-      }
-    }
-    val subs = card.flatMap { c =>
-      {
-        val subs = c.getSubscriptions()
-        if (subs.size == 1) Some(subs.get(0).getId()) else None
-      }
-    }
-    BillingAccount(billingInfo, subs)
-  }
-
-  private def buildAccount(
-    tracking: TrackingAccount,
-    billing: BillingAccount): Account = {
-    ValueAccount(
-      tracking.id,
-      tracking.contact,
-      tracking.service,
-      billing.billing)
-  }
-
-  private def singleTrackingAccountQuery(q: MongoSelectQuery): Future[Validation[String, TrackingAccount]] = {
-    val result = database(q)
-    result.map { result =>
-      val l = result.toList
-      l.size match {
-        case 1 => {
-          Success(l.head.deserialize[TrackingAccount])
-        }
-        case 0 => Failure("Account not found.")
-        case _ => Failure("More than one account found.")
-      }
-    }
-  }
-
-  private def multipleTrackingAccountQuery(q: MongoSelectQuery): Future[List[TrackingAccount]] = {
-    val result = database(q)
-    result.map { result =>
-      result.toList.map(_.deserialize[TrackingAccount])
-    }
-  }
-}
-
-case class TrackingAccount(
-  id: AccountId,
-  contact: ContactInformation,
-  service: ServiceInformation)
-
-trait TrackingAccountSerialization {
-
-    implicit val TrackingAccountDecomposer: Decomposer[TrackingAccount] = new Decomposer[TrackingAccount] {
-
-    implicit val idDecomposer = AccountId.UnsafeAccountIdDecomposer
-
-    override def decompose(tracking: TrackingAccount): JValue = JObject(
-      List(
-        JField("id", tracking.id.serialize),
-        JField("contact", tracking.contact.serialize),
-        JField("service", tracking.service.serialize)).filter(fieldHasValue))
-  }
-
-  implicit val TrackingAccountExtractor: Extractor[TrackingAccount] = new Extractor[TrackingAccount] with ValidatedExtraction[TrackingAccount] {
-    override def validated(obj: JValue): Validation[Error, TrackingAccount] = (
-      (obj \ "id").validated[AccountId] |@|
-      (obj \ "contact").validated[ContactInformation] |@|
-      (obj \ "service").validated[ServiceInformation]).apply(TrackingAccount(_, _, _))
-  }
-}
-
-object TrackingAccount extends TrackingAccountSerialization
-
-case class BillingAccount(
-  billing: Option[BillingInformation],
-  subscriptionId: Option[String])
+case class SubscriptionData(
+  id: String,
+  billingDay: Int)
 
 case class CreateAccount(
   email: String,
@@ -1221,39 +1085,6 @@ trait PasswordSerialization {
 
 object Password extends PasswordSerialization
 
-//case class UpdateAccount(
-//  auth: AccountAuthentication,
-//  newEmail: Option[String],
-//  newPassword: Option[Password],
-//  planId: String,
-//  contact: ContactInformation)
-//
-//trait UpdateAccountSerialization {
-//
-//  implicit val UpdateAccountDecomposer: Decomposer[UpdateAccount] = new Decomposer[UpdateAccount] {
-//    override def decompose(update: UpdateAccount): JValue = JObject(
-//      List(
-//        JField("authentication", update.auth.serialize),
-//        JField("newEmail", update.newEmail.serialize),
-//        JField("newPassword", update.newPassword.serialize),
-//        JField("planId", update.planId.serialize),
-//        JField("contact", update.contact.serialize)).filter(fieldHasValue))
-//  }
-//
-//  
-//  implicit val UpdateAccountExtractor: Extractor[UpdateAccount] = new Extractor[UpdateAccount] with ValidatedExtraction[UpdateAccount] {
-//    override def validated(obj: JValue): Validation[Error, UpdateAccount] = (
-//      (obj \ "authentication").validated[AccountAuthentication] |@|
-//      (obj \ "newEmail").validated[Option[String]] |@|
-//      (obj \ "newPassword").validated[Option[Password]] |@|
-//      (obj \ "planId").validated[String] |@|
-//      (obj \ "contact").validated[ContactInformation]).apply(UpdateAccount(_, _, _, _, _))
-//  }
-//}
-//
-//object UpdateAccount extends UpdateAccountSerialization
-
-
 case class UpdateAccount(
   auth: AccountAuthentication,
   newEmail: Option[String],
@@ -1273,7 +1104,6 @@ trait UpdateAccountSerialization {
         JField("newContact", update.newContact.serialize)).filter(fieldHasValue))
   }
 
-  
   implicit val UpdateAccountExtractor: Extractor[UpdateAccount] = new Extractor[UpdateAccount] with ValidatedExtraction[UpdateAccount] {
     override def validated(obj: JValue): Validation[Error, UpdateAccount] = (
       (obj \ "authentication").validated[AccountAuthentication] |@|
@@ -1312,7 +1142,7 @@ trait UpdateBillingSerialization {
       (obj \ "authentication").validated[AccountAuthentication] |@|
       (obj \ "billing").validated[BillingInformation]).apply(UpdateBilling(_, _))
   }
-  
+
 }
 
 object UpdateBilling extends UpdateBillingSerialization
@@ -1321,10 +1151,10 @@ case class BillingData(
   info: Option[BillingInformation],
   subscriptionId: Option[String])
 
-class AuditResults {
+class UsageAccountingResults {
 }
 
-class AssessmentResults {
+class CreditAccountingResults {
 }
 
 object TestAccounts {
@@ -1334,15 +1164,8 @@ object TestAccounts {
       Address("street", "city", "state", "60607")),
     ServiceInformation("starter",
       new DateTime(DateTimeZone.UTC), 0,
-      new DateTime(DateTimeZone.UTC).toDateMidnight().toDateTime(), 0,
-      AccountStatus.ACTIVE, None, None),
+      new DateTime(DateTimeZone.UTC).toDateMidnight().toDateTime(DateTimeZone.UTC), 0,
+      new DateTime(DateTimeZone.UTC).toDateMidnight().toDateTime(DateTimeZone.UTC), None, None,
+      AccountStatus.ACTIVE, None, 31, None),
     None)
-
-  def testTrackingAccount: TrackingAccount = {
-    val a = testAccount
-    TrackingAccount(
-      a.id,
-      a.contact,
-      a.service)
-  }
 }

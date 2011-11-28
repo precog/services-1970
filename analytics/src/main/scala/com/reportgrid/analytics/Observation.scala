@@ -127,6 +127,9 @@ object Tag {
     def autoResult = (Tags(Future.sync(Tag("timestamp", TimeReference(encoding, auto)) :: Nil)), remainder)
 
     (o \ TimestampProperty) match {
+      case JString("false") => skippedResult
+      case JString("true")  => autoResult
+      case JString("auto")  => autoResult
       case JBool(false)     => skippedResult
       case JBool(true)      => autoResult
       case JNothing | JNull => if (alwaysTrack) autoResult else skippedResult

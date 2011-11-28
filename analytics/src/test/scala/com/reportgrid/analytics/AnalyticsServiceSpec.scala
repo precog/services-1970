@@ -1,4 +1,5 @@
-package com.reportgrid.analytics
+package com.reportgrid
+package analytics
 
 import blueeyes._
 import blueeyes.core.data._
@@ -31,13 +32,18 @@ import scalaz.Scalaz._
 import Periodicity._
 import AggregationEngine.ResultSet
 import persistence.MongoSupport._
+import com.reportgrid.api._
+import com.reportgrid.api.blueeyes.ReportGrid
 import com.reportgrid.ct._
 import com.reportgrid.ct.Mult._
 import com.reportgrid.ct.Mult.MDouble._
+import service._
 
 import BijectionsChunkJson._
 import BijectionsChunkString._
 import BijectionsChunkFutureJson._
+
+import rosetta.json.blueeyes._
 
 case class PastClock(duration: Duration) extends Clock {
   def now() = new DateTime().minus(duration)
@@ -58,6 +64,17 @@ trait TestTokens {
 }
 
 trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsService with LocalMongo with TestTokens {
+  val TrackingToken = TestToken.issue(relativePath = "storage", limits = Limits(order = 1, depth = 2, limit = 5, tags = 1, rollup = 10))
+
+  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager] = {
+    TokenManager(database, tokensCollection, deletedTokensCollection) deliverTo {
+      tokenManager => {
+        tokenManager.tokenCache.put(TestToken.tokenId, TestToken)
+        tokenManager.tokenCache.put(TrackingToken.tokenId, TrackingToken)
+      }
+    }
+  }
+
   val requestLoggingData = """
     requestLog {
       enabled = true
@@ -75,11 +92,34 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
   def auditClient(config: ConfigMap) = external.NoopTrackingClient
   def jessup(configMap: ConfigMap) = external.Jessup.Noop
 
-  def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): Future[TokenManager] = {
-    TokenManager(database, tokensCollection, deletedTokensCollection) deliverTo {
-      tokenManager => tokenManager.tokenCache.put(TestToken.tokenId, TestToken)
+  def storageReporting(config: ConfigMap) = {
+
+    val testServer = Server("/")
+
+    val testHttpClient = new HttpClient[String] {
+      def request(method: String, url: String, content: Option[String], headers: Map[String, String] = Map.empty[String, String]): String = {
+        val httpMethods = HttpMethods.parseHttpMethods(method)
+        val httpMethod = httpMethods match {
+          case m :: Nil => m
+          case _        => error("Only one http method expected")
+        }
+        val chunkContent = content.map(StringToChunk(_))
+        val futureResult = service.apply(HttpRequest(httpMethod, url, Map(), headers, chunkContent))
+        val result = FutureUtils.get(futureResult)
+        result.content.map(ChunkToString).getOrElse("")
+      }
     }
+
+    val clientConfig = new ReportGridConfig(
+      TrackingToken.tokenId,
+      testServer,
+      testHttpClient
+    )
+    val testClient = new ReportGridClient(clientConfig)
+
+    new ReportGridStorageReporting(TrackingToken.tokenId, testClient) 
   }
+
 
   lazy val jsonTestService = service.contentType[JValue](application/(MimeTypes.json)).
                                      query("tokenId", TestToken.tokenId)
@@ -90,8 +130,6 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
 
 class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
   override val genTimeClock = clock 
-
-  println("New test class instance")
 
   object sampleData extends Outside[List[Event]] with Scope {
     val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
@@ -487,6 +525,139 @@ class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEv
           case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
         }
       }) 
+    }
+  }
+}
+
+class StorageReportingAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+
+  override val genTimeClock = Clock.System
+
+  val testStart = genTimeClock.now
+  
+  lazy val trackingTestService = service.contentType[JValue](application/(MimeTypes.json)).
+                                     query("tokenId", TrackingToken.tokenId)
+  
+  val testValues = 1.until(9).map("val" + _)
+
+  val testData = testValues.map(v => Event("track", EventData(JObject(List(JField("prop", v)))), List[Tag]())).toList
+
+  object simpleSampleData extends Outside[Event] with Scope {
+    def outside = testData(0) ->- { e: Event =>
+      jsonTestService.post[JValue]("/vfs/test")(e.message)
+    }
+  }
+ 
+
+  object sampleData extends Outside[List[Event]] with Scope {
+    def outside = testData.slice(1, testData.length) ->- {
+      _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
+    }
+  }
+ 
+  def histogramTotal(jval: JValue): Long = {
+    val outer = jval.asInstanceOf[JArray]
+    outer.values.foldLeft(0: Long){ (sum, e) => {
+      sum + (e match {
+        case value :: count :: Nil => value.asInstanceOf[BigInt].toLong * count.asInstanceOf[BigInt].toLong
+        case _                      => {
+          error("Invalid histogram result")
+        }
+      })
+    }}
+  }
+
+  "Storage report" should {
+    "a single track should produce a single count" in simpleSampleData { sampleEvent =>
+      (jsonTestService.get[JValue]("/vfs/test/.track/count") must whenDelivered {
+        beLike {
+          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== 1
+        }
+      }) and {
+        trackingTestService.get[JValue]("/vfs/unittest/.stored/count") must whenDelivered {
+          beLike {
+            case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== 1
+          }
+        }
+      } and {
+        trackingTestService.get[JValue]("/vfs/unittest/.stored.count/histogram") must whenDelivered {
+          beLike {
+            case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+              histogramTotal(result) must_== 1
+            }
+          }
+        }
+      }
+    }
+    "multiple tracks should create a matching number of counts" in sampleData { sampleEvents =>
+      (jsonTestService.get[JValue]("/vfs/test/.track/count") must whenDelivered {
+        beLike {
+          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== testData.length
+        }
+      }) and {
+        trackingTestService.get[JValue]("/vfs/unittest/.stored/count") must whenDelivered {
+          beLike {
+            case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+              result.deserialize[Int] must be_>(0) and be_<=(testData.length)
+            }
+          }
+        }
+      } and {
+        trackingTestService.get[JValue]("/vfs/unittest/.stored.count/histogram") must whenDelivered {
+          beLike {
+            case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+              histogramTotal(result) must_== testData.length 
+            }
+          }
+        }
+      }
+    }
+
+    def timeBoundedUsageSums(tokenId: String, path: String, start: DateMidnight, end: DateMidnight): Future[HttpResponse[JValue]] = {
+      val client = service.contentType[JValue](application/(MimeTypes.json))
+                                     .query("tokenId", tokenId)
+                                     .query("start", start.getMillis.toString)
+                                     .query("end", end.getMillis.toString)
+   
+      client.get[JValue]("/vfs/" + path + "/series/day/sums")
+    }
+
+    def reduceUsageSums(jval: JValue): Long = {
+      println(jval)
+      jval match {
+        case JArray(Nil) => 0l
+        case JArray(l)   => l.map {
+          case JArray(ts :: JDouble(c) :: Nil ) => c.toLong
+          case JArray(ts :: v :: Nil)         => 0l
+          case _                              => sys.error("Unexpected series result format")
+        }.reduce(_ + _)
+        case _           => sys.error("Error parsing usage count.")
+      }
+    }
+
+    "time bounded histogram includes expected counts" in { 
+      val today = new DateTime(DateTimeZone.UTC).toDateMidnight
+
+      timeBoundedUsageSums(TrackingToken.tokenId, "unittest/.stored.count", 
+                           today, today.plusDays(1)) must whenDelivered {
+        beLike {
+          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+            reduceUsageSums(result) must_== 8
+          }
+        }
+      }
+    }
+    "time bounded histogram excludes expected counts" in { 
+      val today = new DateTime(DateTimeZone.UTC).toDateMidnight
+
+      timeBoundedUsageSums(TrackingToken.tokenId, "unittest/.stored.count", 
+                           today.minusDays(1), today) must whenDelivered {
+        beLike {
+          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+            reduceUsageSums(result) must_== 0
+          }
+        }
+      }
     }
   }
 }

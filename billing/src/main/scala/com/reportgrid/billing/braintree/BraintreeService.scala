@@ -2,6 +2,9 @@ package com.reportgrid.billing.braintree
 
 import com.braintreegateway._
 
+import _root_.org.joda.time.DateTime
+import _root_.org.joda.time.DateTimeZone
+
 import blueeyes.concurrent.Future
 
 import scalaz.{Validation, Success, Failure, Semigroup}
@@ -14,7 +17,7 @@ import com.reportgrid.billing.ContactInformation
 import com.reportgrid.billing.CreateAccount
 
 class BraintreeService(gateway: BraintreeGateway, environment: Environment) extends BillingInformationStore {
-
+  
   def create(token: String, email: String, contact: ContactInformation, info: BillingInformation): FV[String, BillingInformation] = {
     Future.sync(if (conflictingCustomers(token, email)) {
       Failure("The account token or email requested is already in use.")
@@ -86,6 +89,29 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) exte
     }
     BillingData(billingInfo, subs)
 
+  }
+
+  def update(token: String, email: String, contact: ContactInformation): FV[String, BillingInformation] = {
+    val cust = findCustomer(token)
+    
+    cust.map[FV[String, BillingInformation]] { c => {
+      val request = new CustomerRequest()
+          .email(email)
+          .company(contact.company)
+          .website(contact.website)
+  
+      val result: Result[Customer] = gateway.customer().update(c.getId(), request)
+        
+      if (result.isSuccess()) {
+        getByToken(token)
+      } else {
+        val ccv = result.getCreditCardVerification()
+        val occv = if(ccv == null) None else Some(ccv)
+        Future.sync(Failure(collapseErrors(result.getErrors(), occv)))
+      }
+    }}.getOrElse {
+      Future.sync(Failure("Error updating billing contact information."))
+    }
   }
   
   def update(token: String, email: String, contact: ContactInformation, info: BillingInformation): FV[String, BillingInformation] = {
@@ -204,8 +230,14 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) exte
     })
   }
 
-  def stopSubscriptionByToken(token: String): FV[String, String] = sys.error("billing.stopSubscriptionByToken Not yet implemented.")
-  def stopSubscriptionBySubscriptionId(subscriptionId: String): FV[String, String] = sys.error("billing.stopSubscriptionById Not yet implemented.")
+  def stopSubscriptionBySubscriptionId(subscriptionId: String): FV[String, String] = {
+      val result = gateway.subscription().cancel(subscriptionId)
+      Future.sync(if (result.isSuccess) {
+        Success(subscriptionId)
+      } else {
+        Failure(collapseErrors(result.getErrors(), None))
+      })
+  }
   
   // Customer management
   
@@ -397,4 +429,53 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) exte
     
     "Billing errors:" + validationErrors + verificationError 
   }
+}
+
+object BraintreeUtils {
+  // produces a billing date compatible with braintree's
+  // billing date scheme...where the billing date may be
+  // 1-28 or 31 where 31 has the special meaning of billing
+  // on the last date of the month regardless of the actual
+  // date for the last day of the month. This addresses the
+  // ragged variability of billing on the last few days of
+  // the month.
+  def billingDay(now: DateTime): Int = {
+    now.getDayOfMonth match {
+      case x if x >= 29 => 31
+      case x            => x
+    }
+  }
+  
+  def billingStartDate(now: DateTime, billingDay: Int): DateTime = {
+    billingDay match {
+      case 31 => {
+        now.withDayOfMonth(1).toDateMidnight().toDateTime(DateTimeZone.UTC)
+      }
+      case d => {
+        val candidate = now.withDayOfMonth(d).toDateMidnight().toDateTime(DateTimeZone.UTC)
+        if(candidate.isAfter(now)) {
+          candidate.minusMonths(1)
+        } else {
+          candidate
+        }
+      }
+    }
+  }
+  
+  def billingFinishDate(now: DateTime, billingDay: Int): DateTime = {
+    billingDay match {
+      case 31 => {
+        now.withDayOfMonth(1).plusMonths(1).toDateMidnight().toDateTime(DateTimeZone.UTC)
+      }
+      case d => {
+        val candidate = now.withDayOfMonth(d).toDateMidnight().toDateTime(DateTimeZone.UTC)
+        if(candidate.isAfter(now)) {
+          candidate
+        } else {
+          candidate.plusMonths(1)
+        }
+      }
+    }    
+  }
+
 }

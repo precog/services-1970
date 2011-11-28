@@ -41,12 +41,12 @@ trait LocalMongo {
   def mongoConfigFileData = """
     eventsdb {
       database = "%s"
-      servers  = ["localhost:27017"]
+      servers  = ["127.0.0.1:27017"]
     }
 
     indexdb {
       database = "%s"
-      servers  = ["localhost:27017"]
+      servers  = ["127.0.0.1:27017"]
     }
 
     tokens {

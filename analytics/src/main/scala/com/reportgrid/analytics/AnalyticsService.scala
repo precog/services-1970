@@ -51,7 +51,7 @@ import com.reportgrid.ct.Mult.MDouble._
 import com.reportgrid.instrumentation.blueeyes.ReportGridInstrumentation
 import com.reportgrid.api.ReportGridTrackingClient
 
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
+case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, storageReporting: StorageReporting, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombinators with ReportGridInstrumentation {
   import AggregationEngine._
@@ -66,6 +66,8 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
   def mongoFactory(configMap: ConfigMap): Mongo
 
   def auditClient(configMap: ConfigMap): ReportGridTrackingClient[JValue] 
+
+  def storageReporting(configMap: ConfigMap): StorageReporting
 
   def jessup(configMap: ConfigMap): Jessup
 
@@ -97,6 +99,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           } yield {
             AnalyticsState(
               aggregationEngine, tokenManager, 
+              storageReporting(config.configMap("storageReporting")),
               auditClient(config.configMap("audit")),
               jessup(config.configMap("jessup")))
           }
@@ -114,11 +117,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                */
               path("/store") {
                 vfsPath {
-                  post(new TrackingService(aggregationEngine, timeSeriesEncoding, clock, state.jessup, false)).audited("store")
+                  post(new TrackingService(aggregationEngine, state.storageReporting, timeSeriesEncoding, clock, state.jessup, false)).audited("store")
                 }
               } ~ 
               vfsPath {
-                post(new TrackingService(aggregationEngine, timeSeriesEncoding, clock, state.jessup, true)).audited("track") ~
+                post(new TrackingService(aggregationEngine, state.storageReporting, timeSeriesEncoding, clock, state.jessup, true)).audited("track") ~
                 get(new ExplorePathService[Future[JValue]](aggregationEngine)).audited("explore paths") ~
                 variable {
                   path(/?) {

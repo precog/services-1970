@@ -1,5 +1,6 @@
 package com.reportgrid.billing
 
+import org.joda.time.Minutes
 import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
 
@@ -36,6 +37,7 @@ import blueeyes.core.data.ByteChunk
 import net.lag.configgy.ConfigMap
 import com.braintreegateway.BraintreeGateway
 import com.reportgrid.billing.braintree.BraintreeService
+import com.reportgrid.billing.braintree.BraintreeUtils._
 import com.reportgrid.billing.BillingServiceHandlers._
 import com.braintreegateway.Environment
 import net.lag.configgy.Configgy
@@ -54,20 +56,20 @@ trait TestBillingService extends BlueEyesServiceSpecification with BillingServic
   val testDatabase = "accounts_test"
   val testCollection = "accounts_test"
 
-  //  Configgy.configureFromString("""
-  //        mongo {
-  //          database = "accounts_test"
-  //          collection = "accounts_test"
-  //          servers = ["127.0.0.1:27017"]
-  //        }
-  //        accounts {
-  //          credits {
-  //            developer = 25000
+  //    Configgy.configureFromString("""
+  //          mongo {
+  //            database = "accounts_test"
+  //            collection = "accounts_test"
+  //            servers = ["127.0.0.1:27017"]
   //          }
-  //        }
-  //    """)
-  //
-  //  val mongo = new RealMongo(Configgy.config.configMap("mongo"))
+  //          accounts {
+  //            credits {
+  //              developer = 25000
+  //            }
+  //          }
+  //      """)
+  //  
+  //    val mongo = new RealMongo(Configgy.config.configMap("mongo"))
 
   val mongo = new MockMongo
 
@@ -76,8 +78,8 @@ trait TestBillingService extends BlueEyesServiceSpecification with BillingServic
   val billingService = braintreeFactory()
   val accounts = accountsFactory(null)
 
-  override def mailerFactory(config: ConfigMap) = {
-    if (useSendGridTestMailer) sendGridTestMailer else new NullMailer
+  override def notificationsFactory(config: ConfigMap) = {
+    mockNotifications
   }
 
   def sendGridTestMailer(): Mailer = {
@@ -90,24 +92,15 @@ trait TestBillingService extends BlueEyesServiceSpecification with BillingServic
     new OverrideMailTo(Array("nick@reportgrid.com"), new SendGridMailer(httpClient, url, apiUser, apiKey))
   }
 
-  override def accountsFactory(config: ConfigMap) = {
-    val database = mongo.database(testDatabase)
-    val billingService = braintreeFactory()
-    val tokenGenerator = new MockTokenGenerator
+  val mockUsageClient = new MockUsageClient
 
-    Configgy.configureFromString("""
-        accounts {
-          credits {
-            developer = 25000
-          }
-        }
-    """)
-    val cfg = Configgy.config.configMap("accounts")
-
-    new Accounts(cfg, tokenGenerator, billingService, database, testCollection)
+  override def usageClientFactory(config: ConfigMap) = {
+    mockUsageClient
   }
 
-  override def naccountsFactory(config: ConfigMap) = {
+  val mockNotifications = new MockNotificationSender
+
+  override def accountsFactory(config: ConfigMap) = {
     val database = mongo.database(testDatabase)
     val tokenGenerator = new MockTokenGenerator
 
@@ -120,7 +113,13 @@ trait TestBillingService extends BlueEyesServiceSpecification with BillingServic
     """)
     val cfg = Configgy.config.configMap("accounts")
 
-    new PrivateAccounts(cfg, new MongoAccountInformationStore(database, testCollection), braintreeFactory(), tokenGenerator)
+    new PrivateAccounts(
+        cfg, 
+        new MongoAccountInformationStore(database, testCollection), 
+        braintreeFactory(),
+        mockUsageClient,
+        mockNotifications, 
+        tokenGenerator)
   }
 
   def braintreeFactory(): BraintreeService = {
@@ -195,7 +194,7 @@ trait TestData {
     Some(goodBilling))
 
   val createAccount3 = CreateAccount(
-    "g@h.com",
+    "john.doe@mail.com",
     "abc123",
     None,
     "bronze",
@@ -204,9 +203,8 @@ trait TestData {
       Address("", "", "", "30000")),
     Some(moreGoodBilling))
 
-  val createAccounts = createAccount1 :: createAccount2 :: Nil
+  val createAccounts = createAccount1 :: createAccount2 :: createAccount3 :: Nil
 }
-
 
 class BillingServiceSpec extends TestBillingService {
 
@@ -218,11 +216,9 @@ class BillingServiceSpec extends TestBillingService {
     createAccountSetup
     def after = createAccountTeardown
   }
-      
+
   "Billing service" should {
     "handle account creation" in {
-      
-
       "succeeding with" in {
         "developer credit and no billing" in new accountCleanup {
           val t = createAccount1.copy(planId = "bronze")
@@ -234,14 +230,14 @@ class BillingServiceSpec extends TestBillingService {
           val acc = create(t)
           acc must matchAccount(t)
         }
-        "no credit and billing" in  new accountCleanup {
+        "no credit and billing" in new accountCleanup {
           val t = createAccount1.copy(planCreditOption = None, billing = Some(goodBilling))
           val acc = create(t)
           acc must matchAccount(t)
         }
       }
       "failing with" in {
-        step( cleanup )
+        step(cleanup)
         "no credit and no billing" in {
           val t = createAccount1.copy(planCreditOption = None)
           ensureCreateAccountReturnsError(t, "Unable to create account without account credit or billing information.")
@@ -254,7 +250,7 @@ class BillingServiceSpec extends TestBillingService {
             ensureCreateAccountReturnsError(createAccount1, "An account associated with this email already exists.")
             accountCount() must beEqualTo(1)
           }
-          step( cleanup )
+          step(cleanup)
           "bad email" in {
             val t = createAccount1.copy(email = "notAnEmail", planCreditOption = None)
             ensureCreateAccountReturnsError(t, "Invalid email address: notAnEmail")
@@ -306,11 +302,11 @@ class BillingServiceSpec extends TestBillingService {
             val t = createAccount1.copy(billing = Some(b))
             ensureCreateAccountReturnsError(t, "Billing errors:")
           }
-//          "cvv non participation" in {
-//            val b = goodBilling.copy(cvv = "301")
-//            val t = createAccount1.copy(billing = Some(b))
-//            ensureCreateAccountReturnsError(t, "Billing errors: CVV must be 3 or 4 digits.")
-//          }
+          //          "cvv non participation" in {
+          //            val b = goodBilling.copy(cvv = "301")
+          //            val t = createAccount1.copy(billing = Some(b))
+          //            ensureCreateAccountReturnsError(t, "Billing errors: CVV must be 3 or 4 digits.")
+          //          }
           "empty cvv" in {
             val b = goodBilling.copy(cvv = "")
             val t = createAccount1.copy(billing = Some(b))
@@ -331,22 +327,21 @@ class BillingServiceSpec extends TestBillingService {
             val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
             ensureCreateAccountReturnsError(t, "Postal code required.")
           }
-//          "verfication error" in {
-//            skip("This is not currently rejected by our billing configuration.")
-//            val b = goodBilling.copy(billingPostalCode = "30000")
-//            val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
-//            ensureCreateAccountReturnsError(t, "Test")
-//          }
-//          "verification not supported" in {
-//            skip("This is not currently rejected by our billing configuration.")
-//            val b = goodBilling.copy(billingPostalCode = "30001")
-//            val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
-//            ensureCreateAccountReturnsError(t, "Test")
-//          }
+          //          "verfication error" in {
+          //            skip("This is not currently rejected by our billing configuration.")
+          //            val b = goodBilling.copy(billingPostalCode = "30000")
+          //            val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
+          //            ensureCreateAccountReturnsError(t, "Test")
+          //          }
+          //          "verification not supported" in {
+          //            skip("This is not currently rejected by our billing configuration.")
+          //            val b = goodBilling.copy(billingPostalCode = "30001")
+          //            val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
+          //            ensureCreateAccountReturnsError(t, "Test")
+          //          }
         }
       }
     }
-        
     "handle account retrieval" in {
       "handle account information retrieval" in {
         "succeeding with" in {
@@ -370,7 +365,7 @@ class BillingServiceSpec extends TestBillingService {
         }
       }
       "handle billing information retrieval" in {
-        
+
         val emailWithBilling = createAccount2.email
 
         "succeeding with" in {
@@ -415,7 +410,6 @@ class BillingServiceSpec extends TestBillingService {
         }
       }
     }
-    
     "handle account information update" in {
       "succeeding with " in {
         "valid email and password" in new accountUpdateScope {
@@ -442,7 +436,7 @@ class BillingServiceSpec extends TestBillingService {
           val post = getAccountOrFail(updatedAccount.email)
           accountDoesNotExist(createAccount2.email)
           post.asAccountInformation must matchAccountInfo(updatedAccount)
-          post.billing must beSomeAndMatch(matchBillingInfo(updatedAccount))          
+          post.billing must beSomeAndMatch(matchBillingInfo(updatedAccount))
         }
         "only new password" in new accountUpdateScope {
           val pre = getAccountOrFail(createAccount2.email)
@@ -478,7 +472,7 @@ class BillingServiceSpec extends TestBillingService {
           res must whenDelivered { beSomeAndMatch(matchAccountInfo(updatedAccount)) }
           val post = getAccountOrFail(updatedAccount.email)
           post.asAccountInformation must matchAccountInfo(updatedAccount)
-          post.billing must beSomeAndMatch(matchBillingInfo(updatedAccount))          
+          post.billing must beSomeAndMatch(matchBillingInfo(updatedAccount))
         }
       }
       "failing with " in {
@@ -605,8 +599,8 @@ class BillingServiceSpec extends TestBillingService {
         }
       }
     }
-    "handle account assessment" in {      
-      
+    "handle credit accounting" in {
+
       val now = new DateTime(DateTimeZone.UTC)
       val today = now.toDateMidnight.toDateTime
 
@@ -632,12 +626,12 @@ class BillingServiceSpec extends TestBillingService {
           pre.service.accountCreated must sameTime(t.service.accountCreated)
           pre.service.usage must beEqualTo(t.service.usage)
           pre.service.status must beEqualTo(t.service.status)
-          pre.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          pre.service.lastAccountStatusChange must beNone
           pre.service.subscriptionId must beEqualTo(t.service.subscriptionId)
 
           pre.billing must matchBilling(t.billing)
 
-          callAndWaitOnAssessment()
+          callAndWaitOnCreditAccounting()
 
           val post = getAccountOrFail(t.id.email)
 
@@ -654,7 +648,7 @@ class BillingServiceSpec extends TestBillingService {
           post.service.accountCreated must sameTime(t.service.accountCreated)
           post.service.usage must beEqualTo(t.service.usage)
           post.service.status must beEqualTo(t.service.status)
-          post.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          post.service.lastAccountStatusChange must beNone
           post.service.subscriptionId must beEqualTo(t.service.subscriptionId)
 
           post.billing must matchBilling(t.billing)
@@ -681,12 +675,12 @@ class BillingServiceSpec extends TestBillingService {
           pre.service.accountCreated must sameTime(t.service.accountCreated)
           pre.service.usage must beEqualTo(t.service.usage)
           pre.service.status must beEqualTo(t.service.status)
-          pre.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          pre.service.lastAccountStatusChange must beNone
           pre.service.subscriptionId must beEqualTo(t.service.subscriptionId)
 
           pre.billing must matchBilling(t.billing)
 
-          callAndWaitOnAssessment()
+          callAndWaitOnCreditAccounting()
 
           val post = getAccountOrFail(t.id.email)
 
@@ -703,7 +697,7 @@ class BillingServiceSpec extends TestBillingService {
           post.service.accountCreated must sameTime(t.service.accountCreated)
           post.service.usage must beEqualTo(t.service.usage)
           post.service.status must beEqualTo(t.service.status)
-          post.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          post.service.lastAccountStatusChange must beNone
           post.service.subscriptionId must beSome
 
           post.billing must matchBilling(t.billing)
@@ -730,12 +724,12 @@ class BillingServiceSpec extends TestBillingService {
           pre.service.accountCreated must sameTime(t.service.accountCreated)
           pre.service.usage must beEqualTo(t.service.usage)
           pre.service.status must beEqualTo(t.service.status)
-          pre.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          pre.service.lastAccountStatusChange must beNone
           pre.service.subscriptionId must beEqualTo(t.service.subscriptionId)
 
           pre.billing must matchBilling(t.billing)
 
-          callAndWaitOnAssessment()
+          callAndWaitOnCreditAccounting()
 
           val post = getAccountOrFail(t.id.email)
 
@@ -752,7 +746,7 @@ class BillingServiceSpec extends TestBillingService {
           post.service.accountCreated must sameTime(t.service.accountCreated)
           post.service.usage must beEqualTo(t.service.usage)
           post.service.status must beEqualTo(t.service.status)
-          post.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          post.service.lastAccountStatusChange must beNone
           post.service.subscriptionId must beEqualTo(t.service.subscriptionId)
 
           post.billing must matchBilling(t.billing)
@@ -778,12 +772,12 @@ class BillingServiceSpec extends TestBillingService {
           pre.service.accountCreated must sameTime(t.service.accountCreated)
           pre.service.usage must beEqualTo(t.service.usage)
           pre.service.status must beEqualTo(t.service.status)
-          pre.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          pre.service.lastAccountStatusChange must beNone
           pre.service.subscriptionId must beEqualTo(t.service.subscriptionId)
 
           pre.billing must matchBilling(t.billing)
 
-          callAndWaitOnAssessment()
+          callAndWaitOnCreditAccounting()
 
           val post1 = getAccountOrFail(t.id.email)
 
@@ -800,12 +794,12 @@ class BillingServiceSpec extends TestBillingService {
           post1.service.accountCreated must sameTime(t.service.accountCreated)
           post1.service.usage must beEqualTo(t.service.usage)
           post1.service.status must beEqualTo(t.service.status)
-          post1.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          post1.service.lastAccountStatusChange must beNone
           post1.service.subscriptionId must beEqualTo(t.service.subscriptionId)
 
           post1.billing must matchBilling(t.billing)
 
-          callAndWaitOnAssessment()
+          callAndWaitOnCreditAccounting()
 
           val post2 = getAccountOrFail(t.id.email)
 
@@ -822,13 +816,14 @@ class BillingServiceSpec extends TestBillingService {
           post2.service.accountCreated must sameTime(t.service.accountCreated)
           post2.service.usage must beEqualTo(t.service.usage)
           post2.service.status must beEqualTo(t.service.status)
-          post2.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          post2.service.lastAccountStatusChange must beNone
           post2.service.subscriptionId must beEqualTo(t.service.subscriptionId)
 
           post2.billing must matchBilling(t.billing)
 
         }
       }
+
       "correctly manage subscriptions" in {
         "if credit is geater than zero stop active subscription" in {
 
@@ -852,12 +847,12 @@ class BillingServiceSpec extends TestBillingService {
           pre.service.accountCreated must sameTime(t.service.accountCreated)
           pre.service.usage must beEqualTo(t.service.usage)
           pre.service.status must beEqualTo(t.service.status)
-          pre.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          pre.service.lastAccountStatusChange must beNone
           pre.service.subscriptionId must beSome
 
           pre.billing must matchBilling(t.billing)
 
-          callAndWaitOnAssessment()
+          callAndWaitOnCreditAccounting()
 
           val post = getAccountOrFail(t.id.email)
 
@@ -874,7 +869,7 @@ class BillingServiceSpec extends TestBillingService {
           post.service.accountCreated must sameTime(t.service.accountCreated)
           post.service.usage must beEqualTo(t.service.usage)
           post.service.status must beEqualTo(t.service.status)
-          post.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          post.service.lastAccountStatusChange must beNone
           post.service.subscriptionId must beNone
 
           post.billing must matchBilling(t.billing)
@@ -901,12 +896,12 @@ class BillingServiceSpec extends TestBillingService {
           pre.service.accountCreated must sameTime(t.service.accountCreated)
           pre.service.usage must beEqualTo(t.service.usage)
           pre.service.status must beEqualTo(t.service.status)
-          pre.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          pre.service.lastAccountStatusChange must beNone
           pre.service.subscriptionId must beNone
 
           pre.billing must matchBilling(t.billing)
 
-          callAndWaitOnAssessment()
+          callAndWaitOnCreditAccounting()
 
           val post = getAccountOrFail(t.id.email)
 
@@ -923,12 +918,12 @@ class BillingServiceSpec extends TestBillingService {
           post.service.accountCreated must sameTime(t.service.accountCreated)
           post.service.usage must beEqualTo(t.service.usage)
           post.service.status must beEqualTo(t.service.status)
-          post.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          post.service.lastAccountStatusChange must beNone
           post.service.subscriptionId must beSome
 
           post.billing must matchBilling(t.billing)
         }
-        "if credit is zero and billing not available put account in grace period" in {
+        "if credit is zero and billing not available disable account" in {
           val t = ValueAccount(
             newId("t7"),
             newContact(Some("93449")),
@@ -949,62 +944,12 @@ class BillingServiceSpec extends TestBillingService {
           pre.service.accountCreated must sameTime(t.service.accountCreated)
           pre.service.usage must beEqualTo(t.service.usage)
           pre.service.status must beEqualTo(t.service.status)
-          pre.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
+          pre.service.lastAccountStatusChange must beNone
           pre.service.subscriptionId must beNone
 
           pre.billing must matchBilling(t.billing)
 
-          callAndWaitOnAssessment()
-
-          val post = getAccountOrFail(t.id.email)
-
-          // Check account has new credit reduced by the expected amount
-          post.service.credit must beEqualTo(0)
-          // last assessed date is today
-          post.service.lastCreditAssessment must beEqualTo(today)
-
-          // all other attributes remain unchanged
-          post.id must matchId(t.id)
-          post.contact must beEqualTo(t.contact)
-
-          post.service.planId must beEqualTo(t.service.planId)
-          post.service.accountCreated must sameTime(t.service.accountCreated)
-          post.service.usage must beEqualTo(t.service.usage)
-          post.service.status must beEqualTo(AccountStatus.GRACE_PERIOD)
-          post.service.gracePeriodExpires must sameTimeOption(Some(today.plusDays(7)))
-          post.service.subscriptionId must beNone
-
-          post.billing must matchBilling(t.billing)
-        }
-        "move account from grace period to expried after grace period time elapsed" in {
-          val t = ValueAccount(
-            newId("t8"),
-            newContact(Some("93449")),
-            newService(0, today.minusDays(1), None, GRACE_PERIOD, Some(today.minusDays(7))),
-            Some(goodBilling))
-
-          createAccount(t)
-
-          val pre = getAccountOrFail(t.id.email)
-
-          // required concept is equals (--)
-
-          pre.service.credit must beEqualTo(0)
-          pre.service.lastCreditAssessment must beEqualTo(today.minusDays(1))
-
-          pre.id must matchId(t.id)
-          pre.contact must beEqualTo(t.contact)
-
-          pre.service.planId must beEqualTo(t.service.planId)
-          pre.service.accountCreated must sameTime(t.service.accountCreated)
-          pre.service.usage must beEqualTo(t.service.usage)
-          pre.service.status must beEqualTo(t.service.status)
-          pre.service.gracePeriodExpires must sameTimeOption(t.service.gracePeriodExpires)
-          pre.service.subscriptionId must beNone
-
-          pre.billing must matchBilling(t.billing)
-
-          callAndWaitOnAssessment()
+          callAndWaitOnCreditAccounting()
 
           val post = getAccountOrFail(t.id.email)
 
@@ -1021,11 +966,313 @@ class BillingServiceSpec extends TestBillingService {
           post.service.accountCreated must sameTime(t.service.accountCreated)
           post.service.usage must beEqualTo(t.service.usage)
           post.service.status must beEqualTo(AccountStatus.DISABLED)
-          post.service.gracePeriodExpires must beNone
+          post.service.lastAccountStatusChange must beSome
           post.service.subscriptionId must beNone
 
           post.billing must matchBilling(t.billing)
         }
+      }
+    }
+    "handle usage accounting " in {
+      trait accountCleanup extends Scope with After {
+        def after = cleanup
+      }
+
+      "accumulate usage in normal case" in new accountCleanup {
+        val now = new DateTime(DateTimeZone.UTC)
+
+        val usage = 1001
+
+        mockUsageClient.default = Some(usage)
+
+        // create test account
+        val t = ValueAccount(
+          newId("u1"),
+          newContact(Some("93449")),
+          newService(0, now, now.minusMinutes(10), None, ACTIVE, None),
+          Some(goodBilling))
+
+        createAccount(t)
+        mockNotifications.notifications.clear
+
+        // run assessment
+        callAndWaitOnUsageAccounting()
+
+        // check results
+        val post = getAccountOrFail(t.id.email)
+
+        val startDate = billingStartDate(now, t.service.billingDay)
+        val minutes = Minutes.minutesBetween(startDate, now).getMinutes
+
+        post.service.usage must_== 1001
+        Minutes.minutesBetween(post.service.lastUsageAssessment, now).getMinutes must_== 0
+
+        mockNotifications.notifications.size must_== 1
+        mockNotifications.notifications(0).isInstanceOf[AdminNotification] must beTrue
+
+        val expected = post.service.copy(usage = 0, lastUsageAssessment = now.minusMinutes(10))
+
+        expected must_== t.service
+      }
+      "notify of usage rate to exceed monthly quota and outside the quiet period" in new accountCleanup {
+
+        val now = new DateTime(DateTimeZone.UTC)
+
+        val usage = 99999
+
+        mockUsageClient.default = Some(usage)
+
+        // create test account
+        val t = ValueAccount(
+          newId("u2"),
+          newContact(Some("93449")),
+          newService(0, now, now.minusMinutes(10), None, ACTIVE, None),
+          Some(goodBilling))
+
+        val targetDayOfMonth = now.getDayOfMonth() match {
+          case x if x >= 28 => 1
+          case x => x + 1
+        }
+
+        val tt = t.copy(service = t.service.copy(billingDay = targetDayOfMonth, planId = "starter"))
+
+        createAccount(tt)
+        mockNotifications.notifications.clear
+
+        // run assessment
+        callAndWaitOnUsageAccounting()
+
+        // check results
+        val post = getAccountOrFail(tt.id.email)
+
+        post.service.usage must_== usage
+        post.service.lastUsageWarning must beSome
+        Minutes.minutesBetween(post.service.lastUsageAssessment, now).getMinutes must_== 0
+
+        mockNotifications.notifications.size must_== 2
+        mockNotifications.notifications(0).isInstanceOf[UpgradeWarning] must beTrue
+        mockNotifications.notifications(1).isInstanceOf[AdminNotification] must beTrue
+
+        val expected = post.service.copy(usage = 0, lastUsageAssessment = now.minusMinutes(10), lastUsageWarning = None)
+
+        expected must_== tt.service
+      }
+      "quota notification skipped when already sent this billing cycle" in new accountCleanup {
+
+        val now = new DateTime(DateTimeZone.UTC)
+
+        val usage = 99999
+
+        mockUsageClient.default = Some(usage)
+
+        // create test account
+        val t = ValueAccount(
+          newId("u2"),
+          newContact(Some("93449")),
+          newService(0, now, now.minusMinutes(10), None, ACTIVE, None),
+          Some(goodBilling))
+
+        val targetDayOfMonth = now.getDayOfMonth() match {
+          case x if x >= 28 => 1
+          case x => x + 1
+        }
+
+        val tt = t.copy(service = t.service.copy(billingDay = targetDayOfMonth, planId = "starter", lastUsageWarning = Some(now.minusDays(1))))
+
+        createAccount(tt)
+        mockNotifications.notifications.clear
+
+        // run assessment
+        callAndWaitOnUsageAccounting()
+
+        // check results
+        val post = getAccountOrFail(tt.id.email)
+
+        post.service.usage must_== usage
+
+        mockNotifications.notifications.size must_== 1
+        mockNotifications.notifications(0).isInstanceOf[AdminNotification] must beTrue
+
+        val expected = post.service.copy(usage = 0, lastUsageAssessment = now.minusMinutes(10))
+
+        expected must_== tt.service
+      }
+      "no action inside quota quiet period" in new accountCleanup {
+
+        val now = new DateTime(DateTimeZone.UTC)
+
+        val usage = 99999
+
+        mockUsageClient.default = Some(usage)
+
+        // create test account
+        val t = ValueAccount(
+          newId("u3"),
+          newContact(Some("93449")),
+          newService(0, now, now.minusMinutes(10), None, ACTIVE, None),
+          Some(goodBilling))
+
+        val targetDayOfMonth = now.getDayOfMonth() match {
+          case 1 => 31
+          case x if x >= 28 => 27
+          case x => x - 1
+        }
+
+        val tt = t.copy(service = t.service.copy(billingDay = targetDayOfMonth, planId = "starter"))
+
+        createAccount(tt)
+        mockNotifications.notifications.clear
+
+        // run assessment
+        callAndWaitOnUsageAccounting()
+
+        // check results
+        val post = getAccountOrFail(tt.id.email)
+
+        post.service.usage must_== usage
+        Minutes.minutesBetween(post.service.lastUsageAssessment, now).getMinutes must_== 0
+
+        mockNotifications.notifications.size must_== 1
+        mockNotifications.notifications(0).isInstanceOf[AdminNotification] must beTrue
+
+        val expected = post.service.copy(usage = 0, lastUsageAssessment = now.minusMinutes(10))
+
+        expected must_== tt.service
+      }
+      "automatically upgrade plan if usage exceeds monthly quota" in new accountCleanup {
+
+        val now = new DateTime(DateTimeZone.UTC)
+
+        val usage = 100001
+
+        mockUsageClient.default = Some(usage)
+
+        // create test account
+        val t = ValueAccount(
+          newId("u4"),
+          newContact(Some("93449")),
+          newService(0, now, now.minusMinutes(10), None, ACTIVE, None),
+          Some(goodBilling))
+
+        val targetDayOfMonth = now.getDayOfMonth() match {
+          case x if x >= 28 => 1
+          case x => x + 1
+        }
+
+        val tt = t.copy(service = t.service.copy(billingDay = targetDayOfMonth, planId = "starter", lastUsageWarning = Some(now)))
+
+        createAccount(tt)
+        mockNotifications.notifications.clear
+
+        // run assessment
+        callAndWaitOnUsageAccounting()
+
+        // check results
+        val post = getAccountOrFail(tt.id.email)
+
+        post.service.usage must_== usage
+        post.service.planId must_== "bronze"
+        Minutes.minutesBetween(post.service.lastUsageAssessment, now).getMinutes must_== 0
+
+        mockNotifications.notifications.size must_== 2
+        mockNotifications.notifications(0).isInstanceOf[UpgradeConfirmation] must beTrue
+        mockNotifications.notifications(1).isInstanceOf[AdminNotification] must beTrue
+
+        val expected = post.service.copy(usage = 0, planId = "starter", lastUsageAssessment = now.minusMinutes(10))
+
+        expected must_== tt.service
+      }
+      "notify user of no viable upgrade path" in new accountCleanup {
+
+        val now = new DateTime(DateTimeZone.UTC)
+
+        val usage = 13000001
+
+        mockUsageClient.default = Some(usage)
+
+        // create test account
+        val t = ValueAccount(
+          newId("u5"),
+          newContact(Some("93449")),
+          newService(0, now, now.minusMinutes(10), None, ACTIVE, None),
+          Some(goodBilling))
+
+        val targetDayOfMonth = now.getDayOfMonth() match {
+          case x if x >= 28 => 1
+          case x => x + 1
+        }
+
+        val tt = t.copy(service = t.service.copy(billingDay = targetDayOfMonth, planId = "gold", lastUsageWarning = Some(now)))
+
+        createAccount(tt)
+
+        mockNotifications.notifications.clear
+
+        // run assessment
+        callAndWaitOnUsageAccounting()
+
+        // check results
+        val post = getAccountOrFail(tt.id.email)
+
+        post.service.usage must_== usage
+        post.service.planId must_== "gold"
+        post.service.lastNoUpgradeWarning must beSome
+        Minutes.minutesBetween(post.service.lastUsageAssessment, now).getMinutes must_== 0
+
+        mockNotifications.notifications.size must_== 2
+        mockNotifications.notifications(0).isInstanceOf[NoUpgradeWarning] must beTrue
+        mockNotifications.notifications(1).isInstanceOf[AdminNotification] must beTrue
+
+        val expected = post.service.copy(usage = 0, lastUsageAssessment = now.minusMinutes(10), lastNoUpgradeWarning = None)
+
+        expected must_== tt.service
+      }
+      "skip no viable upgrade path when already sent this billing cycle" in new accountCleanup {
+
+        val now = new DateTime(DateTimeZone.UTC)
+
+        val usage = 13000001
+
+        mockUsageClient.default = Some(usage)
+
+        // create test account
+        val t = ValueAccount(
+          newId("u5"),
+          newContact(Some("93449")),
+          newService(0, now, now.minusMinutes(10), None, ACTIVE, None),
+          Some(goodBilling))
+
+        val targetDayOfMonth = now.getDayOfMonth() match {
+          case x if x >= 28 => 1
+          case x => x + 1
+        }
+
+        val tt = t.copy(service = t.service.copy(billingDay = targetDayOfMonth,
+          planId = "gold",
+          lastUsageWarning = Some(now),
+          lastNoUpgradeWarning = Some(now.minusHours(1))))
+
+        createAccount(tt)
+
+        mockNotifications.notifications.clear
+
+        // run assessment
+        callAndWaitOnUsageAccounting()
+
+        // check results
+        val post = getAccountOrFail(tt.id.email)
+
+        post.service.usage must_== usage
+        post.service.planId must_== "gold"
+        post.service.lastNoUpgradeWarning must beSome(now.minusHours(1))
+        Minutes.minutesBetween(post.service.lastUsageAssessment, now).getMinutes must_== 0
+
+        mockNotifications.notifications.size must_== 1
+        mockNotifications.notifications(0).isInstanceOf[AdminNotification] must beTrue
+
+        val expected = post.service.copy(usage = 0, lastUsageAssessment = now.minusMinutes(10))
+
+        expected must_== tt.service
       }
     }
   }
@@ -1065,19 +1312,31 @@ trait TestHelpers { self: TestBillingService =>
     }
   }
 
-  def newService(credit: Int, lastAssessment: DateTime, subsId: Option[String], status: AccountStatus): ServiceInformation = {
-    newService(credit, lastAssessment, subsId, status, None)
+  def newService(credit: Int, lastCreditAssessment: DateTime, subsId: Option[String], status: AccountStatus): ServiceInformation = {
+    newService(credit, lastCreditAssessment, lastCreditAssessment, subsId, status, None)
   }
 
-  def newService(credit: Int, lastAssessment: DateTime, subsId: Option[String], status: AccountStatus, gracePeriodExpires: Option[DateTime]): ServiceInformation = {
+  def newService(credit: Int, lastCreditAssessment: DateTime, lastUsageAssessment: DateTime, subsId: Option[String], status: AccountStatus): ServiceInformation = {
+    newService(credit, lastCreditAssessment, lastUsageAssessment, subsId, status, None)
+  }
+
+  def newService(credit: Int, lastCreditAssessment: DateTime, subsId: Option[String], status: AccountStatus, gracePeriodExpires: Option[DateTime]): ServiceInformation = {
+    newService(credit, lastCreditAssessment, lastCreditAssessment, subsId, status, gracePeriodExpires)
+  }
+
+  def newService(credit: Int, lastCreditAssessment: DateTime, lastUsageAssessment: DateTime, subsId: Option[String], status: AccountStatus, gracePeriodExpires: Option[DateTime]): ServiceInformation = {
     ServiceInformation(
       "bronze",
       new DateTime(DateTimeZone.UTC),
       credit,
-      lastAssessment,
+      lastCreditAssessment,
       0,
+      lastUsageAssessment,
+      None,
+      None,
       status,
       gracePeriodExpires,
+      2,
       subsId)
   }
 
@@ -1087,7 +1346,7 @@ trait TestHelpers { self: TestBillingService =>
   }
 
   def getAccountOrFail(email: String): Account = {
-    val facc = accounts.findByEmail(email)
+    val facc = accounts.trustedGetAccount(email)
     while (!facc.isDone) {}
     val acc = facc.toOption.flatMap(_.toOption)
     acc must beSome
@@ -1095,23 +1354,40 @@ trait TestHelpers { self: TestBillingService =>
   }
 
   def accountDoesNotExist(email: String) {
-    val facc = accounts.findByEmail(email)
+    val facc = accounts.trustedGetAccount(email)
     while (!facc.isDone) {}
     val acc = facc.toOption.flatMap(_.toOption)
     acc must beNone
   }
 
-  def callAssessment(sslHeader: (String, String) = SslHeader): Future[Option[Unit]] = {
+  def callUsageAccounting(sslheader: (String, String) = SslHeader): Future[Option[Unit]] = {
     val f = service.header(sslHeader)
       .query("token", Token.Root.tokenId)
       .contentType[JValue](application / MimeTypes.json)
-      .post[JValue]("/accounts/assess")("")
+      .post[JValue]("/accounts/usage/accounting")("")
 
     f.map { h => h.content.map(_ => Unit) }
   }
 
-  def callAndWaitOnAssessment(): Unit = {
-    val res = callAssessment()
+  def callAndWaitOnUsageAccounting(): Unit = {
+    val res = callUsageAccounting()
+    while (!res.isDone) {}
+    val v = res.value
+    v must eventually(beSome)
+    v.get must beSome
+  }
+
+  def callCreditAccounting(sslHeader: (String, String) = SslHeader): Future[Option[Unit]] = {
+    val f = service.header(sslHeader)
+      .query("token", Token.Root.tokenId)
+      .contentType[JValue](application / MimeTypes.json)
+      .post[JValue]("/accounts/credit/accounting")("")
+
+    f.map { h => h.content.map(_ => Unit) }
+  }
+
+  def callAndWaitOnCreditAccounting(): Unit = {
+    val res = callCreditAccounting()
     while (!res.isDone) {}
     val v = res.value
     v must eventually(beSome)
@@ -1127,9 +1403,15 @@ trait TestHelpers { self: TestBillingService =>
     f.value.get.get.id.tokens.master
   }
 
+  private val verboseInOut = false;
+
   private val verbosePost = false;
 
   def postJsonRequest[A, B](url: String, a: A, sslHeader: (String, String) = sslHeader)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
+    if (verboseInOut) {
+      println("Url: " + url)
+      println("Request: " + Printer.pretty(Printer.render(a.serialize(d))))
+    }
     val f = service.header(sslHeader)
       .contentType[JValue](application / MimeTypes.json)
       .post[JValue](url)(a.serialize(d))
@@ -1141,6 +1423,7 @@ trait TestHelpers { self: TestBillingService =>
       }
       h.content.map { c =>
         try {
+          if (verboseInOut) println("Response: " + Printer.pretty(Printer.render(c)))
           if (verbosePost) {
             println(c)
             println("Deserializing now")
@@ -1164,6 +1447,10 @@ trait TestHelpers { self: TestBillingService =>
   private val verbosePut = false;
 
   def putJsonRequest[A, B](url: String, a: A, sslHeader: (String, String) = sslHeader)(implicit d: Decomposer[A], e: Extractor[B]): Future[Option[B]] = {
+    if (verboseInOut) {
+      println("Url: " + url)
+      println("Request: " + Printer.pretty(Printer.render(a.serialize(d))))
+    }
     val f = service.header(sslHeader)
       .contentType[JValue](application / MimeTypes.json)
       .put[JValue](url)(a.serialize(d))
@@ -1175,6 +1462,7 @@ trait TestHelpers { self: TestBillingService =>
       }
       h.content.map { c =>
         try {
+          if (verboseInOut) println("Response: " + Printer.pretty(Printer.render(c)))
           if (verbosePut) {
             println(c)
             println("Deserializing now")
@@ -1196,7 +1484,7 @@ trait TestHelpers { self: TestBillingService =>
   }
 
   val UnsafeCreateAccountDecomposer: Decomposer[CreateAccount] = new Decomposer[CreateAccount] {
-    
+
     import SerializationHelpers._
     override def decompose(account: CreateAccount): JValue = JObject(
       List(
@@ -1321,13 +1609,13 @@ trait TestHelpers { self: TestBillingService =>
 
   def accountCount(): Int = {
     val accounts = accountsFactory(null)
-    val f = accounts.findAll
+    val f = accounts.getAll
     while (!f.isDone) {}
     f.value.toList.flatMap(_.flatMap(_.toOption)).size
   }
 
   def accountsUnchanged() {
-    accountCount() must beEqualTo(2)
+    accountCount() must beEqualTo(3)
 
     createAccounts.foreach(acc => {
       val checkAcc = getAccountOrFail(acc.email)
@@ -1381,7 +1669,7 @@ trait TestHelpers { self: TestBillingService =>
       } else if (b1.isEmpty && b2.isEmpty) {
         result(true, "Both are None", "na", e)
       } else {
-        result(false, "na", "One billing info is defined the other is not.",e)
+        result(false, "na", "One billing info is defined the other is not.", e)
       }
     }
   }
@@ -1413,7 +1701,7 @@ trait TestHelpers { self: TestBillingService =>
     def apply[T <: Account](e: Expectable[T]): MatchResult[T] = {
 
       val v = e.value
-      
+
       val signup = ca.email == v.id.email &&
         ca.planId == v.service.planId &&
         ca.contact == v.contact
@@ -1439,7 +1727,7 @@ trait TestHelpers { self: TestBillingService =>
     def apply[T <: AccountInformation](e: Expectable[T]): MatchResult[T] = {
 
       val ai = e.value
-      
+
       val signup = ca.email == ai.id.email &&
         ca.planId == ai.service.planId &&
         ca.contact == ai.contact
@@ -1481,5 +1769,5 @@ trait TestHelpers { self: TestBillingService =>
       e must beSome
       result(e.value.get must delegateMatcher, e)
     }
-  }  
+  }
 }

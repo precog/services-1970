@@ -1,4 +1,5 @@
 package com.reportgrid.analytics
+import  service._
 import  external._
 
 import blueeyes.BlueEyesServer
@@ -20,15 +21,29 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
     new blueeyes.persistence.mongo.RealMongo(configMap)
   }
 
+  def storageReporting(config: ConfigMap) = {
+    val conf = config.configMap("storageReporting")
+    val token = config.getString("token") getOrElse {
+      throw new IllegalStateException("storageReporting.tokenId must be specified in application config file. Service cannot start.")
+    }
+
+    val environment = conf.getString("environment", "production") match {
+      case "production" => Server.Production
+      case _            => Server.Local
+    }
+    
+    new ReportGridStorageReporting(token, ReportGrid(token, environment))
+  }
+
   def auditClient(config: ConfigMap) = {
     NoopTrackingClient
-//    val auditToken = config.getString("token", Token.Audit.tokenId)
-//    val environment = config.getString("environment", "production") match {
-//      case "production" => Server.Production
-//      case _            => Server.Local
-//    }
-//
-//    ReportGrid(auditToken, environment)
+    //val auditToken = config.configMap("audit.token")
+    //val environment = config.getString("environment", "production") match {
+    //  case "production" => Server.Production
+    //  case _            => Server.Local
+    //}
+
+    //ReportGrid(auditToken, environment)
   }
 
   def jessup(configMap: ConfigMap): Jessup = {

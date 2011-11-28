@@ -10,6 +10,8 @@ import scalaz.Scalaz._
 import scalaz.Validation._
 
 import org.joda.time.DateTime
+import org.joda.time.DateMidnight
+import org.joda.time.Minutes
 import org.apache.commons.codec.digest.DigestUtils
 import org.apache.commons.codec.binary.Hex
 import com.braintreegateway._
@@ -22,6 +24,7 @@ import blueeyes.persistence.mongo._
 import blueeyes.concurrent.Future
 import blueeyes.core.http.HttpRequest
 import blueeyes.core.http._
+import blueeyes.core.http.MimeTypes._
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonParser
@@ -37,6 +40,50 @@ import Extractor.Error
 import blueeyes.json.xschema.DefaultSerialization._
 
 import SerializationHelpers._
+
+trait UsageClient {
+  def apiCalls(tokenId: String, start: DateMidnight, finish: DateMidnight): Future[Long]
+}
+
+class RealUsageClient(client: HttpClient[ByteChunk], baseUrl: String) extends UsageClient {
+    
+  def timeBoundedUsageSums(tokenId: String, start: DateMidnight, end: DateMidnight): Future[HttpResponse[JValue]] = {
+    val c = client.contentType[JValue](application/(MimeTypes.json))
+                                   .query("tokenId", tokenId)
+                                   .query("start", start.getMillis.toString)
+                                   .query("end", end.getMillis.toString)
+ 
+    c.get[JValue](baseUrl + "/vfs/.storage.count/series/day/sums")
+  }
+
+  def reduceUsageSums(jval: JValue): Long = {
+    println(jval)
+    jval match {
+      case JArray(Nil) => 0l
+      case JArray(l)   => l.map {
+        case JArray(ts :: JDouble(c) :: Nil ) => c.toLong
+        case JArray(ts :: v :: Nil)         => 0l
+        case _                              => error("Unexpected series result format")
+      }.reduce(_ + _)
+      case _           => error("Error parsing usage count.")
+    }
+  }
+    
+  def apiCalls(tokenId: String, start: DateMidnight, finish: DateMidnight): Future[Long] = {
+    val result = timeBoundedUsageSums(tokenId, start, finish)
+    result.map(_.content.map(reduceUsageSums).getOrElse(0))
+  }
+}
+
+class MockUsageClient extends UsageClient {
+  
+  var default: Option[Long] = None
+  
+  def apiCalls(tokenId: String, start: DateMidnight, finish: DateMidnight): Future[Long] = {
+    val minutes = Minutes.minutesBetween(start, finish)
+    Future.sync(default.getOrElse( minutes.getMinutes )) 
+  }
+}
 
 abstract class TokenGenerator {
   def newToken(path: String): Future[Validation[String, String]]
@@ -57,9 +104,9 @@ class MockTokenGenerator extends TokenGenerator {
   override def deleteToken(token: String) = {
     Future.sync(Unit)
   }
-  
+
   override def disableToken(token: String) = {
-    Future.sync(Unit)    
+    Future.sync(Unit)
   }
 }
 
@@ -71,6 +118,7 @@ class RealTokenGenerator(client: HttpClient[ByteChunk], rootToken: String, rootU
   val defaultLimit = 10
   val defaultDepth = 3
   val defaultTags = 1
+  val defaultRollup = 0
 
   override def newToken(path: String) = {
     client.
@@ -90,17 +138,18 @@ class RealTokenGenerator(client: HttpClient[ByteChunk], rootToken: String, rootU
                 "order": %d,
                 "limit": %d,
                 "depth": %d,
-                "tags" : %d
+                "tags" : %d,
+                "rollup" : %d
             }
           }
-        """.format(path, defaultOrder, defaultLimit, defaultDepth, defaultTags)))
+        """.format(path, defaultOrder, defaultLimit, defaultDepth, defaultTags, defaultRollup)))
   }.map { h =>
     h.content match {
       case Some(JString(s)) => Success(s)
       case _ => Failure("Unable to create new token")
     }
   }
-  
+
   override def newChildToken(parent: String, path: String) = {
     client.
       query("tokenId", parent).
@@ -124,7 +173,7 @@ class RealTokenGenerator(client: HttpClient[ByteChunk], rootToken: String, rootU
       contentType[ByteChunk](application / json).
       delete[JValue](rootUrl + token)
   }.map(_ => Unit)
-  
+
   override def disableToken(token: String) = {
     Future.sync(Success(Unit))
   }
@@ -141,8 +190,6 @@ object BillingServiceHandlers {
   }
 
   class CreateAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
-
-    private val mailer = config.mailer
 
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
@@ -191,9 +238,9 @@ object BillingServiceHandlers {
   // Output
 
   abstract class AccountAccessHandler(config: BillingConfiguration) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-    val accounts = config.naccounts
+    val accounts = config.publicAccounts
   }
-  
+
   class CloseAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
@@ -214,11 +261,13 @@ object BillingServiceHandlers {
   }
 
   private def fvApply[E, A, B](r: Future[Validation[E, A]], f: A => Future[Validation[E, B]]): Future[Validation[E, B]] = {
-    r.flatMap{ _.map(f) match {
-      case Success(fva) => fva
-      case f @ Failure(s) => Future.sync(Failure(s))
-    }}
-  }  
+    r.flatMap {
+      _.map(f) match {
+        case Success(fva) => fva
+        case f @ Failure(s) => Future.sync(Failure(s))
+      }
+    }
+  }
 
   class UpdateBillingHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
@@ -241,7 +290,7 @@ object BillingServiceHandlers {
       }).map[HttpResponse[JValue]](x => collapseToHttpResponse(x.map(_.serialize)))
     }
   }
-  
+
   class GetBillingHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
       (request.content match {
@@ -297,11 +346,11 @@ object BillingServiceHandlers {
         case Some(js) => js.flatMap[Validation[String, AccountInformation]] {
           _.validated[UpdateAccount] match {
             case Success(ua) => accounts.updateAccountInformation(ua)
-            case Failure(e)  => Future.sync(Failure(e.message))
+            case Failure(e) => Future.sync(Failure(e.message))
           }
         }
       }).map[HttpResponse[JValue]](x => collapseToHttpResponse(x.map(_.serialize)))
-    }    
+    }
   }
 
   class GetAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
@@ -315,10 +364,9 @@ object BillingServiceHandlers {
           _.validated[AccountAuthentication] match {
             case Success(a) => {
               try {
-                accounts.getAccountInformation(a).orElse{ot => 
-                  Failure(ot.map(t => 
-                    {t.printStackTrace(System.out); "Caught exception."}
-                    ).getOrElse("Shouldn't happen"))
+                accounts.getAccountInformation(a).orElse { ot =>
+                  Failure(ot.map(t =>
+                    { t.printStackTrace(System.out); "Caught exception." }).getOrElse("Shouldn't happen"))
                 }
               } catch {
                 case ex => ex.printStackTrace(System.out); throw ex
@@ -333,28 +381,6 @@ object BillingServiceHandlers {
       }).map[HttpResponse[JValue]](x => collapseToHttpResponse(x.map(_.serialize)))
     }
   }
-
-//  class CloseAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
-//    def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
-//      (request.content match {
-//        case None => {
-//          monitor.count(".accounts.get.failure")
-//          Future.sync[Validation[String, Account]](failure("Missing request content"))
-//        }
-//        case Some(x) => x.flatMap[Validation[String, Account]] {
-//          _.validated[AccountAuthentication] match {
-//            case Success(a) => {
-//              accounts.closeAccount(a)
-//            }
-//            case Failure(e) => {
-//              monitor.count(".accounts.get.failure")
-//              Future.sync(failure(e.message))
-//            }
-//          }
-//        }
-//      }).map[HttpResponse[JValue]](x => collapseToHttpResponse(x.map(_.serialize)))
-//    }
-//  }
 
   class LegacyGetAccountHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
 
@@ -377,28 +403,31 @@ object BillingServiceHandlers {
     }
   }
 
-  class AccountAuditHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-
-    private val accounts = config.accounts
+  class UsageAccountingHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
 
     def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
-      val results = accounts.audit()
-      Future.sync(JString("Audit complete.\n").ok)
-    }
-
-  }
-
-  class AccountAssessmentHandler(config: BillingConfiguration, monitor: HealthMonitor) extends HttpServiceHandler[Future[JValue], Future[HttpResponse[JValue]]] {
-
-    private val accounts = config.accounts
-
-    def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
-      config.sendEmail("accounts@reportgrid.com", Array("nick@reportgrid.com"), Array(), Array(), "Assessment ran - " + new DateTime(), "<Assessment results still needs to be implemented.>")
       val token: Option[String] = request.parameters.get('token)
       token.map { t =>
         if (t.equals(Token.Root.tokenId)) {
-          accounts.assessment()
-          Future.sync(HttpResponse(content = Some[JValue](JString("Assessment complete."))))
+          accounts.usageAccounting()
+          config.sendAdminNotification("Usage accounting ran - " + new DateTime(), "<Usage accounting results still needs to be implemented.>")
+          Future.sync(HttpResponse(content = Some[JValue](JString("Usage accounting complete."))))
+        } else {
+          Future.sync(HttpResponse(HttpStatus(401, "Invalid token."), content = Some[JValue](JString("Invalid token."))))
+        }
+      }.getOrElse(Future.sync(HttpResponse(HttpStatus(401, "Token required."), content = Some[JValue](JString("Token required.")))))
+    }
+  }
+
+  class CreditAccountingHandler(config: BillingConfiguration, monitor: HealthMonitor) extends AccountAccessHandler(config) {
+
+    def apply(request: HttpRequest[Future[JValue]]): Future[HttpResponse[JValue]] = {
+      val token: Option[String] = request.parameters.get('token)
+      token.map { t =>
+        if (t.equals(Token.Root.tokenId)) {
+          accounts.creditAccounting()
+          config.sendAdminNotification("Credit accounting ran - " + new DateTime(), "<Credit accounting results still needs to be implemented.>")
+          Future.sync(HttpResponse(content = Some[JValue](JString("Credit accounting complete."))))
         } else {
           Future.sync(HttpResponse(HttpStatus(401, "Invalid token."), content = Some[JValue](JString("Invalid token."))))
         }
@@ -423,17 +452,12 @@ object BillingServiceHandlers {
     in => new RequireHeaderParameter[T, S](parameter, error, in)
   }
 
-  case class BillingConfiguration(
-    naccounts: PublicAccounts,
-    accounts: Accounts,
-    mailer: Mailer) {
+  val fromAddress = "accounts@reportgrid.com"
+  val userSignupBccList = Array("nick@reportgrid.com")
+  val internalSignupBccList = Array("nick@reportgrid.com", "jason@reportgrid.com")
+  val failedSignupToList = Array("nick@reportgrid.com")
 
-    private val fromAddress = "accounts@reportgrid.com"
-    private val userSignupBccList = Array("nick@reportgrid.com")
-    private val internalSignupBccList = Array("nick@reportgrid.com", "jason@reportgrid.com")
-    private val failedSignupToList = Array("nick@reportgrid.com")
-
-    private val accountConfirmationContent = """
+  private val accountConfirmationContent = """
 Welcome to ReportGrid
   
 
@@ -463,45 +487,37 @@ Thanks,
 The ReportGrid Team
     """
 
+  class AdminNotification(s: String, b: String) extends Notification(fromAddress, internalSignupBccList, Array(), Array()) {
+    def subject = s
+    def body = b
+  }    
+    
+  class SignupConfirmation(a: Account) extends Notification(fromAddress, Array(a.id.email), Array(), userSignupBccList) {
+    def subject = "Welcome to ReportGrid"
+    def body = accountConfirmationContent.format(a.id.email, a.id.tokens.production, a.id.tokens.development)
+  }
+  
+  class InternalSignupDetail(a: Account) extends Notification(fromAddress, internalSignupBccList, Array(), Array()) {
+    def subject = "New User Signup [" + a.contact.company + "|" + a.service.planId + "|" + a.id.email + "]"
+    def body = Printer.pretty(Printer.render(a.serialize))
+  }
+  
+  class FailedSignupDetail(c: Option[CreateAccount], e: String) extends Notification(fromAddress, internalSignupBccList, Array(), Array()) {
+    def subject = "Failed User Signup [" + e + "]"
+    def body = "Signup Error: " + e + "\n\n" + Printer.pretty(Printer.render(c.serialize))
+  }
+
+  case class BillingConfiguration(
+    publicAccounts: PublicAccounts,
+    notifications: NotificationSender) {
+
     def sendSignupSuccess(a: Account) {
-      sendUserSignupEmail(Array(a.id.email), accountConfirmationContent.format(a.id.email, a.id.tokens.production, a.id.tokens.development.getOrElse("<NA>")))
-      sendInternalSignupEmail(a)
+      notifications.send(new SignupConfirmation(a))
+      notifications.send(new InternalSignupDetail(a))
     }
 
     def sendSignupFailure(c: Option[CreateAccount], e: String) {
-      sendFailedSignupEmail(c, e)
-    }
-
-    private def sendUserSignupEmail(to: Array[String], content: String) = sendEmail(
-      fromAddress,
-      to,
-      Array(),
-      userSignupBccList,
-      "Welcome to ReportGrid",
-      content)
-
-    private def sendInternalSignupEmail(a: Account) = sendEmail(
-      fromAddress,
-      internalSignupBccList,
-      Array(),
-      Array(),
-      "New User Signup [" + a.contact.company + "|" + a.service.planId + "|" + a.id.email + "]",
-      accountToMessageBody(a))
-
-    private def accountToMessageBody(a: Account): String = {
-      Printer.pretty(Printer.render(a.serialize))
-    }
-
-    private def sendFailedSignupEmail(c: Option[CreateAccount], e: String) = sendEmail(
-      fromAddress,
-      failedSignupToList,
-      Array(),
-      Array(),
-      "Failed User Signup [" + e + "]",
-      failedSignupMessageBody(c, e))
-
-    private def failedSignupMessageBody(c: Option[CreateAccount], e: String): String = {
-      "Signup Error: " + e + "\n\n" + Printer.pretty(Printer.render(c.serialize))
+      notifications.send(new FailedSignupDetail(c, e))
     }
 
     def addQuery(client: HttpClient[ByteChunk], key: String, value: String): HttpClient[ByteChunk] = {
@@ -517,10 +533,10 @@ The ReportGrid Team
       vals.foldLeft(client)(addQuery)
     }
 
-    def sendEmail(from: String, to: Array[String], cc: Array[String], bcc: Array[String], title: String, content: String) {
-      mailer.sendEmail(from, to, cc, bcc, title, content)
+    def sendAdminNotification(subject: String, body: String) {
+      notifications.send(new AdminNotification(subject, body))
     }
-
+    
     def shutdown(): Unit = Unit
 
     def developerCredit: Int = 25000
