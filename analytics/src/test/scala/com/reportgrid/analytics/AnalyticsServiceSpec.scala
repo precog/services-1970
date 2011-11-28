@@ -127,6 +127,9 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
 }
 
 class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+  // Ensure mongo cleanup
+  sequential
+
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
@@ -360,9 +363,14 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       })//.pendingUntilFixed
     }
   }
+
+  step(cleanupDb)
 }
 
 class RootTrackingAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+  // Ensure mongo cleanup
+  sequential
+
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
@@ -401,9 +409,14 @@ class RootTrackingAnalyticsServiceSpec extends TestAnalyticsService with Arbitra
       } 
     }
   }
+
+  step(cleanupDb)
 }
 
 class SingleTokenPathAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+  // Ensure mongo cleanup
+  sequential
+
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
@@ -442,9 +455,14 @@ class SingleTokenPathAnalyticsServiceSpec extends TestAnalyticsService with Arbi
       } 
     }
   }
+
+  step(cleanupDb)
 }
 
 class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+  // Ensure mongo cleanup
+  sequential
+
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
@@ -467,9 +485,14 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
       }
     }
   }
+  
+  step(cleanupDb)
 }
 
 class UnicodeAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+  // Ensure mongo cleanup
+  sequential
+
   override val genTimeClock = clock 
 
   implicit object JsonStringBijection extends Bijection[String, JValue] {  
@@ -496,9 +519,14 @@ class UnicodeAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEve
       }
     }
   }
+
+  step(cleanupDb)
 }
 
 class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+  // Ensure mongo cleanup
+  sequential
+
   override val genTimeClock = PastClock(Days.TWO.toStandardDuration)
 
   object sampleData extends Outside[List[Event]] with Scope {
@@ -525,6 +553,8 @@ class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEv
       }) 
     }
   }
+
+  step(cleanupDb)
 }
 
 class StorageReportingAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {

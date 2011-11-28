@@ -34,6 +34,9 @@ import scalaz._
 import Scalaz._
 import Periodicity._
 
+// For DB cleanup
+import com.mongodb.Mongo
+
 trait LocalMongo {
   val eventsName = "testev" + scala.util.Random.nextInt(10000)
   val indexName =  "testix" + scala.util.Random.nextInt(10000)
@@ -107,6 +110,20 @@ trait LocalMongo {
       console = true
     }
   """.format(eventsName, indexName)
+
+  // We need to remove the databases used from Mongo after we're done
+  def cleanupDb = {
+    try {
+      val conn = new Mongo("localhost")
+
+      conn.getDB(eventsName).dropDatabase()
+      conn.getDB(indexName).dropDatabase()
+      
+      conn.close()
+    } catch {
+      case t => println("Error on DB cleanup: " + t.getMessage)
+    }
+  }
 }
 
 trait AggregationEngineTests extends Specification with FutureMatchers with ArbitraryEvent {
@@ -156,9 +173,13 @@ trait AggregationEngineFixtures extends LocalMongo {
 class AggregationEngineSpec extends AggregationEngineTests with AggregationEngineFixtures {
   import AggregationEngine._
 
+  // Ensure that DB cleanup runs at the end
+  sequential
+
   val genTimeClock = Clock.System
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(15, toDuration(1000).milliseconds)
+
 
   object sampleData extends Outside[List[Event]] with Scope {
     val outside = containerOfN[List, Event](30, fullEventGen).sample.get ->- {
@@ -581,12 +602,17 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     //  }
     //}
   }
+
+  step(cleanupDb)
 }
 
 class ReaggregationSpec extends AggregationEngineTests with AggregationEngineFixtures with TestTokenStorage {
   import AggregationEngine._
 
   val genTimeClock = Clock.System
+
+  // Ensure that DB cleanup runs at the end
+  sequential
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(40, toDuration(500).milliseconds)
 
@@ -614,4 +640,6 @@ class ReaggregationSpec extends AggregationEngineTests with AggregationEngineFix
       }
     }
   }
+
+  step(cleanupDb)
 }
