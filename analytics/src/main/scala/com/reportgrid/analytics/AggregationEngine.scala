@@ -422,13 +422,12 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     Future (
       toQuery.map {
         case (docKey, dataKeys) => indexdb(selectOne(dataPath).from(collection).where(filter(docKey))).map {
-          results => dataKeys.flatMap {
-            case (keySig, keyData) => results.map {
+          result => dataKeys.map {
+            case (keySig, keyData) => 
                // since the data keys are a stream of all possible keys in the document that data might
                // be found under, and since we want to return a zero-filled result set, we use the \? form of
                // the object find method and then use getOrElse returning the zero for T if no such key is found.
-               jobj => keyData -> (jobj(dataPath) \? keySig.hashSignature).map(_.deserialize[T]).getOrElse(mzero[T])
-            }
+               keyData -> (result flatMap { jobj => (jobj(dataPath) \? keySig.hashSignature).map(_.deserialize[T]) } getOrElse mzero[T])
           }
         }
       }.toSeq: _*
