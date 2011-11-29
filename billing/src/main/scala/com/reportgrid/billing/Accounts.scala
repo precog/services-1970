@@ -950,16 +950,16 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
     val jObject = info.serialize(AccountInformation.UnsafeAccountInfoDecomposer).asInstanceOf[JObject]
     val query = MongoQueryBuilder.update(collection).set(jObject).where("id.tokens.master" === info.id.tokens.master)
     val result = database(query)
-    result.flatMap { result =>
-      getByToken(info.id.tokens.master)
+    result.map[Validation[String, AccountInformation]] { _ =>
+      Success(info)
     }.orElse(Failure("Error updating account information."))
   }
 
   def disableByEmail(email: String): FV[String, AccountInformation] = {
     fvApply(getByEmail(email), disable)
   }
+  
   def disableByToken(token: String): FV[String, AccountInformation] = {
-
     fvApply(getByToken(token), disable)
   }
 
