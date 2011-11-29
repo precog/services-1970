@@ -63,9 +63,9 @@ class RealUsageClient(client: HttpClient[ByteChunk], baseUrl: String) extends Us
       case JArray(l)   => l.map {
         case JArray(ts :: JDouble(c) :: Nil ) => c.toLong
         case JArray(ts :: v :: Nil)         => 0l
-        case _                              => error("Unexpected series result format")
+        case _                              => scala.sys.error("Unexpected series result format")
       }.reduce(_ + _)
-      case _           => error("Error parsing usage count.")
+      case _           => scala.sys.error("Error parsing usage count.")
     }
   }
     

@@ -98,7 +98,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
         val httpMethods = HttpMethods.parseHttpMethods(method)
         val httpMethod = httpMethods match {
           case m :: Nil => m
-          case _        => error("Only one http method expected")
+          case _        => sys.error("Only one http method expected")
         }
         val chunkContent = content.map(StringToChunk(_))
         val latch = new java.util.concurrent.CountDownLatch(1)
@@ -589,7 +589,7 @@ class StorageReportingAnalyticsServiceSpec extends TestAnalyticsService with Arb
       sum + (e match {
         case value :: count :: Nil => value.asInstanceOf[BigInt].toLong * count.asInstanceOf[BigInt].toLong
         case _                      => {
-          error("Invalid histogram result")
+          sys.error("Invalid histogram result")
         }
       })
     }}
