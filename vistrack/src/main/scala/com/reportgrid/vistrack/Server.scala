@@ -47,6 +47,9 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
     }
   }
 
+  // Default timeout for shutdown
+  implicit val timeout = akka.actor.Actor.Timeout(60 * 1000)
+
   val Service = service("vistrack", "1.0") { 
     healthMonitor { monitor => context =>
       startup { 
@@ -78,10 +81,12 @@ object VistrackServer extends BlueEyesServer with Vistrack {
     val mongoConfig = config.configMap("mongo")
     val mongo = new blueeyes.persistence.mongo.RealMongo(mongoConfig)
 
-    TokenManager(
+    val tokenManager = new TokenManager(
       mongo.database(mongoConfig.getString("database", "analytics-v" + serviceVersion)),
       config.getString("tokens.collection", "tokens"),
       config.getString("tokens.deleted", "deleted_tokens")
-    ).map(a => a: TokenStorage)
+    )
+
+    Future.sync(tokenManager : TokenStorage)
   }
 }

@@ -23,6 +23,9 @@ trait Service extends BlueEyesServiceBuilder with HttpRequestCombinators {
 
   def buildGeoIPComponent(databasePath: String): GeoIPComponent
 
+  // Default timeout for shutdown
+  implicit val timeout = akka.actor.Actor.Timeout(60 * 1000)
+
   val geoipService = service("jessup", "1.0") { 
     healthMonitor { monitor => context =>
       startup {

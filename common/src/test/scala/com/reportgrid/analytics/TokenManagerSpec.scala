@@ -8,7 +8,7 @@ import scalaz.Success
 
 class TokenManagerSpec extends Specification with FutureMatchers {
   val mongo = new MockMongo()
-  val tokenManager = TokenManager(mongo.database("test"), "tokens", "deleted_tokens").value.get
+  val tokenManager = new TokenManager(mongo.database("test"), "tokens", "deleted_tokens")
 
   "Token Manager" should {
     "automatically populate the test token" in {

@@ -29,6 +29,9 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString w
   def usageClientFactory(config: ConfigMap): UsageClient
   def notificationsFactory(config: ConfigMap): NotificationSender
 
+  // Default timeout for shutdown
+  implicit val timeout = akka.actor.Actor.Timeout(60 * 1000)
+
   val billing = service("billing", "1.1.2") {
     healthMonitor { monitor =>
       context =>
