@@ -61,10 +61,19 @@ trait TestTokens {
     expires        = Token.Never,
     limits         = Limits(order = 2, depth = 5, limit = 20, tags = 2, rollup = 2)
   )
+
+ val TrackingToken = Token(
+    tokenId        = "DB6DEF4F-678A-4F7D-9897-F920762887F1",
+    parentTokenId  = Some(Token.Root.tokenId),
+    accountTokenId = "DB6DEF4F-678A-4F7D-9897-F920762887F1",
+    path           = "__usage_tracking__",
+    permissions    = Permissions(true, true, true, true),
+    expires        = Token.Never,
+    limits         = Limits(order = 1, depth = 2, limit = 5, tags = 1, rollup = 2)
+ )
 }
 
 trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsService with LocalMongo with TestTokens {
-  val TrackingToken = TestToken.issue(relativePath = "storage", limits = Limits(order = 1, depth = 2, limit = 5, tags = 1, rollup = 10))
 
   val requestLoggingData = """
     requestLog {
