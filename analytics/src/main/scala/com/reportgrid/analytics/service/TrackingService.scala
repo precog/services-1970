@@ -31,6 +31,11 @@ trait StorageReporting {
   def stored(path: Path, count: Int, complexity: Long)
 }
 
+class NullStorageReporting(val tokenId: String) extends StorageReporting {
+  def stored(path: Path, count: Int) = Unit
+  def stored(path: Path, count: Int, complexity: Long) = Unit
+}
+
 class ReportGridStorageReporting(val tokenId: String, client: ReportGridTrackingClient[JValue]) extends StorageReporting {
   def expirationPolicy = ExpirationPolicy(
     timeToIdle = Some(30), 
