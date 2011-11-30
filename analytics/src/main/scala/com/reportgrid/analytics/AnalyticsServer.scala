@@ -22,12 +22,11 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
   }
 
   def storageReporting(config: ConfigMap) = {
-    val conf = config.configMap("storageReporting")
-    val token = conf.getString("token") getOrElse {
+    val token = config.getString("token") getOrElse {
       throw new IllegalStateException("storageReporting.tokenId must be specified in application config file. Service cannot start.")
     }
 
-    val environment = conf.getString("environment", "production") match {
+    val environment = config.getString("environment", "production") match {
       case "production" => Server.Production
       case _            => Server.Local
     }
