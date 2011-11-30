@@ -104,7 +104,7 @@ services {
 
       storageReporting {
         token = "DB6DEF4F-678A-4F7D-9897-F920762887F1"
-        environment = "local"
+        environment = "dev"
       }
     }
   }

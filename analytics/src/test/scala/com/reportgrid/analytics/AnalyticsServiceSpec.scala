@@ -69,7 +69,7 @@ trait TestTokens {
     path           = "__usage_tracking__",
     permissions    = Permissions(true, true, true, true),
     expires        = Token.Never,
-    limits         = Limits(order = 1, depth = 2, limit = 5, tags = 1, rollup = 2)
+    limits         = Limits(order = 1, depth = 2, limit = 5, tags = 1, rollup = 2, lossless=false)
  )
 }
 

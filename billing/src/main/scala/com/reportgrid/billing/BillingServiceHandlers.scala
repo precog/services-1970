@@ -43,21 +43,21 @@ import SerializationHelpers._
 
 trait UsageClient {
   def apiCalls(tokenId: String, start: DateMidnight, finish: DateMidnight): Future[Long]
+  def apiCalls(tokenId: String, path: String, start: DateMidnight, finish: DateMidnight): Future[Long]
 }
 
 class RealUsageClient(client: HttpClient[ByteChunk], baseUrl: String) extends UsageClient {
     
-  def timeBoundedUsageSums(tokenId: String, start: DateMidnight, end: DateMidnight): Future[HttpResponse[JValue]] = {
+  def timeBoundedUsageSums(tokenId: String, path: String, start: DateMidnight, end: DateMidnight): Future[HttpResponse[JValue]] = {
     val c = client.contentType[JValue](application/(MimeTypes.json))
                                    .query("tokenId", tokenId)
                                    .query("start", start.getMillis.toString)
                                    .query("end", end.getMillis.toString)
- 
-    c.get[JValue](baseUrl + "/vfs/.storage.count/series/day/sums")
+
+    c.get[JValue](baseUrl + "vfs/" + path + ".stored.count/series/day/sums")
   }
 
   def reduceUsageSums(jval: JValue): Long = {
-    println(jval)
     jval match {
       case JArray(Nil) => 0l
       case JArray(l)   => l.map {
@@ -70,7 +70,11 @@ class RealUsageClient(client: HttpClient[ByteChunk], baseUrl: String) extends Us
   }
     
   def apiCalls(tokenId: String, start: DateMidnight, finish: DateMidnight): Future[Long] = {
-    val result = timeBoundedUsageSums(tokenId, start, finish)
+    apiCalls(tokenId, "", start, finish)
+  }
+  
+  def apiCalls(tokenId: String, path: String, start: DateMidnight, finish: DateMidnight): Future[Long] = {
+    val result = timeBoundedUsageSums(tokenId, path, start, finish)
     result.map(_.content.map(reduceUsageSums).getOrElse(0))
   }
 }
@@ -80,6 +84,10 @@ class MockUsageClient extends UsageClient {
   var default: Option[Long] = None
   
   def apiCalls(tokenId: String, start: DateMidnight, finish: DateMidnight): Future[Long] = {
+    apiCalls(tokenId, "", start, finish)
+  }
+  
+  def apiCalls(tokenId: String, path: String, start: DateMidnight, finish: DateMidnight): Future[Long] = {
     val minutes = Minutes.minutesBetween(start, finish)
     Future.sync(default.getOrElse( minutes.getMinutes )) 
   }
