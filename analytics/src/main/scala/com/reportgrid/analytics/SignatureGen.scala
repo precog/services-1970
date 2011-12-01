@@ -35,7 +35,7 @@ class Sig(val length: Int, _message: => String)(val write: ByteBuffer => Unit) {
 }
 
 object Sig {
-  def apply(s: String): Sig = s.getBytes |> (bytes => Sig(bytes.length, s) { _.put(bytes) })
+  def apply(s: String): Sig = s.getBytes("UTF-8") |> (bytes => Sig(bytes.length, s) { _.put(bytes) })
   def apply(a: Array[Byte]): Sig = Sig(a.length, a.toString) { _.put(a) }
   def apply(length: Int, _message: => String)(write: ByteBuffer => Unit) = new Sig(length, _message)(write)
   def apply(sigs: Sig*): Sig = sigs.reduceLeft(_ :+ _)
@@ -57,7 +57,7 @@ object SignatureGen {
 
   implicit object StringSignatureGen extends SignatureGen[String] {
     final val TypeSig = Sig("String")
-    override def apply(v: String) = TypeSig :+ v.getBytes
+    override def apply(v: String) = TypeSig :+ v.getBytes("UTF-8")
   }
 
   implicit def genTuple2Signature[A: SignatureGen, B: SignatureGen] = new Tuple2SignatureGen[A, B]
@@ -76,7 +76,7 @@ object SignatureGen {
   }
 
   implicit object LongSignatureGen extends SignatureGen[Long] {
-    final val TypeSig = Sig("Long".getBytes )
+    final val TypeSig = Sig("Long".getBytes("UTF-8") )
     override def apply(v: Long) = TypeSig :+ v
   }
 
@@ -102,7 +102,7 @@ object SignatureGen {
 
   implicit object PathSignatureGen extends SignatureGen[Path] {
     final val TypeSig = Sig("Path")
-    override def apply(v: Path) = TypeSig :+ v.path.getBytes
+    override def apply(v: Path) = TypeSig :+ v.path.getBytes("UTF-8")
   }
 
   implicit object InstantSignatureGen extends SignatureGen[Instant] {
@@ -117,7 +117,7 @@ object SignatureGen {
 
   implicit object TokenSignatureGen extends SignatureGen[Token] {
     final val TypeSig = Sig("Token") 
-    override def apply(v: Token) = TypeSig :+ v.accountTokenId.getBytes
+    override def apply(v: Token) = TypeSig :+ v.accountTokenId.getBytes("UTF-8")
   }
 
   implicit def genSetSignature[T: SignatureGen] = new SetSignatureGen[T]
@@ -138,12 +138,12 @@ object SignatureGen {
 
   implicit object JPathSignatureGen extends SignatureGen[JPath] {
     final val TypeSig = Sig("JPath")
-    override def apply(v: JPath) = TypeSig :+ v.toString.getBytes
+    override def apply(v: JPath) = TypeSig :+ v.toString.getBytes("UTF-8")
   }
 
   implicit object JPathNodeSignatureGen extends SignatureGen[JPathNode] {
     final val TypeSig = Sig("JPathNode")
-    override def apply(v: JPathNode) = TypeSig :+ v.toString.getBytes
+    override def apply(v: JPathNode) = TypeSig :+ v.toString.getBytes("UTF-8")
   }
 
   implicit object JValueSignatureGen extends SignatureGen[JValue] {
@@ -159,7 +159,7 @@ object SignatureGen {
     override def apply(v: JValue) = v match {
       case JObject(fields)  => JObjectTypeSig :+ genSetSignature(JFieldSignatureGen)(fields.toSet)
       case JArray(elements) => JArrayTypeSig  :+ sig(elements)
-      case JString(v)       => JStringTypeSig :+ v.getBytes
+      case JString(v)       => JStringTypeSig :+ v.getBytes("UTF-8")
       case JBool(v)         => JBoolTypeSig   :+ v 
       case JInt(v)          => JIntTypeSig    :+ v
       case JDouble(v)       => JDoubleTypeSig :+ v
@@ -171,7 +171,7 @@ object SignatureGen {
 
   implicit object JFieldSignatureGen extends SignatureGen[JField] {
     final val TypeSig = Sig("JField") 
-    override def apply(v: JField) = Sig(TypeSig, Sig(v.name.getBytes), sig(v.value))
+    override def apply(v: JField) = Sig(TypeSig, Sig(v.name.getBytes("UTF-8")), sig(v.value))
   }
 
   implicit object VariableSignatureGen extends SignatureGen[Variable] {
