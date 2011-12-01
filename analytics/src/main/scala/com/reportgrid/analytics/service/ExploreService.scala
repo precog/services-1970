@@ -5,6 +5,7 @@ import blueeyes.concurrent.Future
 import blueeyes.core.http._
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.core.service._
+import blueeyes.json._
 import blueeyes.json.JsonAST._
 import blueeyes.json.xschema._
 import blueeyes.json.xschema.DefaultSerialization._
@@ -61,6 +62,36 @@ extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JVal
 
   val metadata = None
 }
+
+class ExploreTagsService[A](aggregationEngine: AggregationEngine) 
+extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]] {
+  val service = (_: HttpRequest[A]) => Success(
+    (token: Token, path: Path) => {
+      aggregationEngine.getPathTags(token, path).map(_.serialize.ok)
+    }
+  )
+
+  val metadata = None
+}
+
+class ExploreHierarchyService[A](aggregationEngine: AggregationEngine) 
+extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
+  val service = (_: HttpRequest[A]) => Success(
+    (token: Token, path: Path, variable: Variable) => {
+      variable.name.head flatMap { tagName =>
+        tagName match {
+          case JPathField(tagName) => Some(aggregationEngine.getHierarchyChildren(token, path, tagName, variable.name.tail).map(_.toList.serialize.ok))
+          case _                   => None
+        }
+      } getOrElse {
+        Future.sync(HttpResponse[JValue](NotFound, content = Some("The specified tag does not exist.")))
+      }
+    }
+  )
+
+  val metadata = None
+}
+
 
 class VariableSeriesService[T: Decomposer : AbelianGroup](aggregationEngine: AggregationEngine, f: ValueStats => T) 
 extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]] {

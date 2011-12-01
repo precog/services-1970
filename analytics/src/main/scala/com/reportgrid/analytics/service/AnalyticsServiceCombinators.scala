@@ -1,6 +1,7 @@
 package com.reportgrid.analytics
 package service
 
+import blueeyes._
 import blueeyes.concurrent.Future
 import blueeyes.core.http._
 import blueeyes.core.service._
@@ -15,8 +16,8 @@ trait AnalyticsServiceCombinators extends HttpRequestHandlerCombinators {
     new TokenRequiredService[A, B](tokenManager, service)
   }
 
-  def vfsPath[A, B](next: HttpService[A, (Token, Path) => Future[B]]) = {
-    path("""/vfs/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])*)/?)?)""") { 
+  def dataPath[A, B](prefix: String)(next: HttpService[A, (Token, Path) => Future[B]]) = {
+    path("""/%s/(?:(?<prefixPath>(?:[^\n.](?:[^\n/]|/[^\n\.])*)/?)?)""".format(prefix)) { 
       new DelegatingService[A, Token => Future[B], A, (Token, Path) => Future[B]] {
         val delegate = next
         val service = (request: HttpRequest[A]) => {

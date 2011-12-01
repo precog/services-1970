@@ -114,11 +114,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                * retrieving data, and querying for metadata.
                */
               path("/store") {
-                vfsPath {
+                dataPath("vfs") {
                   post(new TrackingService(aggregationEngine, state.storageReporting, timeSeriesEncoding, clock, state.jessup, false)).audited("store")
                 }
               } ~ 
-              vfsPath {
+              dataPath("vfs") {
                 post(new TrackingService(aggregationEngine, state.storageReporting, timeSeriesEncoding, clock, state.jessup, true)).audited("track") ~
                 get(new ExplorePathService[Future[JValue]](aggregationEngine)).audited("explore paths") ~
                 variable {
@@ -281,6 +281,16 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                           }
                         }
                       }
+                    }
+                  }
+                }
+              } ~
+              dataPath("tags") {
+                get(new ExploreTagsService[Future[JValue]](aggregationEngine).audited("Explore tags for a path")) ~
+                variable {
+                  path(/?) {
+                    get {
+                      new ExploreHierarchyService[Future[JValue]](aggregationEngine).audited("explore variable children") 
                     }
                   }
                 }

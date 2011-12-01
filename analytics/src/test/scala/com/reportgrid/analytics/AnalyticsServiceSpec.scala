@@ -237,6 +237,43 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
     }
 
+    "explore tags" in sampleData { sampleEvents =>
+      val expectedTags: Set[String] = sampleEvents.flatMap({ case Event(_, _, tags) => tags.map(_.name) })(collection.breakOut)
+
+      (jsonTestService.get[JValue]("/tags/test")) must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => 
+            (status.code must_== HttpStatusCodes.OK) and
+            (result.deserialize[Set[String]] must_== expectedTags)
+        }
+      }
+    }
+
+    "explore the tag hierarchy" in sampleData { sampleEvents =>
+      val expectedChildren = sampleEvents.flatMap(_.tags).foldLeft(Map.empty[Path, Set[String]]) {
+        case (m, Tag("location", Hierarchy(locations))) => 
+          locations.foldLeft(m) {
+            (m, l) => l.path.parent match {
+              case Some(parent) => m + (parent -> (m.getOrElse(parent, Set.empty[String]) + l.path.elements.last))
+              case None => m
+            }
+          }
+        case (m, _) => m
+      } 
+
+      forall(expectedChildren) {
+        case (hpath, children) => 
+          (jsonTestService.get[JValue]("/tags/test/.location." + hpath.elements.mkString("."))) must whenDelivered {
+            beLike {
+              case HttpResponse(status, _, Some(result), _) => 
+                (status.code must_== HttpStatusCodes.OK) and
+                (result.deserialize[List[String]] must haveTheSameElementsAs(children))
+            }
+          }
+      }
+    }
+
+
     "count events by post" in sampleData { sampleEvents =>
       val queryTerms = JObject(JField("location", "usa") :: Nil)
 

@@ -218,6 +218,15 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       }
     }
 
+    "retrieve path tags" in sampleData { sampleEvents =>
+      //skip("disabled")
+      val children: Set[String] = sampleEvents.flatMap({ case Event(_, _, tags) => tags.map(_.name) })(collection.breakOut)
+
+      engine.getPathTags(TestToken, "/test") must whenDelivered {
+        haveTheSameElementsAs(children)
+      }
+    }
+
     "retrieve hierarchy children" in sampleData { sampleEvents =>
       val expectedChildren = sampleEvents.flatMap(_.tags).foldLeft(Map.empty[Path, Set[String]]) {
         case (m, Tag("location", Hierarchy(locations))) => 
@@ -233,11 +242,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       forall(expectedChildren) {
         case (path, children) => 
           engine.getHierarchyChildren(TestToken, "/test", "location", JPath(path.elements.map(JPathField(_)): _*)).map(_.toSet) must whenDelivered {
-            beLike {
-              case results => 
-                println(results)
-                results must_== children
-            }
+            be_==(children)
           }
       }
     }

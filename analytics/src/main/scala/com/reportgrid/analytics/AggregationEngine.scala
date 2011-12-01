@@ -128,6 +128,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   private val variable_values           = AggregationStage("variable_values")
   private val variable_children         = AggregationStage("variable_children")
   private val path_children             = AggregationStage("path_children")
+
+  private val path_tags                 = AggregationStage("path_tags")
   private val hierarchy_children        = AggregationStage("hierarchy_children")
 
   def flushStages = List(variable_series, variable_value_series, variable_values, variable_children, path_children).map(_.stage.flushAll).sequence.map(_.sum)
@@ -192,8 +194,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     val childSeriesReport = Report(tags, (JointObservations.ofInnerNodes(event, 1) ++ finiteOrder1 ++ infiniteObs.map(JointObservation(_))).map(_.of[Observation]))
 
     // Keep track of parent/child relationships:
-    (path_children putAll addPathChildrenOfPath(token, path).patches) +
+    (path_children putAll addPathChildren(token, path).patches) +
     (path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)) + 
+    (path_tags put addPathTags(token, path, allTags)) +
     (hierarchy_children putAll addHierarchyChildren(token, path, allTags).patches) +
     (variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches) + 
     (variable_value_series putAll vvSeriesPatches.patches) + 
@@ -212,6 +215,17 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   def getPathChildren(token: Token, path: Path): Future[List[String]] = {
     extractChildren(forTokenAndPath(token, path), path_children.collection) { (jvalue, _) =>
       jvalue.deserialize[String]
+    }
+  }
+
+  def getPathTags(token: Token, path: Path): Future[List[String]] = {
+    indexdb(selectAll.from(path_tags.collection).where(forTokenAndPath(token, path))) map { results =>
+      val res = results.map(_ \ "tags") flatMap {
+        case r @ JObject(fields) => fields.map(_.name)
+        case _ => Nil
+      }
+      
+      res.toList
     }
   }
 
@@ -538,7 +552,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
    * "/foo" has child "bar"
    * "/foo/bar" has child "baz"
    */
-  private def addPathChildrenOfPath(token: Token, path: Path): MongoPatches = {
+  private def addPathChildren(token: Token, path: Path): MongoPatches = {
     val patches = path.parentChildRelations.foldLeft(MongoPatches.empty) { 
       case (patches, (parent, child)) =>
         patches + addChildOfPath(forTokenAndPath(token, parent), child.elements.last)
@@ -552,6 +566,12 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
    */
   private def addChildOfPath(filter: MongoFilter, child: String): (MongoFilter, MongoUpdate) = {
     ((filter & (".child" === child.serialize)) -> (".count" inc 1))
+  }
+
+  private def addPathTags(token: Token, path: Path, tags: Seq[Tag]): (MongoFilter, MongoUpdate) = {
+    forTokenAndPath(token, path) -> tags.foldLeft(MongoUpdate.Empty) {
+      case (update, Tag(name, _)) => update |+| (JPath(".tags") \ JPathField(MongoEscaper.encode(name)) inc 1)
+    }
   }
 
   /**
@@ -701,7 +721,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
                      variable_series.stage.stop ::
                      variable_children.stage.stop ::
                      variable_values.stage.stop ::
-                     path_children.stage.stop :: Nil
+                     path_children.stage.stop :: 
+                     path_tags.stage.stop :: 
+                     hierarchy_children.stage.stop :: Nil
 
     akka.dispatch.Future.sequence(stageStops, timeout.duration.toMillis)
   }
