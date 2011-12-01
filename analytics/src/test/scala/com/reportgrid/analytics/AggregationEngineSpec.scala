@@ -24,7 +24,7 @@ import net.lag.logging.Logger
 
 import org.joda.time.Instant
 import org.specs2.mutable.Specification
-import org.specs2.specification.{Outside, Scope}
+import org.specs2.specification.{Fragment, Fragments, Outside, Scope, SpecificationStructure, Step}
 import org.specs2.matcher.MatchResult
 import org.specs2.execute.Result
 import org.scalacheck._
@@ -37,7 +37,7 @@ import Periodicity._
 // For DB cleanup
 import com.mongodb.Mongo
 
-trait LocalMongo {
+trait LocalMongo extends Specification {
   val eventsName = "testev" + scala.util.Random.nextInt(10000)
   val indexName =  "testix" + scala.util.Random.nextInt(10000)
 
@@ -112,7 +112,7 @@ trait LocalMongo {
   """.format(eventsName, indexName)
 
   // We need to remove the databases used from Mongo after we're done
-  def cleanupDb = {
+  def cleanupDb = Step {
     try {
       val conn = new Mongo("localhost")
 
@@ -124,6 +124,8 @@ trait LocalMongo {
       case t => println("Error on DB cleanup: " + t.getMessage)
     }
   }
+
+  override def map(fs : => Fragments) = super.map(fs) ^ cleanupDb
 }
 
 trait AggregationEngineTests extends Specification with FutureMatchers with ArbitraryEvent {

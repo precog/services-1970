@@ -26,12 +26,13 @@ object AnalyticsServer extends BlueEyesServer with AnalyticsService {
       throw new IllegalStateException("storageReporting.tokenId must be specified in application config file. Service cannot start.")
     }
 
-//    val environment = config.getString("environment", "production") match {
-//      case "production" => Server.Production
-//      case _            => Server.Local
-//    }
-//    
-//    new ReportGridStorageReporting(token, ReportGrid(token, environment))
+    val environment = config.getString("environment", "dev") match {
+      case "production" => Server.Production
+      case "dev"        => Server.Dev
+      case _            => Server.Local
+    }
+
+    //new ReportGridStorageReporting(token, ReportGrid(token, environment))
     new NullStorageReporting(token)
   }
 
