@@ -153,14 +153,14 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                     val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
 
                     val trackableEvent = token.tokenId != storageReporting.tokenId
-                    val trackingPath = accountPath(path)
+                    val billingPath = accountPath(path)
 
                     if (trackableEvent) {
                       aggregationEngine.store(token, path, eventName, jvalue, tagResults, count, rollup, reprocess)
                     }
 
                     if (reprocess) {
-                      if (trackableEvent) storageReporting.stored(trackingPath, path.rollups(rollup min path.length - 1).size)
+                      if (trackableEvent) storageReporting.stored(billingPath, path.rollups(rollup min path.length - 1).size)
                       List(Future.sync(0L.success[NonEmptyList[String]])) //skip immediate aggregation of historical data
                     } else {
                       // only roll up to the client root, and not beyond (hence path.length - 1)
@@ -170,7 +170,7 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                         } deliverTo { 
                           case Success(complexity) => 
                             // as a side effect, mark that an event was recorded in the storage reporting system
-                            if (trackableEvent) storageReporting.stored(trackingPath, 1, complexity)
+                            if (trackableEvent) storageReporting.stored(billingPath, 1, complexity)
 
                           case _ => 
                         }

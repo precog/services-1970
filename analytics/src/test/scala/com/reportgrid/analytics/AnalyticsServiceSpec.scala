@@ -515,6 +515,31 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
   }
 }
 
+class VariantPathAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
+  override val genTimeClock = clock 
+
+  object sampleData extends Outside[List[Event]] with Scope {
+    def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+      _.foreach(event => jsonTestService.post[JValue]("/vfs/test/foo.bar%40baz.com")(event.message))
+    }
+  }
+
+  "Analytics Service" should {
+    "handle data with " in sampleData { sampleEvents =>
+      lazy val tweetedCount = sampleEvents.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      jsonTestService.get[JValue]("/vfs/test/foo.bar%40baz/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+        }
+      }
+    }
+  }
+}
+
 class UnicodeAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
   override val genTimeClock = clock 
 
