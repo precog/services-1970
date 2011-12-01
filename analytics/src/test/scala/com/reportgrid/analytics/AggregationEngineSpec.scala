@@ -208,10 +208,34 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
           m + (eventName -> (m.getOrElse(eventName, Set.empty[String]) ++ properties))
       }
 
-      expectedChildren forall { 
+      forall(expectedChildren) { 
         case (eventName, children) => 
           engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName))).map(_.map(_.child.toString)) must whenDelivered {
             haveTheSameElementsAs(children)
+          }
+      }
+    }
+
+    "retrieve hierarchy children" in sampleData { sampleEvents =>
+      val expectedChildren = sampleEvents.flatMap(_.tags).foldLeft(Map.empty[Path, Set[String]]) {
+        case (m, Tag("location", Hierarchy(locations))) => 
+          locations.foldLeft(m) {
+            (m, l) => l.path.parent match {
+              case Some(parent) => m + (parent -> (m.getOrElse(parent, Set.empty[String]) + l.path.elements.last))
+              case None => m
+            }
+          }
+        case (m, _) => m
+      } 
+
+      forall(expectedChildren) {
+        case (path, children) => 
+          engine.getHierarchyChildren(TestToken, "/test", "location", JPath(path.elements.map(JPathField(_)): _*)).map(_.toSet) must whenDelivered {
+            beLike {
+              case results => 
+                println(results)
+                results must_== children
+            }
           }
       }
     }

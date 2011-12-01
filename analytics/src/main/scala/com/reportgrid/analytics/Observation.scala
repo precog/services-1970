@@ -295,8 +295,8 @@ object Hierarchy {
   object Location {
     implicit object LocationExtractor extends Extractor[Location] {
       def extract(v: JValue): Location = v match {
-        case JString(path) => AnonLocation(Path(path))
-        case JObject(List(JField(name, JString(path)))) => NamedLocation(name, Path(path))
+        case JString(path) => AnonLocation(Path(path.replaceAll("\bn/a\b", "(null)")))
+        case JObject(List(JField(name, JString(path)))) => NamedLocation(name, Path(path.replaceAll("\bn/a\b", "(null)")))
         case x => sys.error("Cannot deserialize a Location from " + pretty(render(x)))
       }
     }
