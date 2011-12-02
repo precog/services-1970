@@ -1,6 +1,7 @@
 package com.reportgrid.analytics
 
 import blueeyes._
+import blueeyes.bkka._
 import blueeyes.core.http.{HttpStatus, HttpResponse, MimeTypes}
 import blueeyes.core.http.HttpStatusCodes._
 import blueeyes.concurrent.test.FutureMatchers
@@ -169,7 +170,22 @@ trait AggregationEngineFixtures extends LocalMongo {
   val indexdb = indexMongo.database(indexConfig("database"))
 
   val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
+
+  implicit val timeout = akka.actor.Actor.Timeout(Long.MaxValue) //for now
+
+  import blueeyes.concurrent.Future._
+
+  def stopAggregationEngineFixture() { 
+    val shutdown = Future.sync(
+      Stoppable(engine,
+        Stoppable(indexdb, Stoppable(indexMongo) :: Nil) ::
+        Stoppable(eventsdb, Stoppable(eventsMongo) :: Nil) :: Nil
+      )
+    )
+    shutdown.flatMap { stoppable => (Stoppable.stop(stoppable)(timeout)).toBlueEyes }.toAkka.get
+  }
 }
+
 
 
 class AggregationEngineSpec extends AggregationEngineTests with AggregationEngineFixtures {
@@ -181,7 +197,6 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
   val genTimeClock = Clock.System
 
   override implicit val defaultFutureTimeouts = FutureTimeouts(15, toDuration(1000).milliseconds)
-
 
   object sampleData extends Outside[List[Event]] with Scope {
     val outside = containerOfN[List, Event](30, fullEventGen).sample.get ->- {
@@ -634,6 +649,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     //}
   }
 
+  step(stopAggregationEngineFixture)
   step(cleanupDb)
 }
 
@@ -672,5 +688,6 @@ class ReaggregationSpec extends AggregationEngineTests with AggregationEngineFix
     }
   }
 
+  step(stopAggregationEngineFixture)
   step(cleanupDb)
 }

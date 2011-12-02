@@ -51,7 +51,7 @@ import com.reportgrid.ct.Mult.MDouble._
 import com.reportgrid.instrumentation.blueeyes.ReportGridInstrumentation
 import com.reportgrid.api.ReportGridTrackingClient
 
-case class AnalyticsState(aggregationEngine: AggregationEngine, tokenManager: TokenManager, storageReporting: StorageReporting, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
+case class AnalyticsState(eventsMongo: Mongo, indexMongo: Mongo, aggregationEngine: AggregationEngine, tokenManager: TokenManager, storageReporting: StorageReporting, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombinators with ReportGridInstrumentation {
   import AggregationEngine._
@@ -96,7 +96,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
 
           for (aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb, monitor)) yield {
             AnalyticsState(
-              aggregationEngine, tokenMgr, 
+              eventsMongo,
+              indexMongo,
+              aggregationEngine, 
+              tokenMgr, 
               storageReporting(config.configMap("storageReporting")),
               auditClient(config.configMap("audit")),
               jessup(config.configMap("jessup")))
@@ -314,12 +317,12 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           }
         } ->
         shutdown { state => 
-          Future.sync(
+          Future.sync( 
             Option(
               Stoppable(
                 state.aggregationEngine, 
-                Stoppable(state.aggregationEngine.indexdb) ::
-                Stoppable(state.aggregationEngine.eventsdb) :: Nil
+                Stoppable(state.aggregationEngine.indexdb, Stoppable(state.indexMongo) :: Nil) ::
+                Stoppable(state.aggregationEngine.eventsdb, Stoppable(state.eventsMongo) :: Nil) :: Nil
               )
             )
           )
