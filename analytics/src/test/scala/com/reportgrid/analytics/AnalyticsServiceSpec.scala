@@ -531,7 +531,7 @@ class VariantPathAnalyticsServiceSpec extends TestAnalyticsService with Arbitrar
         case _ => false
       }
 
-      jsonTestService.get[JValue]("/vfs/test/foo.bar%40baz/.tweeted/count?location=usa") must whenDelivered {
+      jsonTestService.get[JValue]("/vfs/test/foo.bar%40baz.com/.tweeted/count?location=usa") must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
         }
