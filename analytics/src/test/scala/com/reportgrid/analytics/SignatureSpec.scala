@@ -15,6 +15,9 @@ class SignatureSpec extends Specification with ScalaCheck with ArbitraryJValue {
 
   override val defaultPrettyParams = Pretty.Params(6)
 
+// For a really thorough test:
+//  override val defaultValues = super.defaultValues + (minTestsOk -> 1000000, maxDiscarded -> 1000000, workers -> 3)
+
   "generation of a signature" should {
     "for a jvalue" >> {
       "be invariant for order of fields in contained jobjects" in {

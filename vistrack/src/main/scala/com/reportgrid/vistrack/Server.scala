@@ -37,7 +37,7 @@ trait Vistrack extends BlueEyesServiceBuilder with HttpRequestCombinators {
   def buildTokenHashes(tokenStorage: TokenStorage, tokenId: String, hashes: List[String]): Future[List[String]] = {
     tokenStorage.lookup(tokenId).flatMap {
       case Some(token) =>
-        val hash = Hex.encodeHexString(Sha1HashFunction(token.tokenId.getBytes)).take(7)
+        val hash = Hex.encodeHexString(Sha1HashFunction(token.tokenId.getBytes("UTF-8"))).take(7)
         token.parentTokenId match {
           case Some(id) if token.tokenId != token.accountTokenId => buildTokenHashes(tokenStorage, id, hash :: hashes)
           case _ => Future.sync[List[String]](hash :: hashes)
