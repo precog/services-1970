@@ -36,7 +36,7 @@ object ServicesBuild extends Build {
     val common = Project("common", file("common"), settings = commonSettings) dependsOnAlt(blueeyes(base)) 
 
     val analyticsSettings = serviceSettings ++ Seq( 
-      version      := "1.3.2",
+      version      := "1.3.3-SNAPSHOT",
       libraryDependencies ++= Seq(
         "joda-time"               % "joda-time"           % "1.6.2",
         "org.scalaz"              %% "scalaz-core"        % "6.0.2",
