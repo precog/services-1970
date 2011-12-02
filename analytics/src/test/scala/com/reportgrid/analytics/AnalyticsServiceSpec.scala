@@ -110,10 +110,7 @@ trait TestAnalyticsService extends BlueEyesServiceSpecification with AnalyticsSe
           case _        => sys.error("Only one http method expected")
         }
         val chunkContent = content.map(StringToChunk(_))
-        val latch = new java.util.concurrent.CountDownLatch(1)
-        val result = service.apply(HttpRequest(httpMethod, url, Map(), headers, chunkContent)).deliverTo(_ => latch.countDown())
-        latch.await()
-        result.value.flatMap(_.content.map(ChunkToString)).getOrElse("")
+        service.apply(HttpRequest(httpMethod, url, Map(), headers, chunkContent)).map(_.content.map(ChunkToString).getOrElse("")).toAkka.get
       }
     }
 
