@@ -1611,7 +1611,7 @@ trait TestHelpers { self: TestBillingService =>
     val accounts = accountsFactory(null)
     val f = accounts.getAll
     while (!f.isDone) {}
-    f.value.toList.flatMap(_.flatMap(_.toOption)).size
+    f.value.toList.flatMap(_.toOption.get.flatMap(_.toOption)).size
   }
 
   def accountsUnchanged() {

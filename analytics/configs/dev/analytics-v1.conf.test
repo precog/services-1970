@@ -34,17 +34,17 @@ services {
 
       eventsdb {
         database = "events1"
-        servers = ["devmongo01.reportgrid.com:27017"]
+        servers = ["localhost:27017"]
       }
 
       mongo {
         database = "analytics1"
-        servers = ["devmongo01.reportgrid.com:27017"]
+        servers = ["localhost:27017"]
       }
 
       indexdb {
         database = "analytics1"
-        servers = ["devmongo01.reportgrid.com:27017"]
+        servers = ["localhost:27017"]
       }
 
       jessup {

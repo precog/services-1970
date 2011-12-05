@@ -32,7 +32,7 @@ trait BillingService extends BlueEyesServiceBuilder with BijectionsChunkString w
   // Default timeout for shutdown
   implicit val timeout = akka.actor.Actor.Timeout(60 * 1000)
 
-  val billing = service("billing", "1.1.3") {
+  val billing = service("billing", "1.1.4") {
     healthMonitor { monitor =>
       context =>
         startup {

@@ -528,10 +528,9 @@ class PrivateAccounts(
 
   def creditAccounting(): FV[String, CreditAccountingResults] = {
     val now = new DateTime(DateTimeZone.UTC).toDateMidnight.toDateTime(DateTimeZone.UTC)
-    getAll().flatMap { accs =>
-      val assessment = accs.foldLeft(Future.sync(new CreditAccountingResults))(creditAccounting(now))
-      assessment.map(Success(_))
-    }
+    fvApply(getAll(), (list: List[Validation[String, Account]]) => 
+      list.foldLeft(Future.sync(new CreditAccountingResults))(creditAccounting(now)).map(Success(_))
+    )
   }
 
   private def creditAccounting(now: DateTime)(ass: Future[CreditAccountingResults], acc: Validation[String, Account]): Future[CreditAccountingResults] = {
@@ -647,18 +646,17 @@ class PrivateAccounts(
       acc.billing)))
   }
 
-  def getAll(): Future[List[Validation[String, Account]]] = {
-    accountStore.getAll().flatMap(l => {
-      Future.apply(l.toArray[AccountInformation].map(combineWithBillingInfo): _*)
-    })
+  def getAll(): FV[String, List[Validation[String, Account]]] = {
+    fvApply(accountStore.getAll(), (list: List[AccountInformation]) => 
+      Future.apply(list.map(combineWithBillingInfo(_)).toArray: _*).map(Success(_))
+    )
   }
 
   def usageAccounting(): FV[String, UsageAccountingResults] = {
     val now = new DateTime(DateTimeZone.UTC)
-    getAll().flatMap { accs =>
-      val assessment = accs.foldLeft(Future.sync(new UsageAccountingResults))(usageAccounting(now))
-      assessment.map(Success(_))
-    }
+    fvApply(getAll(), (list: List[Validation[String, Account]]) => 
+      list.foldLeft(Future.sync(new UsageAccountingResults))(usageAccounting(now)).map(Success(_))
+    )
   }
 
   private val usageProcessingLag = 5
@@ -860,7 +858,7 @@ trait AccountInformationStore {
   def getByEmail(email: String): FV[String, AccountInformation]
   def getByToken(token: String): FV[String, AccountInformation]
 
-  def getAll(): Future[List[AccountInformation]]
+  def getAll(): FV[String, List[AccountInformation]]
 
   def update(info: AccountInformation): FV[String, AccountInformation]
 
@@ -905,12 +903,20 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
     singleAccountQuery(query)
   }
 
-  def getAll(): Future[List[AccountInformation]] = {
+  def getAll(): FV[String, List[AccountInformation]] = {
     val query = select().from(collection)
     multipleAccountQuery(query)
   }
 
+  private val defaultQueryRetries = 5
+  private val initialDelayMillis = 20
+  private val delayMultiplier = 5
+
   private def singleAccountQuery(q: MongoSelectQuery): Future[Validation[String, AccountInformation]] = {
+    singleAccountQuery(q, defaultQueryRetries, initialDelayMillis)
+  }
+
+  private def singleAccountQuery(q: MongoSelectQuery, retriesRemaining: Int, retryDelay: Int): Future[Validation[String, AccountInformation]] = {
     val result = database(q)
     result.map { result =>
       val l = result.toList
@@ -921,14 +927,41 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
         case 0 => Failure("Account not found.")
         case _ => Failure("More than one account found.")
       }
-    }
+    }.map[FV[String, AccountInformation]](Future.sync(_)).orElse{
+      if(retriesRemaining <= 0) {
+        Future.sync[Validation[String, AccountInformation]](Failure("ReportGrid billing service is currently unavailable."))
+      } else {
+        try {
+          Thread.sleep(retryDelay)
+        } catch {
+          case _ =>
+        }
+        singleAccountQuery(q, retriesRemaining-1, retryDelay * delayMultiplier)
+      }
+    }.flatten
+  }
+  
+  private def multipleAccountQuery(q: MongoSelectQuery): FV[String, List[AccountInformation]] = {
+    multipleAccountQuery(q, defaultQueryRetries, initialDelayMillis)
   }
 
-  private def multipleAccountQuery(q: MongoSelectQuery): Future[List[AccountInformation]] = {
+  private def multipleAccountQuery(q: MongoSelectQuery, retriesRemaining: Int, retryDelay: Int): FV[String, List[AccountInformation]] = {
+    println("Retries: %d Delay: %d".format(retriesRemaining, retryDelay))
     val result = database(q)
     result.map { result =>
-      result.toList.map(_.deserialize[AccountInformation])
-    }
+      Success(result.toList.map(_.deserialize[AccountInformation]))
+    }.map[FV[String, List[AccountInformation]]](Future.sync(_)).orElse {
+      if(retriesRemaining <= 0) {
+        Future.sync[Validation[String, List[AccountInformation]]](Failure("ReportGrid billing service is currently unavailable."))
+      } else {
+        try {
+          Thread.sleep(retryDelay)
+        } catch {
+          case _ =>
+        }
+        multipleAccountQuery(q, retriesRemaining-1, retryDelay * delayMultiplier)
+      }
+    }.flatten
   }
 
   def update(newInfo: AccountInformation): FV[String, AccountInformation] = {

@@ -502,7 +502,7 @@ The ReportGrid Team
     
   class SignupConfirmation(a: Account) extends Notification(fromAddress, Array(a.id.email), Array(), userSignupBccList) {
     def subject = "Welcome to ReportGrid"
-    def body = accountConfirmationContent.format(a.id.email, a.id.tokens.production, a.id.tokens.development)
+    def body = accountConfirmationContent.format(a.id.email, a.id.tokens.production, a.id.tokens.development.getOrElse("<NA>"))
   }
   
   class InternalSignupDetail(a: Account) extends Notification(fromAddress, internalSignupBccList, Array(), Array()) {
