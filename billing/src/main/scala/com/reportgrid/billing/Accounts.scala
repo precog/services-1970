@@ -946,7 +946,6 @@ class MongoAccountInformationStore(database: Database, collection: String) exten
   }
 
   private def multipleAccountQuery(q: MongoSelectQuery, retriesRemaining: Int, retryDelay: Int): FV[String, List[AccountInformation]] = {
-    println("Retries: %d Delay: %d".format(retriesRemaining, retryDelay))
     val result = database(q)
     result.map { result =>
       Success(result.toList.map(_.deserialize[AccountInformation]))
