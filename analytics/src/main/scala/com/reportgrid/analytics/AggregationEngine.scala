@@ -391,7 +391,10 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   def getRawEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]) : Future[MongoSelectQuery#QueryResult] = {
-    val baseFilter: MongoFilter = JPath(".token") === token.tokenId.serialize & JPath(".path") === path.serialize 
+    // the base filter is using a prefix-based match strategy to catch the path. This has the implication that paths are rolled up 
+    // by default, which may not be exactly what we want. Hence, we later have to filter the returned results for only those where 
+    // the rollup depth is greater than or equal to the difference in path length.
+    val baseFilter: MongoFilter = JPath(".token") === token.tokenId.serialize & JPath(".path").regex("^" + java.util.regex.Pattern.quote(path.path))
 
     val obsFilter = observation.obs.foldLeft(baseFilter) {
       case (acc, HasValue(variable, value)) => 
@@ -423,7 +426,14 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
     val filter = tagsFilters.foldLeft(obsFilter)(_ & _)
 
-    eventsdb(selectAll.from(events_collection).where(filter))
+    eventsdb(selectAll.from(events_collection).where(filter)).map {
+      _.filter { jv => 
+        val eventPath = Path((jv \ "path").deserialize[String])
+        //either the event path was equal to the path, or the difference between the length of the path (which must be longer)
+        //and the queried path must be within range of the specified rollup
+        eventPath == path || (jv \? "rollup").flatMap(_.validated[Int].toOption).exists(r => (eventPath - path).map(_.length).exists(_ <= r))
+      }
+    }
   }
 
 

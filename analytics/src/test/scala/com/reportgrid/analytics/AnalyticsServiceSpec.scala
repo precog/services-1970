@@ -492,7 +492,7 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
 
   object sampleData extends Outside[List[Event]] with Scope {
     def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
-      _.foreach(event => jsonTestService.query("rollup", "2").post[JValue]("/vfs/test")(event.message))
+      _.foreach(event => jsonTestService.query("rollup", "1").post[JValue]("/vfs/test/foo")(event.message))
     }
   }
 
@@ -503,9 +503,43 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
         case _ => false
       }
 
-      jsonTestService.get[JValue]("/vfs/.tweeted/count?location=usa") must whenDelivered {
+      jsonTestService.get[JValue]("/vfs/test/.tweeted/count?location=usa") must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+        }
+      }
+    }
+
+    "correctly handle rollup in intersection queries" in sampleData { sampleEvents =>
+      val granularity = Hour
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+
+      val leaf = jsonTestService.post[JValue]("/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis) {
+        JsonParser.parse("""{
+          "select":"count",
+          "from":"/test/foo/",
+          "properties":[
+            {"property":".tweeted.gender", "limit":10,"order":"ascending"},
+            {"property":".tweeted.recipientCount","limit":10,"order":"descending"}
+          ]
+        }""")
+      } 
+      
+      val root = jsonTestService.post[JValue]("/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis) {
+        JsonParser.parse("""{
+          "select":"count",
+          "from":"/test/",
+          "properties":[
+            {"property":".tweeted.gender", "limit":10,"order":"ascending"},
+            {"property":".tweeted.recipientCount","limit":10,"order":"descending"}
+          ]
+        }""")
+      } 
+
+      (leaf zip root) must whenDelivered {
+        beLike {
+          case (HttpResponse(leafStatus, _, Some(leafResult), _), HttpResponse(rootStatus, _, Some(rootResult), _)) => 
+            leafResult must_== rootResult
         }
       }
     }
