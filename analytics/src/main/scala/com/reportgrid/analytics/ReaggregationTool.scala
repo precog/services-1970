@@ -54,7 +54,7 @@ case class AggregationEnvironment(engine: AggregationEngine, tokenManager: Token
 
 object ReaggregationTool extends Logging {
   def halt = {
-    logger.info("Forcibly halting reaggregation tool.")
+    logger.info("Exiting.")
     akka.actor.Actor.registry.shutdownAll()
     System.exit(0)
   }
@@ -70,14 +70,18 @@ object ReaggregationTool extends Logging {
     val batchSize   = argMap.get("--batchSize").map(_.toInt).getOrElse(50)
     val maxRecords  = argMap.get("--maxRecords").map(_.toLong).getOrElse(5000L)
 
+    val shutdownLatch = new java.util.concurrent.CountDownLatch(1)
     for {
       env         <- AggregationEnvironment(new java.io.File(analyticsConfig))
       totalEvents <- reprocess(env.engine, env.tokenManager, pauseLength, batchSize, maxRecords)
       stopResult  <- Stoppable.stop(env.stoppable)(env.timeout).onTimeout(_ => halt).toBlueEyes
     } yield {
       logger.info("Finished processing " + totalEvents + " events.")
-      halt
+      shutdownLatch.countDown()
     } 
+
+    shutdownLatch.await()
+    halt
   }
 
   def parseOptions(opts: List[String], optMap: Map[String, String]): Map[String, String] = opts match {

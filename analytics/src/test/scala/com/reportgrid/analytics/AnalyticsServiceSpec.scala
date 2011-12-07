@@ -409,7 +409,7 @@ class RootTrackingAnalyticsServiceSpec extends TestAnalyticsService with Arbitra
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
-    def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+    val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach(event => jsonTestService.post[JValue]("/vfs/")(event.message))
     }
   }
@@ -450,7 +450,7 @@ class SingleTokenPathAnalyticsServiceSpec extends TestAnalyticsService with Arbi
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
-    def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+    val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _.foreach(event => jsonTestService.post[JValue]("/vfs/t")(event.message))
     }
   }
@@ -491,8 +491,8 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
-    def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
-      _.foreach(event => jsonTestService.query("rollup", "1").post[JValue]("/vfs/test/foo")(event.message))
+    val outside = containerOfN[List, Event](30, fullEventGen).sample.get ->- {
+      _.foreach(event => jsonTestService.query("rollup", "1").post[JValue]("/vfs/test/foo.bar%40baz.com")(event.message))
     }
   }
 
@@ -514,10 +514,20 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
       val granularity = Hour
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
+      val expectedCounts = events.foldLeft(Map.empty[String, Map[String, Int]]) {
+        case (map, Event("tweeted", data, _)) =>
+          val gender = renderNormalized((data \ "gender").deserialize[String])
+          val recipCount = (data \ "recipientCount").deserialize[String]
+          val countMap = map.getOrElse(gender, Map.empty[String, Int])
+          
+          map + (gender -> (countMap + (recipCount -> (countMap.getOrElse(recipCount, 0) + 1))))
+        case (map, _) => map
+      }.serialize
+
       val leaf = jsonTestService.post[JValue]("/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis) {
         JsonParser.parse("""{
           "select":"count",
-          "from":"/test/foo/",
+          "from":"/test/foo.bar@baz.com/",
           "properties":[
             {"property":".tweeted.gender", "limit":10,"order":"ascending"},
             {"property":".tweeted.recipientCount","limit":10,"order":"descending"}
@@ -539,7 +549,8 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
       (leaf zip root) must whenDelivered {
         beLike {
           case (HttpResponse(leafStatus, _, Some(leafResult), _), HttpResponse(rootStatus, _, Some(rootResult), _)) => 
-            leafResult must_== rootResult
+            (expectedCounts must_== leafResult) and 
+            (leafResult must_== rootResult)
         }
       }
     }

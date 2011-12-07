@@ -202,7 +202,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     val outside = containerOfN[List, Event](30, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(TestToken, "/test", event.eventName, event.tags, event.data, 1)
-        engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 0, false)
+        engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 1, false)
       }
     }
   }
@@ -444,7 +444,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
           engine.getRawEvents(TestToken, "/test", observation, queryTerms).map(AggregationEngine.countByTerms(_, queryTerms)) must whenDelivered {
             beLike { case results => 
-              (results.total must_== count.toLong) and 
+              (results.toSeq.total must_== count.toLong) and 
               (results must haveSize((granularity.period(minDate) until maxDate).size))
             }
           }

@@ -314,7 +314,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         valueSeriesKey(token, path, _, observation), 
         CountsPath, variable_value_series.collection)
     } else {
-      getRawEvents(token, path, observation, tagTerms).map(countByTerms(_, tagTerms))
+      getRawEvents(token, path, observation, tagTerms).map(countByTerms(_, tagTerms).toSeq)
     }
   }
 
@@ -328,8 +328,28 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   def getIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
-    val variables = variableDescriptors.map(_.variable)
+    val baseFilter = rawEventsBaseFilter(token, path)
+    val filter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
 
+    val eventVariables: Map[String, List[Variable]] = variableDescriptors.map(_.variable).groupBy(_.name.head.collect{ case JPathField(name) => name }.get)
+
+    eventsdb(selectAll.from(events_collection).where(filter)).map { events =>
+      val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
+      val resultMap = eventsByName.foldLeft(Map.empty[JArray, Map[JObject, CountType]]) {
+        case (result, (eventName, events)) => 
+          eventVariables.get(eventName) map { variables =>
+            events.groupBy(event => JArray(variables.map(v => (event \ "event" \ "data")(v.name.tail)))).foldLeft(result) { 
+              case (result, (key, events)) => result + (key -> (result.getOrElse(key, Map.empty[JObject, CountType]) |+| countByTerms(events, tagTerms)))
+            }
+          } getOrElse {
+            result
+          }
+      }
+
+      resultMap.mapValues(_.toSeq).toSeq
+    }
+
+    /*
     val futureHistograms: Future[List[Map[JValue, CountType]]] = Future {
       variableDescriptors.map { 
         case VariableDescriptor(variable, maxResults, SortOrder.Ascending) =>
@@ -372,7 +392,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
             results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
         }.toSeq
       }
-    }
+    }*/
   }
 
   def findRelatedInfiniteValues(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[Iterable[HasValue]] = {
@@ -390,24 +410,11 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
 
-  def getRawEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]) : Future[MongoSelectQuery#QueryResult] = {
-    // the base filter is using a prefix-based match strategy to catch the path. This has the implication that paths are rolled up 
-    // by default, which may not be exactly what we want. Hence, we later have to filter the returned results for only those where 
-    // the rollup depth is greater than or equal to the difference in path length.
-    val baseFilter: MongoFilter = JPath(".token") === token.tokenId.serialize & JPath(".path").regex("^" + java.util.regex.Pattern.quote(path.path))
+  private def rawEventsBaseFilter(token: Token, path: Path): MongoFilter = {
+    JPath(".token") === token.tokenId.serialize & JPath(".path").regex("^" + path.path)
+  }
 
-    val obsFilter = observation.obs.foldLeft(baseFilter) {
-      case (acc, HasValue(variable, value)) => 
-        val eventName = variable.name.head.flatMap {
-          case JPathField(name) => Some(name)
-          case _ => None
-        }
-
-        acc &
-        ((JPath(".event.data") \ (variable.name.tail)) === value) &
-        eventName.map(JPath(".event.name") === _)
-    }
-
+  private def rawEventsTagsFilter(tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
     val tagsFilters: Seq[MongoFilter]  = tagTerms.collect {
       case IntervalTerm(_, _, span) => 
         (MongoFilterBuilder(JPath(".tags.#timestamp")) >= span.start.getMillis) & 
@@ -424,7 +431,28 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         MongoFilterBuilder(JPath(".tags") \ ("#" + tagName) \ name) === path.path
     }
 
-    val filter = tagsFilters.foldLeft(obsFilter)(_ & _)
+    tagsFilters.reduceLeftOption(_ & _)
+  }
+
+  def getRawEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]) : Future[MongoSelectQuery#QueryResult] = {
+    // the base filter is using a prefix-based match strategy to catch the path. This has the implication that paths are rolled up 
+    // by default, which may not be exactly what we want. Hence, we later have to filter the returned results for only those where 
+    // the rollup depth is greater than or equal to the difference in path length.
+    val baseFilter = rawEventsBaseFilter(token, path)
+
+    val obsFilter = observation.obs.foldLeft(baseFilter) {
+      case (acc, HasValue(variable, value)) => 
+        val eventName = variable.name.head.flatMap {
+          case JPathField(name) => Some(name)
+          case _ => None
+        }
+
+        acc &
+        ((JPath(".event.data") \ (variable.name.tail)) === value) &
+        eventName.map(JPath(".event.name") === _)
+    }
+
+    val filter = rawEventsTagsFilter(tagTerms).map(obsFilter & _).getOrElse(obsFilter)
 
     eventsdb(selectAll.from(events_collection).where(filter)).map {
       _.filter { jv => 
@@ -833,7 +861,7 @@ object AggregationEngine {
     }   
   }
 
-  def countByTerms(results: Iterable[JValue], tagTerms: Seq[TagTerm]) = {
+  def countByTerms(results: Iterable[JValue], tagTerms: Seq[TagTerm]): Map[JObject, CountType] = {
     val retrieved = results.foldLeft(SortedMap.empty[JObject, CountType](JObjectOrdering)) { (acc, event) =>
       val key = JObject(
         tagTerms.collect {
@@ -862,6 +890,6 @@ object AggregationEngine {
         )
         
         if (acc.contains(key)) acc else acc + (key -> 0L)
-    }.toSeq
+    }
   }
 }

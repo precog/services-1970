@@ -125,7 +125,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     val sliceLength = sortedEvents.size / 2
     val startTime = granularity.floor(sortedEvents.drop(sliceLength / 2).head._2)
     val endTime = granularity.ceil(sortedEvents.drop(sliceLength + (sliceLength / 2)).head._2)
-    (sortedEvents.flatMap { case (e, t) => (t >= startTime && t < endTime).option(e) }, startTime, endTime)
+    (sortedEvents collect { case (e, t) if t >= startTime && t < endTime => e }, startTime, endTime)
   }
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(JPath, JValue), Int]) {
