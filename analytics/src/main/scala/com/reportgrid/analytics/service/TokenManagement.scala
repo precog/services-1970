@@ -14,7 +14,7 @@ import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.util.Clock
 
 import org.joda.time.DateTime
-import net.lag.logging.Logger
+import com.weiglewilczek.slf4s.Logger
 
 import scalaz.Scalaz._
 import scalaz.{Validation, Success, Failure}
@@ -87,7 +87,7 @@ object TokenService extends HttpRequestHandlerCombinators {
                 tokenManager.deleteDescendant(token, descendant.tokenId) map { _ =>
                   HttpResponse[JValue](content = None)
                 } ifCanceled { error => 
-                  error.foreach(logger.warning("An error occurred deleting the token: " + request.parameters('descendantTokenId), _))
+                  error.foreach(logger.warn("An error occurred deleting the token: " + request.parameters('descendantTokenId), _))
                 } 
               } getOrElse {
                 Future.sync {

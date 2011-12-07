@@ -21,7 +21,7 @@ import blueeyes.persistence.mongo._
 import blueeyes.concurrent.Future
 
 import net.lag.configgy.{Configgy, Config, ConfigMap}
-import net.lag.logging.Logger
+import com.weiglewilczek.slf4s.Logging
 
 import org.joda.time.Instant
 import org.specs2.mutable.Specification
@@ -158,7 +158,7 @@ trait AggregationEngineTests extends Specification with FutureMatchers with Arbi
   }
 }
 
-trait AggregationEngineFixtures extends LocalMongo {
+trait AggregationEngineFixtures extends LocalMongo with Logging {
   val config = (new Config()) ->- (_.load(mongoConfigFileData))
 
   val eventsConfig = config.configMap("eventsdb")
@@ -169,7 +169,7 @@ trait AggregationEngineFixtures extends LocalMongo {
   val indexMongo = new RealMongo(indexConfig)
   val indexdb = indexMongo.database(indexConfig("database"))
 
-  val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
+  val engine = AggregationEngine.forConsole(config, logger, eventsdb, indexdb, HealthMonitor.Noop)
 
   implicit val timeout = akka.actor.Actor.Timeout(Long.MaxValue) //for now
 

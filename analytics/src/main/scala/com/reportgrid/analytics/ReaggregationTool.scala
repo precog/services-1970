@@ -16,11 +16,12 @@ import blueeyes.util.metrics.Duration._
 
 import java.util.concurrent.CountDownLatch
 import net.lag.configgy.{Config, ConfigMap}
-import net.lag.logging.Logger
+import com.weiglewilczek.slf4s.Logging
+import com.weiglewilczek.slf4s.Logger
 import org.joda.time.Instant
 
-import scalaz._
-import Scalaz._
+import scalaz.{Success, Failure, NonEmptyList}
+import scalaz.Scalaz._
 
 object AggregationEnvironment {
   def apply(file: java.io.File): Future[AggregationEnvironment] = {
@@ -42,7 +43,7 @@ object AggregationEnvironment {
     implicit val shutdownTimeout = akka.actor.Actor.Timeout(indexdbConfig.getLong("shutdownTimeout", 30000))
 
     val tokenManager = new TokenManager(indexdb, tokensCollection, deletedTokensCollection) 
-    val engine = AggregationEngine.forConsole(config, Logger.get, eventsdb, indexdb, HealthMonitor.Noop)
+    val engine = AggregationEngine.forConsole(config, Logger("reaggregator"), eventsdb, indexdb, HealthMonitor.Noop)
     val stoppable = Stoppable(engine, Stoppable(eventsdb) :: Stoppable(indexdb) :: Nil)
 
     Future.sync(new AggregationEnvironment(engine, tokenManager, stoppable, shutdownTimeout))
@@ -51,9 +52,9 @@ object AggregationEnvironment {
 
 case class AggregationEnvironment(engine: AggregationEngine, tokenManager: TokenStorage, stoppable: Stoppable, timeout: akka.actor.Actor.Timeout)
 
-object ReaggregationTool {
+object ReaggregationTool extends Logging {
   def halt = {
-    println("Forcibly halting reaggregation tool.")
+    logger.info("Forcibly halting reaggregation tool.")
     akka.actor.Actor.registry.shutdownAll()
     System.exit(0)
   }
@@ -74,7 +75,7 @@ object ReaggregationTool {
       totalEvents <- reprocess(env.engine, env.tokenManager, pauseLength, batchSize, maxRecords)
       stopResult  <- Stoppable.stop(env.stoppable)(env.timeout).onTimeout(_ => halt).toBlueEyes
     } yield {
-      println("Finished processing " + totalEvents + " events.")
+      logger.info("Finished processing " + totalEvents + " events.")
       halt
     } 
   }
@@ -92,9 +93,9 @@ object ReaggregationTool {
   }
 
   def reprocess(engine: AggregationEngine, tokenManager: TokenStorage, pause: Int, batchSize: Int, maxRecords: Long) = {
-    import engine._
+    import engine.{logger => _, _}
 
-    println("Beginning processing " + maxRecords + " events.")
+    logger.info("Beginning processing " + maxRecords + " events.")
     val ingestBatch: Function0[Future[Int]] = () => {
       eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
         print("Reaggregating...")
@@ -106,18 +107,18 @@ object ReaggregationTool {
             case ((errors, total), Success(complexity)) => (errors, total + complexity)
           }
 
-          println("\nProcessed " + results.size + " events with a total complexity of " + complexity)
-          errors.foreach(println)
+          logger.info("\nProcessed " + results.size + " events with a total complexity of " + complexity)
+          errors.foreach(logger.warn(_))
 
           results.size
         } ifCanceled {
           errors => 
-            errors.foreach(ex => ex.printStackTrace) 
-            println("Errors caused event reprocessing to be terminated.")
+            errors.foreach(logger.error("Fatal reprocessing error.", _)) 
+            logger.error("Errors caused event reprocessing to be terminated.")
             akka.actor.Actor.registry.shutdownAll()
         } flatMap { size =>
           engine.flushStages.map { writes => 
-            println("Flushed " + writes + " writes to mongo.")
+            logger.debug("Flushed " + writes + " writes to mongo.")
             size
           }
         }

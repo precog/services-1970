@@ -28,7 +28,7 @@ import com.reportgrid.ct._
 import java.util.concurrent.TimeUnit
 
 import net.lag.configgy.ConfigMap
-import net.lag.logging.Logger
+import com.weiglewilczek.slf4s.Logger
 
 import org.joda.time.Instant
 

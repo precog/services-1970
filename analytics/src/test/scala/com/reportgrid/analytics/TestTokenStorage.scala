@@ -11,7 +11,7 @@ import blueeyes.util.Clock
 
 import org.joda.time._
 import net.lag.configgy.ConfigMap
-import net.lag.logging.Logger
+import com.weiglewilczek.slf4s.Logger
 
 import org.specs2.mutable.Specification
 import org.specs2.specification.{Outside, Scope}

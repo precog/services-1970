@@ -12,7 +12,7 @@ import blueeyes.util.Clock
 
 import org.joda.time._
 import net.lag.configgy.ConfigMap
-import net.lag.logging.Logger
+import com.weiglewilczek.slf4s.Logging
 
 import org.specs2.mutable.Specification
 import org.specs2.specification.{Outside, Scope}
@@ -21,11 +21,11 @@ import org.scalacheck.Gen._
 import scalaz.{Success, Validation}
 import scalaz.Scalaz._
 
-class TokenServiceSpec extends Specification with FutureMatchers with TestTokenStorage with TestTokens with scalaz.Trees {
+class TokenServiceSpec extends Specification with FutureMatchers with TestTokenStorage with TestTokens with scalaz.Trees with Logging {
   import scalaz.Tree
   
   val clock = Clock.System
-  val tokenService = TokenService(tokenManager, clock, Logger.get("test"))
+  val tokenService = TokenService(tokenManager, clock, logger)
 
   object sampleData extends Outside[Tree[Token]] with Scope {
     def buildChildTokens(tok: Token, depth: Int): Tree[Token] = {
