@@ -25,6 +25,8 @@ import scalaz.Failure
 import scalaz.Semigroup
 import scalaz.NonEmptyList
 
+import com.weiglewilczek.slf4s.Logging
+
 trait StorageReporting {
   def tokenId: String
   def stored(path: Path, count: Int)
@@ -110,7 +112,7 @@ object StorageMetrics {
 }
 
 class TrackingService(aggregationEngine: AggregationEngine, storageReporting: StorageReporting, timeSeriesEncoding: TimeSeriesEncoding, clock: Clock, jessup: Jessup, autoTimestamp: Boolean)
-extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[JValue]]] {
+extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[JValue]]] with Logging {
   val service = (request: HttpRequest[Future[JValue]]) => {
     val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, clock.instant(), autoTimestamp) ::
                         Tag.locationTagExtractor(jessup(request.remoteHost))             :: Nil
@@ -132,7 +134,7 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
         request.content.map { 
           _.flatMap {
             case obj @ JObject(fields) => 
-              aggregationEngine.logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)))
+              logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)))
 
               Future(
                 fields flatMap { 
@@ -181,16 +183,16 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
               ) map { results =>
                 results.reduceOption(_ >>*<< _) match {
                   case Some(Success(complexity)) => 
-                    aggregationEngine.logger.debug("Total complexity: " + complexity)
+                    logger.debug("Total complexity: " + complexity)
                     HttpResponse[JValue](OK)
 
                   case Some(Failure(errors)) => 
-                    aggregationEngine.logger.debug("Encountered tag parsing errors: " + errors.list.mkString("; "))
+                    logger.debug("Encountered tag parsing errors: " + errors.list.mkString("; "))
                     HttpResponse[JValue](HttpStatus(BadRequest, "Errors occurred parsing tag properies of one or more of your events."), 
                                          content = Some(errors.list.mkString("", ";\n", "\n") + "original: " + pretty(render(obj))))
 
                   case None => 
-                    aggregationEngine.logger.debug("Did not find any fields in content object: " + pretty(render(obj)))
+                    logger.debug("Did not find any fields in content object: " + pretty(render(obj)))
                     HttpResponse[JValue](HttpStatus(BadRequest, "No trackable events were found in the content body."), 
                                          content = Some("original: " + pretty(render(obj))))
                 }
