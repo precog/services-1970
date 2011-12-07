@@ -2,4 +2,5 @@ conf=dev/billing-v1.conf.test
 default=dev/billing-v1.default
 init=dev/billing-v1.init.conf
 /etc/monit/conf.d/billing-v1.monit=dev/billing-v1.monit
+/etc/reportgrid/billing-v1.logging.xml=dev/billing-v1.logging.xml
 postinstall=dev/postinstall.sh
