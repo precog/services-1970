@@ -1,5 +1,6 @@
 package com.reportgrid.analytics
 
+import akka.actor.PoisonPill
 import blueeyes._
 import blueeyes.bkka._
 import blueeyes.health._
@@ -40,7 +41,7 @@ object AggregationEnvironment {
     val tokensCollection = config.getString("tokens.collection", "tokens")
     val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
 
-    implicit val shutdownTimeout = akka.actor.Actor.Timeout(indexdbConfig.getLong("shutdownTimeout", 30000))
+    implicit val shutdownTimeout = akka.actor.Actor.Timeout(indexdbConfig.getLong("shutdownTimeout", 120000))
 
     val tokenManager = new TokenManager(indexdb, tokensCollection, deletedTokensCollection) 
     val engine = AggregationEngine.forConsole(config, Logger("reaggregator"), eventsdb, indexdb, HealthMonitor.Noop)
@@ -54,9 +55,9 @@ case class AggregationEnvironment(engine: AggregationEngine, tokenManager: Token
 
 object ReaggregationTool extends Logging {
   def halt = {
+    akka.actor.Actor.registry.actors.foreach(_ ! PoisonPill)
     logger.info("Exiting.")
-    akka.actor.Actor.registry.shutdownAll()
-    System.exit(0)
+    //System.exit(0)
   }
 
   def main(argv: Array[String]) {
@@ -71,15 +72,21 @@ object ReaggregationTool extends Logging {
     val maxRecords  = argMap.get("--maxRecords").map(_.toLong).getOrElse(5000L)
 
     val shutdownLatch = new java.util.concurrent.CountDownLatch(1)
-    for {
+
+    def onTimeout[T](future: akka.dispatch.Future[T]) = {
+      logger.info("Shutdown future timed out after " + (future.timeoutInNanos / 1000 / 1000) + " ms.")
+      shutdownLatch.countDown()
+    }
+
+    val shutdownFuture = for {
       env         <- AggregationEnvironment(new java.io.File(analyticsConfig))
       totalEvents <- reprocess(env.engine, env.tokenManager, pauseLength, batchSize, maxRecords)
-      stopResult  <- Stoppable.stop(env.stoppable)(env.timeout).onTimeout(_ => halt).toBlueEyes
+      stopResult  <- Stoppable.stop(env.stoppable)(env.timeout).onTimeout(onTimeout).toBlueEyes
     } yield {
       logger.info("Finished processing " + totalEvents + " events.")
       shutdownLatch.countDown()
     } 
-
+    
     shutdownLatch.await()
     halt
   }
@@ -102,7 +109,7 @@ object ReaggregationTool extends Logging {
     logger.info("Beginning processing " + maxRecords + " events.")
     val ingestBatch: Function0[Future[Int]] = () => {
       eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
-        print("Reaggregating...")
+        logger.info("Reaggregating...")
         val reaggregated = results.map { jv => restore(engine, tokenManager, jv --> classOf[JObject]) }
 
         reaggregated.toSeq.sequence map { results => 

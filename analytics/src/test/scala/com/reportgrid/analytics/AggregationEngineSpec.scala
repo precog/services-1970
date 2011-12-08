@@ -182,7 +182,7 @@ trait AggregationEngineFixtures extends LocalMongo with Logging {
         Stoppable(eventsdb, Stoppable(eventsMongo) :: Nil) :: Nil
       )
     )
-    shutdown.flatMap { stoppable => (Stoppable.stop(stoppable)(timeout)).toBlueEyes }.toAkka.get
+    shutdown.flatMap { stoppable => (Stoppable.stop(stoppable)).toBlueEyes }.toAkka.get
   }
 }
 
