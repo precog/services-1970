@@ -45,7 +45,7 @@ object AggregationEnvironment {
 
     val tokenManager = new TokenManager(indexdb, tokensCollection, deletedTokensCollection) 
     val engine = AggregationEngine.forConsole(config, Logger("reaggregator"), eventsdb, indexdb, HealthMonitor.Noop)
-    val stoppable = Stoppable(engine, Stoppable(eventsdb) :: Stoppable(indexdb) :: Nil)
+    val stoppable = Stoppable(engine, Stoppable(eventsdb, Stoppable(eventsMongo) :: Nil) :: Stoppable(indexdb, Stoppable(indexMongo) :: Nil) :: Nil)
 
     Future.sync(new AggregationEnvironment(engine, tokenManager, stoppable, shutdownTimeout))
   }
@@ -57,7 +57,7 @@ object ReaggregationTool extends Logging {
   def halt = {
     akka.actor.Actor.registry.actors.foreach(_ ! PoisonPill)
     logger.info("Exiting.")
-    //System.exit(0)
+    System.exit(0)
   }
 
   def main(argv: Array[String]) {
