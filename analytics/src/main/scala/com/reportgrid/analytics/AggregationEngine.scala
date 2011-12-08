@@ -779,7 +779,7 @@ object AggregationEngine {
 
   import blueeyes.bkka.Stop
   implicit def stop: Stop[AggregationEngine] = new Stop[AggregationEngine] {
-    def stop(engine: AggregationEngine) = engine.stop(akka.util.Duration.INF.toMillis)
+    def stop(engine: AggregationEngine) = engine.stop(akka.actor.Actor.Timeout(Long.MaxValue))
   }
 
   implicit def rsRich[K <: JValue, V: AbelianGroup](resultSet: ResultSet[K, V]): RichResultSet[K, V] = new RichResultSet(resultSet)

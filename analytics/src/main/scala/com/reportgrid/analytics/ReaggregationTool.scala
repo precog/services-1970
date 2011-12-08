@@ -41,7 +41,7 @@ object AggregationEnvironment {
     val tokensCollection = config.getString("tokens.collection", "tokens")
     val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
 
-    implicit val shutdownTimeout = akka.actor.Actor.Timeout(indexdbConfig.getLong("shutdownTimeout", 120000))
+    implicit val shutdownTimeout = akka.actor.Actor.Timeout(indexdbConfig.getLong("shutdownTimeout", Long.MaxValue))
 
     val tokenManager = new TokenManager(indexdb, tokensCollection, deletedTokensCollection) 
     val engine = AggregationEngine.forConsole(config, Logger("reaggregator"), eventsdb, indexdb, HealthMonitor.Noop)
