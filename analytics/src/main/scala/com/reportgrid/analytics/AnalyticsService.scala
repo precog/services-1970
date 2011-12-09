@@ -133,18 +133,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                   path("/") { 
                     commit {
                       path("count") {
-                        audited("count occurrences of a variable") {
-                          (request: HttpRequest[Future[JValue]]) => {
-                            (token: Token, path: Path, variable: Variable) => {
-                              val futureContent: Future[Option[JValue]] = request.content.map(_.map[Option[JValue]](Some(_)))
-                                                                                 .getOrElse(Future.sync[Option[JValue]](None))
-                              futureContent.flatMap { content => 
-                                val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, content))
-                                aggregationEngine.getVariableCount(token, path, variable, terms).map(_.serialize.ok)
-                              }
-                            }
-                          }
-                        }
+                        new VariableCountService(aggregationEngine).audited("count occurrences of a variable")
                       } ~ 
                       path("statistics") {
                         get { 
@@ -254,18 +243,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                                 commit {
                                   path("count") {
                                     get {
-                                      audited("count occurrences of a variable value") { 
-                                        (request: HttpRequest[Future[JValue]]) => (value: JValue) => (token: Token, path: Path, variable: Variable) => {
-                                          val futureContent: Future[Option[JValue]] = request.content.map(_.map[Option[JValue]](Some(_)))
-                                                                                             .getOrElse(Future.sync[Option[JValue]](None))
-
-                                          futureContent.flatMap { content => 
-                                            val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, content))
-                                            aggregationEngine.getObservationCount(token, path, JointObservation(HasValue(variable, value)), terms)
-                                            .map(_.serialize.ok)
-                                          }
-                                        }
-                                      }
+                                      new ValueCountService(aggregationEngine).audited("count occurrences of a variable value") 
                                     }
                                   } ~
                                   path("series") {

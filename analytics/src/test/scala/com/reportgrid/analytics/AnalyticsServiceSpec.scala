@@ -305,6 +305,36 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       } 
     }
 
+    "return variable counts keyed by tag children" in sampleData { sampleEvents =>
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
+
+      val expectedResults = events.foldLeft(Map.empty[String, Map[String, Int]]) {
+        case (acc, Event(eventName, _, tags)) =>
+          val state = tags.collect({ case Tag("location", Hierarchy(locations)) => locations.find(_.path.length == 2).map(_.path.path) }).flatten.head
+          val locationCounts = acc.getOrElse(eventName, Map.empty[String, Int])
+          acc + (eventName -> (locationCounts + (state -> (locationCounts.getOrElse(state, 0) + 1))))
+      }
+
+      val queryTerms = JObject(
+        JField("start", minDate.getMillis) ::
+        JField("end", maxDate.getMillis) ::
+        JField("location", "usa") :: Nil
+      )
+
+      forall(expectedResults) {
+        case (eventName, locationCounts) =>
+          (jsonTestService.post[JValue]("/vfs/test/." + eventName + ".recipientCount/count?use_tag_children=location")(queryTerms)) must whenDelivered {
+            beLike {
+              case HttpResponse(status, _, Some(contents), _) => 
+                (status.code must_== HttpStatusCodes.OK) and
+                forall(locationCounts) {
+                  case (key, count) => (((contents --> classOf[JObject]) \ key).deserialize[Int] must_== count)
+                }
+            }
+          }
+      }
+    }
+
     "return variable series means" in sampleData { sampleEvents =>
       val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
       val expected = expectedMeans(events, "recipientCount", keysf(Hour))

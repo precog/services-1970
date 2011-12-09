@@ -290,6 +290,7 @@ case class Hierarchy private (locations: List[Hierarchy.Location]) extends TagVa
 object Hierarchy {
   sealed trait Location {
     def path: Path
+    def / (s: String): Location
   }
 
   object Location {
@@ -303,8 +304,13 @@ object Hierarchy {
 
   }
 
-  case class AnonLocation(path: Path) extends Location
-  case class NamedLocation(name: String, path: Path) extends Location
+  case class AnonLocation(path: Path) extends Location {
+    def / (s: String) = this.copy(path = path / s)
+  }
+
+  case class NamedLocation(name: String, path: Path) extends Location {
+    def / (s: String) = this.copy(path = path / s)
+  }
 
   def of[T <: Location](locations: List[T]) = {
     (respectsRefinementRule(locations.map(_.path)))
