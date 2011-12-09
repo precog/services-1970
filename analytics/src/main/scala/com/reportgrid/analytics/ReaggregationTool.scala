@@ -86,6 +86,15 @@ object ReaggregationTool extends Logging {
       logger.info("Finished processing " + totalEvents + " events.")
       shutdownLatch.countDown()
     } 
+
+    shutdownFuture ifCanceled { ex =>
+      ex match {
+        case Some(throwable) => logger.error("Reaggregation was halted due to an error", throwable)
+        case None => logger.error("Reggregation future was canceled, but no reason was given.")
+      }
+
+      shutdownLatch.countDown()
+    }
     
     shutdownLatch.await()
     halt
@@ -110,15 +119,16 @@ object ReaggregationTool extends Logging {
     val ingestBatch: Function0[Future[Int]] = () => {
       eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
         logger.info("Reaggregating...")
-        val reaggregated = results.map { jv => restore(engine, tokenManager, jv --> classOf[JObject]) }
+        val reaggregated = results.toList.zipWithIndex.map { case (jv, i) => restore(engine, tokenManager, jv --> classOf[JObject], i) }
 
-        reaggregated.toSeq.sequence map { results => 
+        Future(reaggregated.toSeq: _*) map { results => 
           val (errors, complexity) = results.foldLeft((List.empty[String], 0L)) {
             case ((errors, total), Failure(err)) => (errors ++ err.list, total)
             case ((errors, total), Success(complexity)) => (errors, total + complexity)
           }
 
           logger.info("\nProcessed " + results.size + " events with a total complexity of " + complexity)
+          print(": " + complexity + "\n\n")
           errors.foreach(logger.warn(_))
 
           results.size
@@ -126,8 +136,8 @@ object ReaggregationTool extends Logging {
           errors => 
             errors.foreach(logger.error("Fatal reprocessing error.", _)) 
             logger.error("Errors caused event reprocessing to be terminated.")
-            akka.actor.Actor.registry.shutdownAll()
         } flatMap { size =>
+          logger.debug("About to flush aggregation engine stages...")
           engine.flushStages.map { writes => 
             logger.debug("Flushed " + writes + " writes to mongo.")
             size
@@ -139,10 +149,12 @@ object ReaggregationTool extends Logging {
     ScheduledExecutorSingleThreaded.repeatWhile(ingestBatch, pause.seconds, (_: Int) < maxRecords)(0) { (_: Int) + (_: Int) } 
   }
 
-  def restore(engine: AggregationEngine, tokenManager: TokenStorage, obj: JObject): Future[ValidationNEL[String, Long]] = {
-    import engine._
+  def restore(engine: AggregationEngine, tokenManager: TokenStorage, obj: JObject, i: Int): Future[ValidationNEL[String, Long]] = {
+    print("*")
+    import engine.{aggregate, eventsdb, events_collection, withTagResults}
     tokenManager.lookup(obj \ "token") flatMap { 
       _ map { token => 
+        logger.trace("obtained token " + i)
         ((obj \ "event" \ "data") -->? classOf[JObject]) map { eventBody =>
           val path = (obj \ "path").deserialize[Path]
           val count = (obj \ "count").deserialize[Int]
@@ -154,7 +166,10 @@ object ReaggregationTool extends Logging {
 
           val (tagResults, remainder) = Tag.extractTags(tagExtractors, eventBody --> classOf[JObject])
           withTagResults(tagResults) { tags =>
-            aggregate(token, path, eventName, tags, remainder, count) map { complexity => (complexity, tags) }
+            logger.trace("about to aggregate " + i)
+            aggregate(token, path, eventName, tags, remainder, count)
+            .deliverTo { complexity => logger.trace("finished aggregation with complexity of " + complexity + " " + i) } 
+            .map { complexity => (complexity, tags) }
           } 
         } getOrElse {
           Future.sync(("Event body was not a jobject: " + (obj \ "data")).wrapNel.fail)
@@ -173,9 +188,10 @@ object ReaggregationTool extends Logging {
 
       } flatMap {
         case (complexity, mongoUpdate) => 
+          print("%")
           eventsdb(update(events_collection).set(mongoUpdate).where("_id" === (obj \ "_id"))) map { _ =>
             print(".")
-            healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
+            //healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
             complexity
           }
       }
