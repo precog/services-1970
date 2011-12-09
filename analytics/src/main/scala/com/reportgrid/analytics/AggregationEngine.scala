@@ -383,20 +383,25 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       logger.trace("Querying mongo for intersection events with filter " + filter)
       val queryStart = System.currentTimeMillis()
       eventsdb(selectAll.from(events_collection).where(filter)).map { events =>
+
         logger.trace("Got response for intersection after " + (System.currentTimeMillis() - queryStart) + " ms")
         val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
+
         val resultMap = eventsByName.foldLeft(Map.empty[JArray, Map[JObject, CountType]]) {
-          case (result, (eventName, events)) => 
+          case (result, (eventName, namedEvents)) => 
             eventVariables.get(eventName) map { variables =>
-              events.groupBy(event => JArray(variables.map(v => (event \ "event" \ "data")(v.name.tail)))).foldLeft(result) { 
-                case (result, (key, events)) => result + (key -> (result.getOrElse(key, Map.empty[JObject, CountType]) |+| countByTerms(events, tagTerms)))
+              namedEvents.groupBy(event => JArray(variables.map(v => (event \ "event" \ "data")(v.name.tail))))
+              .filterKeys(k => k.elements.nonEmpty && k.elements.forall(_ != JNothing))
+              .foldLeft(result) { 
+                case (result, (key, eventsForVariables)) => 
+                  result + (key -> (result.getOrElse(key, Map.empty[JObject, CountType]) |+| countByTerms(eventsForVariables, tagTerms)))
               }
             } getOrElse {
               result
             }
         }
 
-        resultMap.filterKeys(_.elements.forall(_ != JNothing)).mapValues(_.toSeq).toSeq
+        resultMap.mapValues(_.toSeq).toSeq
       }
     }
   }
@@ -871,13 +876,13 @@ object AggregationEngine {
     val retrieved = results.foldLeft(SortedMap.empty[JObject, CountType](JObjectOrdering)) { (acc, event) =>
       val key = JObject(
         tagTerms.collect {
-          case IntervalTerm(_, periodicity, _) => JField(periodicity.name, periodicity.period(event \ "timestamp"))
+          case IntervalTerm(_, periodicity, _) => JField("timestamp", periodicity.period(event \ "timestamp").start)
           case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => JField(tagName, path.path)
           case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
         }.toList
       )
 
-      acc + (key -> (acc.getOrElse(key, 0L) + 1))
+      acc + (key -> (acc.getOrElse(key, 0L) + ((event \ "count").validated[Long] | 1L)))
     }
 
     val intervalPeriods = tagTerms.collect {

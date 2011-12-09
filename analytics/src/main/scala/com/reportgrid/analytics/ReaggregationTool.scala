@@ -117,7 +117,7 @@ object ReaggregationTool extends Logging {
 
     logger.info("Beginning processing " + maxRecords + " events.")
     val ingestBatch: Function0[Future[Int]] = () => {
-      eventsdb(selectAll.from(events_collection).where("reprocess" === true).limit(batchSize)) flatMap { results => 
+      eventsdb(selectAll.from(events_collection).where("reprocess" === true).sortBy(".timestamp".<<).limit(batchSize)) flatMap { results => 
         logger.info("Reaggregating...")
         val reaggregated = results.toList.zipWithIndex.map { case (jv, i) => restore(engine, tokenManager, jv --> classOf[JObject], i) }
 
