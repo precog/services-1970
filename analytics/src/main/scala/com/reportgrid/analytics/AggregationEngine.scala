@@ -805,7 +805,7 @@ object AggregationEngine {
 
   private val EventsdbIndices = Map(
     "events" -> Map(
-      "raw_events_query" -> (List("token", "timestamp", "path"), false)
+      "raw_events_query" -> (List("token", "path", "timestamp"), false)
     )
   )
 
