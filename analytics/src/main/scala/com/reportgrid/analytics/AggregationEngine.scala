@@ -308,7 +308,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
    *  over the given time period.
    */
   def getObservationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
-    if (observation.order <= 1 /*token.limits.order*/) {
+    if (observation.order <= 0 /*token.limits.order*/) {
       internalSearchSeries[CountType](
         tagTerms,
         valueSeriesKey(token, path, _, observation), 
@@ -328,7 +328,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   def getIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
-    if (variableDescriptors.size <= 1 /*token.limits.order*/) {
+    if (variableDescriptors.size <= 0 /*token.limits.order*/) {
       val variables = variableDescriptors.map(_.variable)
       val futureHistograms: Future[List[Map[JValue, CountType]]] = Future {
         variableDescriptors.map { 
@@ -460,8 +460,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         }
 
         acc &
-        ((JPath(".event.data") \ (variable.name.tail)) === value) &
-        eventName.map(JPath(".event.name") === _)
+        eventName.map(JPath(".event.name") === _) & 
+        ((JPath(".event.data") \ (variable.name.tail)) === value)
     }
 
     eventsdb(selectAll.from(events_collection).where(filter)).map {

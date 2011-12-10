@@ -149,7 +149,7 @@ trait AggregationEngineTests extends Specification with FutureMatchers with Arbi
     val eventCounts = EventTypes.map(eventName => (eventName, countEvents(eventName))).toMap
 
     val queryTerms = List[TagTerm](
-      HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+      HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
     )
 
     forall(eventCounts) {
@@ -268,7 +268,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       }
 
       val queryTerms = List[TagTerm](
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       forall(EventTypes.map(eventName => (eventName, countEvents(eventName)))) {
@@ -342,7 +342,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       }
 
       val queryTerms = List[TagTerm](
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       forall(expectedTotals) {
@@ -360,7 +360,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       val expectedTotals = events.foldLeft(Map.empty[JPath, Int]) {
@@ -384,7 +384,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       forall(expectedMeans(events, "recipientCount", keysf(granularity))) {
@@ -408,7 +408,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
-        HierarchyLocationTerm("location", Hierarchy.AnonLocation(com.reportgrid.analytics.Path("usa")))
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
       )
 
       forallWhen(valueCounts(events)) {
