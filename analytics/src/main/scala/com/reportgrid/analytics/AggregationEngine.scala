@@ -428,12 +428,12 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   private def rawEventsTagsFilter(tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
     val tagsFilters: Seq[MongoFilter]  = tagTerms.collect {
       case IntervalTerm(_, _, span) => 
-        (MongoFilterBuilder(JPath(".tags.#timestamp")) >= span.start.getMillis) & 
-        (MongoFilterBuilder(JPath(".tags.#timestamp")) <  span.end.getMillis)
+        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
+        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
 
       case SpanTerm(_, span) =>
-        (MongoFilterBuilder(JPath(".tags.#timestamp")) >= span.start.getMillis) & 
-        (MongoFilterBuilder(JPath(".tags.#timestamp")) <  span.end.getMillis)
+        (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
+        (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
 
       case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) =>
         MongoFilterBuilder(JPath(".tags") \ ("#"+ tagName)).contains[MongoPrimitiveString](path.path)
@@ -450,8 +450,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     // by default, which may not be exactly what we want. Hence, we later have to filter the returned results for only those where 
     // the rollup depth is greater than or equal to the difference in path length.
     val baseFilter = rawEventsBaseFilter(token, path)
+    val tagsFilter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
 
-    val obsFilter = observation.obs.foldLeft(baseFilter) {
+    val filter = observation.obs.foldLeft(tagsFilter) {
       case (acc, HasValue(variable, value)) => 
         val eventName = variable.name.head.flatMap {
           case JPathField(name) => Some(name)
@@ -463,8 +464,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         eventName.map(JPath(".event.name") === _)
     }
 
-    val filter = rawEventsTagsFilter(tagTerms).map(obsFilter & _).getOrElse(obsFilter)
-
     eventsdb(selectAll.from(events_collection).where(filter)).map {
       _.filter { jv => 
         val eventPath = Path((jv \ "path").deserialize[String])
@@ -474,7 +473,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       }
     }
   }
-
 
   private def searchQueriableExpansion[T](span: TimeSpan, f: (IntervalTerm) => Future[T]): Future[List[T]] = {
     import TimeSpan._
