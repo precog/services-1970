@@ -732,7 +732,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       // build a patch including the count, sum, and sum of the squares of integral values
       val dataPath = DataPath \ sig.hashSignature
       val updates = List(
-        Some(countUpdate(sig)),
         jvalue option {
           case JInt(i)    => (dataPath \ "sum") inc (count * i)
           case JDouble(i) => (dataPath \ "sum") inc (count * i)
@@ -743,8 +742,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
           case JDouble(i) => (dataPath \ "sumsq") inc (count * (i * i))
         }
       )
-      
-      updates.flatten.foldLeft(MongoUpdate.Empty)(_ |+| _)
+
+      val withCount = updates.flatten |> { u => u.nonEmpty.option(countUpdate(sig) :: u) }
+      withCount.map(_.foldLeft(MongoUpdate.Empty)(_ |+| _)).getOrElse(MongoUpdate.Empty)
     }
 
     report.storageKeysets.foldLeft(MongoPatches.empty) {
@@ -752,13 +752,16 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         val (dataKeySig, _) = dataKeySigs(storageKeys)
         
         joint.obs.foldLeft(patches) { 
-          case (patches, HasChild(Variable(vpath), child)) => 
+          case (patches, HasChild(Variable(vpath), child)) if vpath.length == 0 => 
             val key = variableSeriesKey(token, path, docKeySig(storageKeys), Variable(vpath \ child))
             patches + (key -> countUpdate(dataKeySig))
 
           case (patches, HasValue(variable, jvalue)) =>             
             val key = variableSeriesKey(token, path, docKeySig(storageKeys), variable)
-            patches + (key -> statsUpdate(variable, jvalue, dataKeySig))
+            val update = statsUpdate(variable, jvalue, dataKeySig)
+            if (update == MongoUpdate.Empty) patches else patches + (key -> update)
+
+          case _ => patches
         }
     }
   }

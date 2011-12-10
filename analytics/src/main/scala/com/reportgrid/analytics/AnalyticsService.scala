@@ -164,7 +164,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                                 new VariableSeriesService(aggregationEngine, _.mean).audited("variable mean series")
                               } ~ 
                               path("standardDeviations") {
-                                new VariableSeriesService(aggregationEngine, _.standardDeviation).audited("variable mean series")
+                                new VariableSeriesService(aggregationEngine, _.standardDeviation).audited("variable standard deviation series")
                               } 
                             }
                           }

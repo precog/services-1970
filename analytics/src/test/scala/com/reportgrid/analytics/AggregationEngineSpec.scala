@@ -199,7 +199,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
   override implicit val defaultFutureTimeouts = FutureTimeouts(15, toDuration(1000).milliseconds)
 
   object sampleData extends Outside[List[Event]] with Scope {
-    val outside = containerOfN[List, Event](30, fullEventGen).sample.get ->- {
+    val outside = containerOfN[List, Event](50, fullEventGen).sample.get ->- {
       _.foreach { event => 
         engine.aggregate(TestToken, "/test", event.eventName, event.tags, event.data, 1)
         engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 1, false)
@@ -353,7 +353,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       }
     }
 
-    "retrieve a time series for occurrences of a variable" in sampleData { sampleEvents =>
+    "retrieve a time series for occurrences of an event" in sampleData { sampleEvents =>
       //skip("disabled")
       val granularity = Minute
       val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
@@ -365,11 +365,8 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
       val expectedTotals = events.foldLeft(Map.empty[JPath, Int]) {
         case (map, Event(eventName, obj, _)) =>
-          obj.flattenWithPath.foldLeft(map) {
-            case (map, (path, _)) =>
-              val key = JPath(eventName) \ path
-              map + (key -> (map.getOrElse(key, 0) + 1))
-          }
+          val key = JPath(eventName) 
+          map + (key -> (map.getOrElse(key, 0) + 1))
       }
 
       forall(expectedTotals) {

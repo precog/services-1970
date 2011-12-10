@@ -136,7 +136,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
   override val genTimeClock = clock 
 
   object sampleData extends Outside[List[Event]] with Scope {
-    val outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
+    val outside = containerOfN[List, Event](50, fullEventGen).sample.get ->- {
       _.foreach(event => jsonTestService.post[JValue]("/vfs/test")(event.message))
     }
   }
@@ -406,6 +406,40 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
     })//.pendingUntilFixed
 
+    "intersection series must sum to count over the same period" in sampleData { sampleEvents =>
+      val granularity = Hour
+      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val expectedTotals = valueCounts(events) 
+
+      val baseQuery = """{
+        "start": %1d,
+        "end": %1d,
+        "select":"%s",
+        "from":"/test/",
+        "properties":[{"property":".tweeted.gender","limit":10,"order":"descending"}]
+      }"""
+      
+      def countResponse = jsonTestService.post[JValue]("/intersect")(JsonParser.parse(baseQuery.format(minDate.getMillis, maxDate.getMillis, "count"))) map {
+        case HttpResponse(_, _, Some(content), _) => content
+      }
+
+      def seriesResponse = jsonTestService.post[JValue]("/intersect")(JsonParser.parse(baseQuery.format(minDate.getMillis, maxDate.getMillis, "series/hour"))) map {
+        case HttpResponse(_, _, Some(JObject(fields)), _) => JObject(
+          fields map {
+            case JField(label, JArray(values)) => JField(label, values.foldLeft(0L) { case (total, JArray(_ :: count :: Nil)) => total + count.deserialize[Long] }.serialize)
+          }
+        )
+      }
+
+      (countResponse zip seriesResponse) must whenDelivered {
+        beLike {
+          case (a, b) => 
+            println("Got series sum: " + b)
+            (a must_!= 0) and (a must_== b)
+        }
+      }
+    }
+
     "grouping in intersection queries" >> {
       "timezone shifting must not discard data" in (sampleData { sampleEvents =>
         val granularity = Hour
@@ -630,9 +664,9 @@ class UnicodeAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEve
         beLike {
           case HttpResponse(HttpStatus(status, _), _, _, _) => 
             (status must_== HttpStatusCodes.OK) and
-            (jsonTestService.get[JValue]("/vfs/test/.case.os/count?location=United%20States") must whenDelivered {
+            (jsonTestService.get[JValue]("/vfs/test/.case.os/values?location=United%20States") must whenDelivered {
               beLike {
-                case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== 1
+                case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[List[String]] must_== List("Win")
               }
             }) 
         }
