@@ -78,16 +78,18 @@ object ReaggregationTool extends Logging {
       shutdownLatch.countDown()
     }
 
-    val shutdownFuture = for {
+    val startTime = System.currentTimeMillis
+    val workFuture = for {
       env         <- AggregationEnvironment(new java.io.File(analyticsConfig))
       totalEvents <- reprocess(env.engine, env.tokenManager, pauseLength, batchSize, maxRecords)
       stopResult  <- Stoppable.stop(env.stoppable)(env.timeout).onTimeout(onTimeout).toBlueEyes
     } yield {
-      logger.info("Finished processing " + totalEvents + " events.")
+      val stopTime = System.currentTimeMillis
+      logger.info("Finished processing " + totalEvents + " events in " + ((stopTime - startTime) / 1000d) + " seconds.")
       shutdownLatch.countDown()
     } 
 
-    shutdownFuture ifCanceled { ex =>
+    workFuture ifCanceled { ex =>
       ex match {
         case Some(throwable) => logger.error("Reaggregation was halted due to an error", throwable)
         case None => logger.error("Reggregation future was canceled, but no reason was given.")
