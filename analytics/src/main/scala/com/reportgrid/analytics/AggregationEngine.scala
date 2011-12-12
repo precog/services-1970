@@ -96,6 +96,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
 
 class AggregationEngine private (config: ConfigMap, val logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock, val healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
+  val maxIndexedOrder = 0
 
   private def AggregationStage(prefix: String): AggregationStage = {
     val timeToIdle      = config.getLong(prefix + ".time_to_idle_millis").getOrElse(10000L)
@@ -189,7 +190,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
     val (finiteObs, infiniteObs) = JointObservations.ofValues(event, 1 /*order*/, depth, limit)
     val finiteOrder1 = finiteObs.filter(_.order == 1)
-    val vvSeriesPatches = variableValueSeriesPatches(token, path, Report(tags, finiteObs), count)
+    //val vvSeriesPatches = variableValueSeriesPatches(token, path, Report(tags, finiteObs), count)
     val childObservations = JointObservations.ofChildren(event, 1)
     val childSeriesReport = Report(tags, (JointObservations.ofInnerNodes(event, 1) ++ finiteOrder1 ++ infiniteObs.map(JointObservation(_))).map(_.of[Observation]))
 
@@ -199,7 +200,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     (path_tags put addPathTags(token, path, allTags)) +
     (hierarchy_children putAll addHierarchyChildren(token, path, allTags).patches) +
     (variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches) + 
-    (variable_value_series putAll vvSeriesPatches.patches) + 
+    //(variable_value_series putAll vvSeriesPatches.patches) + 
     (variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches) + 
     (variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches)
   }
@@ -308,7 +309,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
    *  over the given time period.
    */
   def getObservationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
-    if (observation.order <= 0 /*token.limits.order*/) {
+    if (observation.order <= (maxIndexedOrder min token.limits.order)) {
       internalSearchSeries[CountType](
         tagTerms,
         valueSeriesKey(token, path, _, observation), 
@@ -328,81 +329,89 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   def getIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
-    if (variableDescriptors.size <= 0 /*token.limits.order*/) {
-      val variables = variableDescriptors.map(_.variable)
-      val futureHistograms: Future[List[Map[JValue, CountType]]] = Future {
-        variableDescriptors.map { 
-          case VariableDescriptor(variable, maxResults, SortOrder.Ascending) =>
-            getHistogramBottom(token, path, variable, maxResults).map(_.toMap)
-
-          case VariableDescriptor(variable, maxResults, SortOrder.Descending) =>
-            getHistogramTop(token, path, variable, maxResults).map(_.toMap)
-        }: _*
-      }
-
-      futureHistograms.flatMap { histograms  => 
-        implicit val resultOrder = intersectionOrder(variableDescriptors.map(_.sortOrder) zip histograms)
-
-        def observations(vs: List[Variable]): Iterable[JointObservation[HasValue]] = {
-          def obs(i: Int, variable: Variable, vs: List[Variable], o: Set[HasValue]): Iterable[Set[HasValue]] = {
-            histograms(i).flatMap { 
-              case (jvalue, _) => vs match {
-                case Nil => List(o + HasValue(variable, jvalue))
-                case vv :: vvs => obs(i + 1, vv, vvs, o + HasValue(variable, jvalue))
-              }
-            }
-          }
-
-          vs match {
-            case Nil => Nil
-            case v :: vs => obs(0, v, vs, Set.empty[HasValue]).map(JointObservation(_))
-          }
-        }
-
-        Future {
-          observations(variables).map { joint => 
-            val obsMap: Map[Variable, JValue] = joint.obs.map(hv => hv.variable -> hv.value)(collection.breakOut)
-            getObservationSeries(token, path, joint, tagTerms).map { result => 
-              (JArray(variables.flatMap(obsMap.get).toList) -> result)
-            }
-          }.toSeq: _*
-        } map {
-          _.foldLeft(SortedMap.empty[JArray, ResultSet[JObject, CountType]]) {
-            case (results, (k, v)) => 
-              results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
-          }.toSeq
-        }
-      }
+    if (variableDescriptors.size <= (maxIndexedOrder min token.limits.order)) {
+      getIndexedIntersectionSeries(token, path, variableDescriptors, tagTerms)
     } else {
       // use the raw events because the query is cheaper
-      val baseFilter = rawEventsBaseFilter(token, path)
-      val filter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
+      getRawIntersectionSeries(token, path, variableDescriptors, tagTerms)
+    }
+  }
 
-      val eventVariables: Map[String, List[Variable]] = variableDescriptors.map(_.variable).groupBy(_.name.head.collect{ case JPathField(name) => name }.get)
+  private def getIndexedIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
+    val variables = variableDescriptors.map(_.variable)
+    val futureHistograms: Future[List[Map[JValue, CountType]]] = Future {
+      variableDescriptors.map { 
+        case VariableDescriptor(variable, maxResults, SortOrder.Ascending) =>
+          getHistogramBottom(token, path, variable, maxResults).map(_.toMap)
 
-      logger.trace("Querying mongo for intersection events with filter " + filter)
-      val queryStart = System.currentTimeMillis()
-      eventsdb(selectAll.from(events_collection).where(filter)).map { events =>
+        case VariableDescriptor(variable, maxResults, SortOrder.Descending) =>
+          getHistogramTop(token, path, variable, maxResults).map(_.toMap)
+      }: _*
+    }
 
-        logger.trace("Got response for intersection after " + (System.currentTimeMillis() - queryStart) + " ms")
-        val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
+    futureHistograms.flatMap { histograms  => 
+      implicit val resultOrder = intersectionOrder(variableDescriptors.map(_.sortOrder) zip histograms)
 
-        val resultMap = eventsByName.foldLeft(Map.empty[JArray, Map[JObject, CountType]]) {
-          case (result, (eventName, namedEvents)) => 
-            eventVariables.get(eventName) map { variables =>
-              namedEvents.groupBy(event => JArray(variables.map(v => (event \ "event" \ "data")(v.name.tail))))
-              .filterKeys(k => k.elements.nonEmpty && k.elements.forall(_ != JNothing))
-              .foldLeft(result) { 
-                case (result, (key, eventsForVariables)) => 
-                  result + (key -> (result.getOrElse(key, Map.empty[JObject, CountType]) |+| countByTerms(eventsForVariables, tagTerms)))
-              }
-            } getOrElse {
-              result
+      def observations(vs: List[Variable]): Iterable[JointObservation[HasValue]] = {
+        def obs(i: Int, variable: Variable, vs: List[Variable], o: Set[HasValue]): Iterable[Set[HasValue]] = {
+          histograms(i).flatMap { 
+            case (jvalue, _) => vs match {
+              case Nil => List(o + HasValue(variable, jvalue))
+              case vv :: vvs => obs(i + 1, vv, vvs, o + HasValue(variable, jvalue))
             }
+          }
         }
 
-        resultMap.mapValues(_.toSeq).toSeq
+        vs match {
+          case Nil => Nil
+          case v :: vs => obs(0, v, vs, Set.empty[HasValue]).map(JointObservation(_))
+        }
       }
+
+      Future {
+        observations(variables).map { joint => 
+          val obsMap: Map[Variable, JValue] = joint.obs.map(hv => hv.variable -> hv.value)(collection.breakOut)
+          getObservationSeries(token, path, joint, tagTerms).map { result => 
+            (JArray(variables.flatMap(obsMap.get).toList) -> result)
+          }
+        }.toSeq: _*
+      } map {
+        _.foldLeft(SortedMap.empty[JArray, ResultSet[JObject, CountType]]) {
+          case (results, (k, v)) => 
+            results + (k -> results.get(k).map(_ |+| v).getOrElse(v))
+        }.toSeq
+      }
+    }
+  }
+
+  private def getRawIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
+    val baseFilter = rawEventsBaseFilter(token, path)
+    val filter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
+
+    val eventVariables: Map[String, List[Variable]] = variableDescriptors.map(_.variable).groupBy(_.name.head.collect{ case JPathField(name) => name }.get)
+
+    logger.trace("Querying mongo for intersection events with filter " + filter)
+    val queryStart = System.currentTimeMillis()
+    eventsdb(selectAll.from(events_collection).where(filter)).map { events =>
+
+      logger.trace("Got response for intersection after " + (System.currentTimeMillis() - queryStart) + " ms")
+      val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
+
+      val resultMap = eventsByName.foldLeft(Map.empty[JArray, Map[JObject, CountType]]) {
+        case (result, (eventName, namedEvents)) => 
+          eventVariables.get(eventName) map { variables =>
+            namedEvents.groupBy(event => JArray(variables.map(v => (event \ "event" \ "data")(v.name.tail))))
+            .filterKeys(k => k.elements.nonEmpty && k.elements.forall(_ != JNothing))
+            .foldLeft(result) { 
+              case (result, (key, eventsForVariables)) => 
+                result + (key -> (result.getOrElse(key, Map.empty[JObject, CountType]) |+| countByTerms(eventsForVariables, tagTerms)))
+            }
+          } getOrElse {
+            result
+          }
+      }
+
+      resultMap.mapValues(_.toSeq).toSeq
     }
   }
 
@@ -510,10 +519,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
 
-  private def valuesKeyFilter(token: Token, path: Path, variable: Variable) = {
-    JPath("." + valuesId) === Sig(token.sig, path.sig, variable.sig).hashSignature
-  }
-
   /** Retrieves a histogram of the values a variable acquires over its lifetime.
    */
   private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = {
@@ -523,7 +528,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
     getVariableLength(token, path, variable).flatMap { 
       case 0 =>
-        val extractor = extractValues[(JValue, CountType)](valuesKeyFilter(token, path, variable), variable_values.collection) _
+        val extractor = extractValues[(JValue, CountType)](variableValuesKey(token, path, variable), variable_values.collection) _
         extractor((jvalue, count) => (jvalue, count)) map (_.toMap)
 
       case length =>
@@ -535,17 +540,26 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }    
   }
 
-  private def infiniteSeriesKey(token: Token, path: Path, hasValue: HasValue) = {
-    JPath("." + seriesId) === Sig(token.sig, path.sig, hasValue.sig).hashSignature
-  }
-
-  private def valueSeriesKey(token: Token, path: Path, tagsSig: Sig, observation: JointObservation[HasValue]) = {
-    JPath("." + seriesId) === Sig(token.sig, path.sig, tagsSig, observation.sig).hashSignature
+  private def variableValuesKey(token: Token, path: Path, variable: Variable) = {
+    forTokenAndPath(token, path) & 
+    (JPath("." + valuesId) === variable.sig.hashSignature)
   }
 
   private def variableSeriesKey(token: Token, path: Path, tagsSig: Sig, variable: Variable) = {
-    JPath("." + seriesId) === Sig(token.sig, path.sig, tagsSig, variable.sig).hashSignature
+    forTokenAndPath(token, path) & 
+    (JPath("." + seriesId) === Sig(tagsSig, variable.sig).hashSignature)
   }
+
+  private def valueSeriesKey(token: Token, path: Path, tagsSig: Sig, observation: JointObservation[HasValue]) = {
+    forTokenAndPath(token, path) & 
+    (JPath("." + seriesId) === Sig(tagsSig, observation.sig).hashSignature)
+  }
+
+  private def infiniteSeriesKey(token: Token, path: Path, hasValue: HasValue) = {
+    forTokenAndPath(token, path) & 
+    (JPath("." + seriesId) === hasValue.sig.hashSignature)
+  }
+
 
   private def extractChildren[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
     indexdb {
@@ -654,9 +668,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     observations.foldLeft(MongoPatches.empty) { 
       case (patches, HasValue(variable, value)) =>
         val predicateField = MongoEscaper.encode(renderNormalized(value.serialize))
-        val valuesUpdate = (JPath(".values") \ JPathField(predicateField)) inc count
+        val update = (JPath(".values") \ JPathField(predicateField)) inc count
 
-        patches + (valuesKeyFilter(token, path, variable) -> valuesUpdate)
+        patches + (variableValuesKey(token, path, variable) -> update)
     }
   }
 
@@ -669,9 +683,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         val filterVariable = forTokenAndPath(token, path) & forVariable(variable)
         val predicateField = MongoEscaper.encode(renderNormalized(child.serialize))
 
-        val valuesUpdate = (JPath(".values") \ JPathField(predicateField)) inc count
+        val update = (JPath(".values") \ JPathField(predicateField)) inc count
 
-        patches + (filterVariable -> valuesUpdate)
+        patches + (filterVariable -> update)
     }
   }
 
@@ -810,21 +824,20 @@ object AggregationEngine {
   )
 
   private val IndexdbIndices = Map(
-    "variable_series" -> Map(
-      "var_series_id" -> (List(seriesId), true)
-    ),
-    "variable_value_series" -> Map(
-      "var_val_series_id" -> (List(seriesId), true)
-    ),
-    "variable_values" -> Map(
-      "var_val_id" -> (List(valuesId), true)
+    "path_children" -> Map(
+      "path_child_query"  -> (List("accountTokenId", "path", "child"), false)
     ),
     "variable_children" -> Map(
-      "variable_query" -> (List("path", "accountTokenId", "variable"), false)
+      "variable_query"    -> (List("accountTokenId", "path", "variable"), false)
     ),
-    "path_children" -> Map(
-      "path_query" -> (List("path", "accountTokenId"), false),
-      "path_child_query" -> (List("path", "accountTokenId", "child"), false)
+    "variable_values" -> Map(
+      "var_val_id"        -> (List("accountTokenId", "path", valuesId), true)
+    ),
+    "variable_series" -> Map(
+      "var_series_id"     -> (List("accountTokenId", "path", seriesId), true)
+    ),
+    "variable_value_series" -> Map(
+      "var_val_series_id" -> (List("accountTokenId", "path", seriesId), true)
     )
   )
 
