@@ -831,13 +831,13 @@ object AggregationEngine {
       "variable_query"    -> (List("accountTokenId", "path", "variable"), false)
     ),
     "variable_values" -> Map(
-      "var_val_id"        -> (List("accountTokenId", "path", valuesId), true)
+      "var_val_id"        -> (List("accountTokenId", "path", valuesId), false)
     ),
     "variable_series" -> Map(
-      "var_series_id"     -> (List("accountTokenId", "path", seriesId), true)
+      "var_series_id"     -> (List("accountTokenId", "path", seriesId), false)
     ),
     "variable_value_series" -> Map(
-      "var_val_series_id" -> (List("accountTokenId", "path", seriesId), true)
+      "var_val_series_id" -> (List("accountTokenId", "path", seriesId), false)
     )
   )
 
