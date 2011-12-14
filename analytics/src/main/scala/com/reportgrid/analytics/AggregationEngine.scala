@@ -149,6 +149,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
         val record = JObject(
           JField("token",     token.tokenId.serialize) ::
+          JField("accountTokenId", token.accountTokenId.serialize) ::
           JField("path",      path.serialize) ::
           JField("event",     JObject(JField("name", eventName) :: JField("data", eventBody) :: Nil)) :: 
           JField("tags",      tags.map(_.serialize).reduceLeftOption(_ merge _).serialize) ::
@@ -431,7 +432,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   private def rawEventsBaseFilter(token: Token, path: Path): MongoFilter = {
-    JPath(".token") === token.tokenId.serialize & JPath(".path").regex("^" + path.path)
+    JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path").regex("^" + path.path)
   }
 
   private def rawEventsTagsFilter(tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
