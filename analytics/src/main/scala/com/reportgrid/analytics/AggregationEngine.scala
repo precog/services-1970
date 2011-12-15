@@ -339,41 +339,32 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   private def getIndexedIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
-    val variables = variableDescriptors.map(_.variable)
-    val futureHistograms: Future[List[Map[JValue, CountType]]] = Future {
-      variableDescriptors.map { 
-        case VariableDescriptor(variable, maxResults, SortOrder.Ascending) =>
-          getHistogramBottom(token, path, variable, maxResults).map(_.toMap)
+    val futureHistograms = getHistograms(token, path, variableDescriptors)
 
-        case VariableDescriptor(variable, maxResults, SortOrder.Descending) =>
-          getHistogramTop(token, path, variable, maxResults).map(_.toMap)
-      }: _*
-    }
+    futureHistograms flatMap { histMap => 
+      implicit val resultOrder = intersectionOrder(variableDescriptors.map(d => (d.sortOrder, histMap(d))))
 
-    futureHistograms.flatMap { histograms  => 
-      implicit val resultOrder = intersectionOrder(variableDescriptors.map(_.sortOrder) zip histograms)
-
-      def observations(vs: List[Variable]): Iterable[JointObservation[HasValue]] = {
-        def obs(i: Int, variable: Variable, vs: List[Variable], o: Set[HasValue]): Iterable[Set[HasValue]] = {
-          histograms(i).flatMap { 
+      def observations(vs: List[VariableDescriptor]): Iterable[JointObservation[HasValue]] = {
+        def obs(descriptor: VariableDescriptor, vs: List[VariableDescriptor], o: Set[HasValue]): Iterable[Set[HasValue]] = {
+          histMap(descriptor) flatMap { 
             case (jvalue, _) => vs match {
-              case Nil => List(o + HasValue(variable, jvalue))
-              case vv :: vvs => obs(i + 1, vv, vvs, o + HasValue(variable, jvalue))
+              case Nil => List(o + HasValue(descriptor.variable, jvalue))
+              case vv :: vvs => obs(vv, vvs, o + HasValue(descriptor.variable, jvalue))
             }
           }
         }
 
         vs match {
           case Nil => Nil
-          case v :: vs => obs(0, v, vs, Set.empty[HasValue]).map(JointObservation(_))
+          case v :: vs => obs(v, vs, Set.empty[HasValue]).map(JointObservation(_))
         }
       }
 
       Future {
-        observations(variables).map { joint => 
+        observations(variableDescriptors).map { joint => 
           val obsMap: Map[Variable, JValue] = joint.obs.map(hv => hv.variable -> hv.value)(collection.breakOut)
           getObservationSeries(token, path, joint, tagTerms).map { result => 
-            (JArray(variables.flatMap(obsMap.get).toList) -> result)
+            (JArray(variableDescriptors.flatMap(d => obsMap.get(d.variable)).toList) -> result)
           }
         }.toSeq: _*
       } map {
@@ -385,34 +376,66 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
 
+  private def getHistograms(token: Token, path: Path, variableDescriptors: List[VariableDescriptor]): Future[Map[VariableDescriptor, Map[JValue, CountType]]] = {
+    Future {
+      variableDescriptors map { descriptor =>
+        val histogram = descriptor.sortOrder match {
+          case SortOrder.Ascending  => getHistogramBottom _
+          case SortOrder.Descending => getHistogramTop _
+        }
+
+        histogram(token, path, descriptor.variable, descriptor.maxResults).map(h => (descriptor, h.toMap))
+      }: _*
+    } map {
+      _.toMap
+    }
+  }
+
   private def getRawIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
-    val baseFilter = rawEventsBaseFilter(token, path)
-    val filter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
+    if (variableDescriptors.isEmpty) Future.async(Nil) else {
+      val futureHistograms = getHistograms(token, path, variableDescriptors)
+      val eventVariables: Map[String, List[VariableDescriptor]] = variableDescriptors.groupBy(_.variable.name.head.collect{ case JPathField(name) => name }.get)
 
-    val eventVariables: Map[String, List[Variable]] = variableDescriptors.map(_.variable).groupBy(_.name.head.collect{ case JPathField(name) => name }.get)
+      val baseFilter = rawEventsBaseFilter(token, path)
+      val filter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
 
-    logger.trace("Querying mongo for intersection events with filter " + filter)
-    val queryStart = System.currentTimeMillis()
-    eventsdb(selectAll.from(events_collection).where(filter)).map { events =>
+      logger.trace("Querying mongo for intersection events with filter " + filter)
+      val queryStart = System.currentTimeMillis()
 
-      logger.trace("Got response for intersection after " + (System.currentTimeMillis() - queryStart) + " ms")
-      val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
+      (futureHistograms zip eventsdb(selectAll.from(events_collection).where(filter))) map { 
+        case (histograms, events) =>
+          logger.trace("Got response for intersection after " + (System.currentTimeMillis() - queryStart) + " ms")
+          //logger.trace("Using histograms: " + histograms + " to limit results.")
+          val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
 
-      val resultMap = eventsByName.foldLeft(Map.empty[JArray, Map[JObject, CountType]]) {
-        case (result, (eventName, namedEvents)) => 
-          eventVariables.get(eventName) map { variables =>
-            namedEvents.groupBy(event => JArray(variables.map(v => (event \ "event" \ "data")(v.name.tail))))
-            .filterKeys(k => k.elements.nonEmpty && k.elements.forall(_ != JNothing))
-            .foldLeft(result) { 
-              case (result, (key, eventsForVariables)) => 
-                result + (key -> (result.getOrElse(key, Map.empty[JObject, CountType]) |+| countByTerms(eventsForVariables, tagTerms)))
-            }
-          } getOrElse {
-            result
+          val resultMap = eventsByName.foldLeft(Map.empty[JArray, Map[JObject, CountType]]) {
+            case (result, (eventName, namedEvents)) => 
+              eventVariables.get(eventName) map { descriptors =>
+                val grouped: Map[Option[JArray], Iterable[JValue]] = namedEvents.groupBy { event =>
+                  descriptors.foldRight(Option(List.empty[JValue])) { 
+                    case (d, Some(values)) =>
+                      val value = (event \ "event" \ "data")(d.variable.name.tail)
+                      //ensure that the value exists in the limiting histogram
+                      if (value != JNothing && histograms(d).contains(value)) Some(value :: values) else None
+                    case _ => None
+                  } map { 
+                    ks => JArray(ks) 
+                  }
+                } 
+                
+                grouped.foldLeft(result) { 
+                  case (result, (Some(key), eventsForVariables)) => 
+                    result + (key -> (result.getOrElse(key, Map.empty[JObject, CountType]) |+| countByTerms(eventsForVariables, tagTerms)))
+
+                  case (result, _) => result
+                }
+              } getOrElse {
+                result
+              }
           }
-      }
 
-      resultMap.mapValues(_.toSeq).toSeq
+          resultMap.mapValues(_.toSeq).toSeq
+      }
     }
   }
 
