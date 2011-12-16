@@ -32,6 +32,8 @@ sealed trait Periodicity extends Ordered[Periodicity] { self: Product =>
 
   def period(time: Instant): Period = Period(this, time)
 
+  def jodaPeriod(count: Int): Option[org.joda.time.ReadablePeriod]
+
   def indexOf(time: DateTime, in: Periodicity): Option[Int]
 
   /** The previous periodicity in the chain.
@@ -99,6 +101,8 @@ object Periodicity {
     override val finer = None
 
     override def offsetFraction(zone: DateTimeZone, time: Instant) = Some(0.0d)
+
+    override def jodaPeriod(count: Int) = Some(org.joda.time.Seconds.seconds(count))
   }
 
   case object Minute extends Periodicity {
@@ -119,6 +123,8 @@ object Periodicity {
     override val finer = Some(Second)
 
     override def offsetFraction(zone: DateTimeZone, time: Instant) = Some(0.0d)
+
+    override def jodaPeriod(count: Int) = Some(org.joda.time.Minutes.minutes(count))
   }
 
   case object Hour extends Periodicity {
@@ -144,6 +150,8 @@ object Periodicity {
     override def offsetFraction(zone: DateTimeZone, time: Instant) = {
       Some((zone.getOffset(time) % secondsPerHour).toDouble / secondsPerHour)
     }
+
+    override def jodaPeriod(count: Int) = Some(org.joda.time.Hours.hours(count))
   }
 
   case object Day extends Periodicity {
@@ -169,6 +177,8 @@ object Periodicity {
 
       Some(zone.getOffset(time).toDouble / lengthOfDay)
     }
+
+    override def jodaPeriod(count: Int) = Some(org.joda.time.Days.days(count))
   }
 
   case object Week extends Periodicity {
@@ -195,6 +205,8 @@ object Periodicity {
 
       Some((new Duration(utcWeekStart, shift(time, zone)).getMillis.toDouble / lengthOfWeek))
     }
+
+    override def jodaPeriod(count: Int) = Some(org.joda.time.Weeks.weeks(count))
   }
 
   case object Month extends Periodicity {
@@ -221,6 +233,8 @@ object Periodicity {
 
       Some((new Duration(utcStart, shift(time, zone)).getMillis.toDouble / periodLength))
     }
+
+    override def jodaPeriod(count: Int) = Some(org.joda.time.Months.months(count))
   }
 
   case object Year extends Periodicity {
@@ -244,6 +258,8 @@ object Periodicity {
 
       Some((new Duration(utcStart, shift(time, zone)).getMillis.toDouble / periodLength))
     }
+
+    override def jodaPeriod(count: Int) = Some(org.joda.time.Years.years(count))
   }
 
   case object Eternity extends Periodicity {
@@ -260,6 +276,8 @@ object Periodicity {
     override val finer = Some(Year)
 
     override def offsetFraction(zone: DateTimeZone, time: Instant) = None
+
+    override def jodaPeriod(count: Int) = None
   }
 
   val All = Second   ::
@@ -270,6 +288,15 @@ object Periodicity {
             Month    ::
             Year     ::
             Eternity ::
+            Nil
+
+  val Finite = Second   ::
+            Minute   ::
+            Hour     ::
+            Day      ::
+            Week     ::
+            Month    ::
+            Year     ::
             Nil
 
   val Default = Periodicity.Minute to Periodicity.Eternity
