@@ -342,8 +342,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   def shiftTimeField = (obj: JObject, zone: DateTimeZone) => JObject(
     obj.fields.map {
       case JField("timestamp", instant) => JField("datetime", instant.deserialize[Instant].toDateTime(DateTimeZone.UTC).withZone(zone).toString)
-
-      case field => field
+      case field                        => field
     }
   )
     
@@ -406,9 +405,8 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
           case (acc, (obj, v)) => 
             val key = JObject(
               obj.fields.flatMap {
-                case JField("datetime",  datetime) => newField(datetime.deserialize[DateTime])
+                case JField("datetime",  datetime) => newField(datetime.deserialize[DateTime](ZonedTimeExtractor(zone.getOrElse(DateTimeZone.UTC))))
                 case JField("timestamp", instant)  => newField(instant.deserialize[Instant].toDateTime(DateTimeZone.UTC))
-                  
                 case field => Some(field)
               })
 

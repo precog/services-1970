@@ -23,6 +23,9 @@ import org.joda.time._
 import net.lag.configgy.ConfigMap
 
 import org.specs2.mutable.Specification
+import org.specs2.matcher.Matcher
+import org.specs2.matcher.MatchResult
+import org.specs2.matcher.Expectable
 import org.specs2.specification.{Outside, Scope}
 import org.scalacheck.Gen._
 import scalaz.Success
@@ -441,12 +444,13 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "grouping in intersection queries" >> {
-      "timezone shifting must not discard data" in (sampleData { sampleEvents =>
+      "timezone shifting must not discard data" in sampleData { sampleEvents =>
         val granularity = Hour
         val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
 
         val servicePath1 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-5.0&groupBy=week"
         val servicePath2 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-4.0&groupBy=week"
+        
         val queryTerms = JsonParser.parse(
           """{
             "select":"series/hour",
@@ -461,10 +465,45 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         (q1Results zip q2Results) must whenDelivered {
           beLike { 
             case (r1, r2) => 
-              r2.content must be_!=(r1.content)
+              r2.content must matchShiftedHistogram(r1.content, 1)
           }
         }
-      })//.pendingUntilFixed
+      }
+    }
+  }
+}
+
+case class matchShiftedHistogram(o: Option[JValue], offset: Int, threshold: Double = 0.9) extends Matcher[Option[JValue]]() {
+
+  def convertToMap(opt: Option[JValue]): Map[String, Map[BigInt, BigInt]] = {
+    opt.get.children.foldLeft(Map[String, Map[BigInt, BigInt]]())((m, v) => v match {
+      case JField(name, value) => {
+        m + (name -> (value --> classOf[JArray]).children.foldLeft(Map[BigInt, BigInt]())((im, iv) => iv match {
+          case JArray(JObject(JField(name, JInt(id)) :: Nil) :: JInt(count) :: Nil) => im + (id -> count)
+          case _                                                                    => sys.error("Response format changed unit tests needs to be updated.")
+        }))
+      }
+      case _                   => sys.error("Response format changed unit tests needs to be updated.")
+    })
+  }
+
+  def apply[T <: Option[JValue]](e: Expectable[T]): MatchResult[T] = {
+    val h1 = convertToMap(e.value)
+    val h2 = convertToMap(o)
+
+    val paired = for ((k1, v1) <- h1.toSeq; v2 <- h2.get(k1)) yield (v1, v2)
+    if (paired.size != h1.size) result(false, "Results have the same keys.", "Results do not have the same keys (This is likely due to a response format change).", e)
+    else {
+      val pass = paired map { 
+        case (a, b) => { 
+          val hits = a count { case (k, v) => b.get(k - offset).exists(_ == v) }
+          hits / a.size.toDouble
+        }
+      } forall {
+        _ > threshold
+      }
+
+      result(pass, "Histograms are shifted versions of one another", "Histograms are not shifted versions of one another", e) 
     }
   }
 }
