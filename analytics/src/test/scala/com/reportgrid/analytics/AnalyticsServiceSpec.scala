@@ -309,7 +309,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "return variable counts keyed by tag children" in sampleData { sampleEvents =>
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
 
       val expectedResults = events.foldLeft(Map.empty[String, Map[String, Int]]) {
         case (acc, Event(eventName, _, tags)) =>
@@ -339,8 +339,8 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "return variable series means" in sampleData { sampleEvents =>
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, Hour)
-      val expected = expectedMeans(events, "recipientCount", keysf(Hour))
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
+      val expected = expectedMeans(events, "recipientCount", keysf(granularity))
 
       val queryTerms = JObject(
         JField("start", minDate.getMillis) ::
@@ -348,7 +348,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         JField("location", "usa") :: Nil
       )
 
-      (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/hour/means")(queryTerms)) must whenDelivered {
+      (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/"+granularity.name+"/means")(queryTerms)) must whenDelivered {
         beLike {
           case HttpResponse(status, _, Some(contents), _) => 
             val resultData = (contents: @unchecked) match {
@@ -364,8 +364,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "return variable value series counts" in sampleData { sampleEvents =>
-      val granularity = Hour
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
       val expectedTotals = valueCounts(events) 
 
       val queryTerms = JObject(
@@ -377,7 +376,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       forallWhen(expectedTotals) {
         case ((jpath, value), count) if jpath.nodes.last == JPathField("gender") && !jpath.endsInInfiniteValueSpace =>
           val vtext = compact(render(value))
-          val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour"
+          val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/"+granularity.name
           (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered {
             beLike {
               case HttpResponse(status, _, Some(JArray(values)), _) => (values must not be empty) //and (series must_== expected)
@@ -387,8 +386,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     }
 
     "group variable value series counts" in (sampleData { sampleEvents =>
-      val granularity = Hour
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
       val expectedTotals = valueCounts(events) 
 
       val queryTerms = JObject(
@@ -400,7 +398,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       forallWhen(expectedTotals) {
         case ((jpath, value), count) if jpath.nodes.last == JPathField("gender") && !jpath.endsInInfiniteValueSpace =>
           val vtext = compact(render(value))
-          val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/hour?groupBy=day"
+          val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/"+granularity.name+"?groupBy="+granularity.next.next.name
           (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered {
             beLike {
               case HttpResponse(status, _, Some(JArray(values)), _) => (values must not be empty) //and (series must_== expected)
@@ -410,8 +408,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     })//.pendingUntilFixed
 
     "intersection series must sum to count over the same period" in sampleData { sampleEvents =>
-      val granularity = Hour
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
       val expectedTotals = valueCounts(events) 
 
       val baseQuery = """{
@@ -426,7 +423,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         case HttpResponse(_, _, Some(content), _) => content
       }
 
-      def seriesResponse = jsonTestService.post[JValue]("/intersect")(JsonParser.parse(baseQuery.format(minDate.getMillis, maxDate.getMillis, "series/hour"))) map {
+      def seriesResponse = jsonTestService.post[JValue]("/intersect")(JsonParser.parse(baseQuery.format(minDate.getMillis, maxDate.getMillis, "series/"+granularity.name))) map {
         case HttpResponse(_, _, Some(JObject(fields)), _) => JObject(
           fields map {
             case JField(label, JArray(values)) => JField(label, values.foldLeft(0L) { case (total, JArray(_ :: count :: Nil)) => total + count.deserialize[Long] }.serialize)
@@ -445,18 +442,18 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
     "grouping in intersection queries" >> {
       "timezone shifting must not discard data" in sampleData { sampleEvents =>
-        val granularity = Hour
-        val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+        val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
+        val queryGranularity = granularity.next.next
 
-        val servicePath1 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-5.0&groupBy=week"
-        val servicePath2 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-4.0&groupBy=week"
+        val servicePath1 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-5.0&groupBy="+queryGranularity.name
+        val servicePath2 = "/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis + "&timeZone=-4.0&groupBy="+queryGranularity.name
         
         val queryTerms = JsonParser.parse(
           """{
-            "select":"series/hour",
+            "select":"series/%s",
             "from":"/test/",
             "properties":[{"property":".tweeted.recipientCount","limit":10,"order":"descending"}]
-          }"""
+          }""".format(granularity.name)
         )
 
         val q1Results = jsonTestService.post[JValue](servicePath1)(queryTerms) 
@@ -614,8 +611,7 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
     }
 
     "correctly handle rollup in intersection queries" in sampleData { sampleEvents =>
-      val granularity = Hour
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
 
       val expectedCounts = events.foldLeft(Map.empty[String, Map[String, Int]]) {
         case (map, Event("tweeted", data, _)) =>

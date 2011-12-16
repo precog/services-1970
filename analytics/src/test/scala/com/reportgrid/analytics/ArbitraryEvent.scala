@@ -11,6 +11,8 @@ import org.joda.time.Instant
 import org.scalacheck.{Gen, Arbitrary}
 import Gen._
 
+import Periodicity._
+
 import scala.math.Ordered._
 import scalaz.NewType
 import scalaz.Scalaz._
@@ -119,13 +121,31 @@ trait ArbitraryEvent extends ArbitraryTime {
     { case Tag("location", Hierarchy(locations)) => locations.sortBy(_.path.length).head.path.toString }
   )
 
-  def timeSlice(l: List[Event], granularity: Periodicity) = {
+  val periodicityBins: Seq[(Periodicity, Long)] = List(
+    Second -> 60,
+    Minute -> 60 * 60,
+    Hour -> 24 * 60 * 60,
+    Day -> 31 * 24 * 60 * 60,
+    Week -> 52l * 31 * 24 * 60 * 60,
+    Month -> 12l * 52 * 31 * 24 * 60 * 60,
+    Year -> Long.MaxValue 
+  )
+
+  def timeSlice(l: List[Event]) = {
     val timestamps = l.map(_.tags.collect{ case Tag("timestamp", TimeReference(_, time)) => time }.head)
     val sortedEvents = l.zip(timestamps).sortBy(_._2)
     val sliceLength = sortedEvents.size / 2
-    val startTime = granularity.floor(sortedEvents.drop(sliceLength / 2).head._2)
-    val endTime = granularity.ceil(sortedEvents.drop(sliceLength + (sliceLength / 2)).head._2)
-    (sortedEvents collect { case (e, t) if t >= startTime && t < endTime => e }, startTime, endTime)
+
+    val baseStart = sortedEvents.drop(sliceLength / 2).head._2
+    val baseEnd = sortedEvents.drop(sliceLength + (sliceLength / 2)).head._2
+    val baseDelta = (baseEnd.getMillis - baseStart.getMillis) / 1000
+
+    val granularity = (periodicityBins find { case (g, d) => baseDelta / d < 10 }).get._1
+
+    val startTime = granularity.floor(baseStart)
+    val endTime = granularity.ceil(baseEnd)
+
+    (sortedEvents collect { case (e, t) if t >= startTime && t < endTime => e }, startTime, endTime, granularity)
   }
 
   def valueCounts(l: List[Event]) = l.foldLeft(Map.empty[(JPath, JValue), Int]) {

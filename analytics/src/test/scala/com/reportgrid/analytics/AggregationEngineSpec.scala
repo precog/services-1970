@@ -355,8 +355,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "retrieve a time series for occurrences of an event" in sampleData { sampleEvents =>
       //skip("disabled")
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
 
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
@@ -379,8 +378,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "retrieve a time series of means of values of a variable" in sampleData { sampleEvents =>
       //skip("disabled")
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
 
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
@@ -403,8 +401,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "retrieve a time series for occurrences of a value of a variable" in sampleData { sampleEvents =>
       //skip("disabled")
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
 
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
@@ -426,8 +423,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "retrieve a time series for occurrences of a value of a variable via the raw events" in sampleData { sampleEvents =>
       ////skip("disabled")
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
       val expectedTotals = valueCounts(events) 
 
       val queryTerms = List[TagTerm](
@@ -482,8 +478,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "count observations of a given value in a restricted time slice" in sampleData { sampleEvents =>
       //skip("disabled")
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
       val queryTerms = List[TagTerm](
         SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan(minDate, maxDate)),
         HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
@@ -533,8 +528,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "retrieve intersection counts for a slice of time" in sampleData { sampleEvents =>
       //skip("disabled")
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
         HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
@@ -560,8 +554,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "retrieve intersection series for a slice of time" in sampleData { sampleEvents =>
       //skip("disabled")
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate)),
         HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
@@ -594,8 +587,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "retrieve all values of infinitely-valued variables that co-occurred with an observation" in sampleData { sampleEvents =>
       //skip("disabled")
-      val granularity = Minute
-      val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
 
       val expectedValues = events.foldLeft(Map.empty[(String, JPath, JValue), Set[JValue]]) {
         case (map, Event(eventName, data, tags)) =>
@@ -623,8 +615,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     // this test is here because it's testing internals of the analytics service
     // which are not exposed though the analytics api
     //"AnalyticsService.serializeIntersectionResult must not create duplicate information" in {
-    //  val granularity = Minute
-    //  val (events, minDate, maxDate) = timeSlice(sampleEvents, granularity)
+    //  val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
     //  val variables   = Variable(".tweeted.retweet") :: Variable(".tweeted.recipientCount") :: Variable(".tweeted.twitterClient") :: Nil
     //  val descriptors = variables.map(v => VariableDescriptor(v, 10, SortOrder.Descending))
 
