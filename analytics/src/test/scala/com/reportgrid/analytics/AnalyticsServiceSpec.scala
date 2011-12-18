@@ -462,7 +462,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         (q1Results zip q2Results) must whenDelivered {
           beLike { 
             case (r1, r2) => 
-              r2.content must matchShiftedHistogram(r1.content, 1)
+              r2.content must matchShiftedHistogram(r1.content, 1, granularity)
           }
         }
       }
@@ -470,7 +470,19 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
   }
 }
 
-case class matchShiftedHistogram(o: Option[JValue], offset: Int, threshold: Double = 0.9) extends Matcher[Option[JValue]]() {
+case class matchShiftedHistogram(o: Option[JValue], hourOffset: Int, granularity: Periodicity, threshold: Double = 0.9) extends Matcher[Option[JValue]]() {
+
+  import Periodicity._
+
+  val testConfig: Map[Periodicity, Int] = Map(
+    Minute -> 60 * 60,
+    Second -> 60,
+    Hour   -> 1,
+    Day    -> 0,
+    Week   -> 0,
+    Month  -> 0,
+    Year   -> 0
+  )
 
   def convertToMap(opt: Option[JValue]): Map[String, Map[BigInt, BigInt]] = {
     opt.get.children.foldLeft(Map[String, Map[BigInt, BigInt]]())((m, v) => v match {
@@ -487,6 +499,8 @@ case class matchShiftedHistogram(o: Option[JValue], offset: Int, threshold: Doub
   def apply[T <: Option[JValue]](e: Expectable[T]): MatchResult[T] = {
     val h1 = convertToMap(e.value)
     val h2 = convertToMap(o)
+
+    val offset = testConfig(granularity) * hourOffset
 
     val paired = for ((k1, v1) <- h1.toSeq; v2 <- h2.get(k1)) yield (v1, v2)
     if (paired.size != h1.size) result(false, "Results have the same keys.", "Results do not have the same keys (This is likely due to a response format change).", e)
