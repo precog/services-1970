@@ -725,7 +725,7 @@ class UnicodeAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEve
 }
 
 class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
-  override val genTimeClock = PastClock(Days.TWO.toStandardDuration)
+  override val genTimeClock = PastClock(Hours.hours(24 * 90).toStandardDuration)
 
   object sampleData extends Outside[List[Event]] with Scope {
     def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
