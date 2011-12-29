@@ -17,10 +17,11 @@ import com.reportgrid.instrumentation.blueeyes.ReportGridInstrumentation
 import com.reportgrid.api.ReportGridTrackingClient
 import com.reportgrid.api.blueeyes._
 import com.reportgrid.api.Tag
+import com.weiglewilczek.slf4s.Logging
 
-object NoopTrackingClient extends ReportGridTrackingClient[JValue](JsonBlueEyes) {
+object NoopTrackingClient extends ReportGridTrackingClient[JValue](JsonBlueEyes) with Logging {
   override def track(path: com.reportgrid.api.Path, name: String, properties: JValue = JsonBlueEyes.EmptyObject, rollup: Boolean = false, tags: Set[Tag[JValue]] = Set.empty[Tag[JValue]], count: Option[Int] = None, headers: Map[String, String] = Map.empty): Unit = {
-    //println("Tracked " + path + "; " + name + " - " + properties)
+    logger.trace("Tracked " + path + "; " + name + " - " + properties)
   }
 }
 

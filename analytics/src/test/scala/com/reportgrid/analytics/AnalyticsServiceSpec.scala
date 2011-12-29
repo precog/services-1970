@@ -433,9 +433,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
       (countResponse zip seriesResponse) must whenDelivered {
         beLike {
-          case (a, b) => 
-            println("Got series sum: " + b)
-            (a must_!= 0) and (a must_== b)
+          case (a, b) => (a must_!= 0) and (a must_== b)
         }
       }
     }

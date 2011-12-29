@@ -52,7 +52,6 @@ class VistrackServiceSpec extends BlueEyesServiceSpecification with Vistrack wit
         beLike {
           case HttpResponse(HttpStatus(OK, _), _, Some(JString(path)), _) => 
             val p = analytics.Path(path)
-            println(p.elements)
             p.length must_== 3
         }
       }

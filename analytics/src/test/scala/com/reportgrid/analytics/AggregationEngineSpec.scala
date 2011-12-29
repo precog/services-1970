@@ -36,9 +36,10 @@ import Scalaz._
 import Periodicity._
 
 // For DB cleanup
+import com.weiglewilczek.slf4s.Logging
 import com.mongodb.Mongo
 
-trait LocalMongo extends Specification {
+trait LocalMongo extends Specification with Logging {
   val eventsName = "testev" + scala.util.Random.nextInt(10000)
   val indexName =  "testix" + scala.util.Random.nextInt(10000)
 
@@ -122,7 +123,7 @@ trait LocalMongo extends Specification {
       
       conn.close()
     } catch {
-      case t => println("Error on DB cleanup: " + t.getMessage)
+      case t => logger.error("Error on DB cleanup: " + t.getMessage, t)
     }
   }
 
