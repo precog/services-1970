@@ -16,7 +16,7 @@ end script
 script
   ulimit -n 65535
   if [ -f /etc/default/analytics-v1 ]; then . /etc/default/analytics-v1; fi
-  su reportgrid -s "/bin/bash" -c "/usr/bin/java $JAVA_OPTS -Dakka.config=/etc/reportgrid/akka.conf -Dlogback.configurationFile=/etc/reportgrid/analytics-v1.logging.xml -jar /usr/share/java/analytics-v1.jar --configFile /etc/reportgrid/analytics-v1.conf"
+  su reportgrid -s "/bin/bash" -c "/usr/bin/java $JAVA_OPTS -Dakka.config=/etc/reportgrid/akka.conf -Dlogback.configurationFile=/etc/reportgrid/analytics-v1.logging.xml -jar /usr/share/java/analytics-v1.jar --configFile /etc/reportgrid/analytics-v1.conf >> /var/log/reportgrid/analytics-v1.stdout.log 2>&1"
 end script
 
 post-start script
