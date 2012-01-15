@@ -62,7 +62,7 @@ object TrackBlast {
             client.track(path,
                          eventNames(exponentialIndex(eventNames.size)),
                          properties = sample,
-                         rollup     = false,
+                         rollup     = true,
                          //timestamp  = Some(conf.clock.now().toDate),
                          headers    = Map("User-Agent" -> "ReportGridBenchmark"))
             notifyComplete(System.nanoTime() - started)
