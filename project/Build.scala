@@ -42,5 +42,8 @@ object ServicesBuild extends Build {
   val jessupSettings = nexusSettings ++ Seq(libraryDependencies ++= blueeyesDeps.libDeps)
   lazy val jessup = blueeyesDeps.addDeps(Project(id = "jessup", base = file("jessup")).settings(jessupSettings: _*))
 
-  lazy val vistrack = Project(id = "vistrack", base = file("vistrack")).settings(nexusSettings: _*).dependsOn(common) 
+  lazy val vistrack = Project(id = "vistrack", base = file("vistrack")).settings(nexusSettings: _*).dependsOn(common)
+
+  val benchmarkSettings = nexusSettings ++ Seq(libraryDependencies ++= (clientLibDeps.libDeps ++ blueeyesDeps.libDeps))
+  lazy val benchmark = blueeyesDeps.addDeps(clientLibDeps.addDeps(Project(id = "benchmark", base = file("benchmark")).settings(benchmarkSettings: _*).dependsOn(analytics)))
 }

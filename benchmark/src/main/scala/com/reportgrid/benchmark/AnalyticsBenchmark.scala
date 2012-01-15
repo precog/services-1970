@@ -4,17 +4,15 @@ package benchmark
 import java.util.concurrent._
 import TimeUnit._
 
-import blueeyes.json.JsonAST._
-import blueeyes.json.JsonDSL._
-import blueeyes.util.CommandLineArguments
-import blueeyes.util.Clock
-import blueeyes.util.ClockSystem
+import _root_.blueeyes.json.JsonAST._
+import _root_.blueeyes.json.JsonDSL._
+import _root_.blueeyes.util.CommandLineArguments
+import _root_.blueeyes.util.Clock
+import _root_.blueeyes.util.ClockSystem
 import rosetta.json.blueeyes._
 
-import com.reportgrid.analytics.{Token, RunningStats}
 import com.reportgrid.api._
 import com.reportgrid.api.blueeyes._
-import com.reportgrid.api.Series._
 
 import net.lag.configgy.Configgy
 import net.lag.configgy.Config
@@ -25,6 +23,8 @@ import scala.actors.Actor._
 import scala.collection.mutable.ArrayBuffer
 
 import org.scalacheck.Gen._
+import analytics.{Token, RunningStats}
+import analytics.Periodicity.Minute
 
 object AnalyticsTool {
   def main(argv: Array[String]): Unit = {
@@ -68,11 +68,11 @@ case object BenchmarkTask extends Task {
   def run(config: Config) = {
     val realClock = ClockSystem.realtimeClock
     val startTime = realClock.now()
-    val benchmarkToken = config.getString("benchmarkToken", Token.Benchmark.tokenId)
-    val benchmarkUrl = config.getString("benchmarkUrl", "http://localhost:8888")
+    val benchmarkToken = config.getString("benchmarkToken", Token.Test.tokenId)
+    val benchmarkUrl = config.getString("benchmarkUrl", Server.Dev.analyticsRootUrl)
 
     val resultsToken = config.getString("resultsToken", Token.Test.tokenId)
-    val resultsUrl = config.getString("resultsUrl", "http://localhost:8889")
+    val resultsUrl = config.getString("resultsUrl", Server.Dev.analyticsRootUrl)
     val resultsStream = config.getString("outStream") match {
       case Some("/dev/null") => new java.io.PrintStream(new java.io.OutputStream {
         override def write(i: Int) = ()
@@ -196,15 +196,15 @@ case class QueryTime(queryType: QueryType, time: Long) extends Timing
 class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: BenchmarkConfig, startTime: DateTime, resultsStream: java.io.PrintStream) {
   import AdSamples._
 
-  def run(): Unit = {
+  def run() {
 		val rateStep = conf.maxRate / 5
 		for (rate <- rateStep to conf.maxRate by rateStep) {
 			benchmark(rate, conf.maxConcurrent)
 		}
   }
 
-  def benchmark(rate: Long, maxConcurrent: Int): Unit = {
-    val benchmarkExecutor = Executors.newScheduledThreadPool(4)
+  def benchmark(rate: Long, maxConcurrent: Int) {
+    val benchmarkExecutor = Executors.newScheduledThreadPool(20)
     val resultsExecutor = Executors.newScheduledThreadPool(1)
     val done = new CountDownLatch(1)
 
@@ -240,18 +240,18 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
                 name       = eventNames(exponentialIndex(eventNames.size)),
                 properties = sample,
                 rollup     = false,
-                timestamp  = Some(conf.clock.now().toDate),
+                //timestamp  = Some(conf.clock.now().toDate),
                 headers    = Map("User-Agent" -> "ReportGridBenchmark")
               )
 
               resultsActor ! TrackTime(System.nanoTime - start)
             } catch {
-              case t: Throwable => t.printStackTrace
+              case t: Throwable => t.printStackTrace()
             }
 
           case Done => 
             queryActor ! Done
-            exit
+            sys.exit()
         }
       }
     }
@@ -269,7 +269,7 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
 
           case Done =>
             sendActors.foreach{_ ! Done}
-            exit
+            sys.exit()
         }
       }
     }
@@ -285,11 +285,12 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
             }).toSet
 
             try {
+              import testApi.client.{Count,Series}
               //count
               time(testApi.client.select(Count).of(".click.gender").from(testApi.path), QueryTime(QueryType.Count, _))
 
               //select
-              time(testApi.client.select(Minute(Some((startTime.toDate, conf.clock.now().toDate)))).of(".click.gender").from(testApi.path), QueryTime(QueryType.Series,_))
+              time(testApi.client.select(Series.Minute(startTime.toDate, conf.clock.now().toDate)).of(".click.gender").from(testApi.path), QueryTime(QueryType.Series,_))
 
               //search
               //time(testApi.client.select(Minute(Some((startTime.toDate, clock.now().toDate)))).of(".click.gender").from(testApi.path), QueryTime(QueryType.Search,_))
@@ -306,12 +307,12 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
               //histogram
               //TODO
             } catch {
-              case t: Throwable => t.printStackTrace
+              case t: Throwable => t.printStackTrace()
             }
 
           case Done => 
             resultsActor ! Done
-            exit
+            sys.exit()
         }
       }
     }
@@ -366,7 +367,7 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
 					case Done =>
             printStats
 						done.countDown()
-            exit
+            sys.exit()
         }
       }
     }
@@ -384,8 +385,9 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
 
     def injector: Runnable = new Runnable {
       private var remaining = conf.samplesPerTestRate
-      def run: Unit = {
+      def run() {
         if (remaining <= 0 && conf.samplesPerTestRate > 0) {
+          println("Finished with injection")
           sampleActor ! Done
           benchmarkExecutor.shutdown()
           resultsExecutor.shutdown()
@@ -397,14 +399,14 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
     }
 
     def sampler: Runnable = new Runnable {
-      def run: Unit = {
+      def run() {
         sampleActor ! Query
       }
     }
 
 		resultsStream.println("Running benchmark at track rate of " + rate + " events/second with 2 queries/second")
     val benchmarkFuture = benchmarkExecutor.scheduleAtFixedRate(injector, 0, NANOSECONDS.convert(1, SECONDS) / rate, NANOSECONDS)
-    val resultsFuture = resultsExecutor.scheduleAtFixedRate(sampler, 0, 500, MILLISECONDS)
+//    val resultsFuture = resultsExecutor.scheduleAtFixedRate(sampler, 0, 500, MILLISECONDS)
 
     done.await()
   }
