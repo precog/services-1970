@@ -17,7 +17,7 @@ services {
     v1 {
       mongo {
         database = "analytics1"
-        servers = ["devmongo01.reportgrid.com:27017"]
+        servers = ["localhost"]
       }
     }
   }

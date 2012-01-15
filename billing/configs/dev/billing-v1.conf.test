@@ -40,7 +40,7 @@ services {
       mongo {
         database = "accounts_v1"
         collection = "accounts"
-        servers = ["devmongo01.reportgrid.com:27017"]
+        servers = ["localhost"]
       }
       
       usageService {
