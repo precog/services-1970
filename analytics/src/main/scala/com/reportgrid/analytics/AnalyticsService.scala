@@ -61,7 +61,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
   import BijectionsChunkString._
   import BijectionsChunkFutureJson._
 
-  implicit val timeout = akka.actor.Actor.Timeout(Long.MaxValue) //for now
+  implicit val timeout = akka.actor.Actor.Timeout(5000) //for now
 
   def mongoFactory(configMap: ConfigMap): Mongo
 
