@@ -43,6 +43,11 @@ object TrackBlast {
   } 
   
   def main(args: Array[String]) {
+    val apiUrl = args match {
+      case Array(url) => Server(url)
+      case _ => Server.Dev
+    }
+    
     val sampleSet = new DistributedSampleSet(10)
 
     val workQueue = new ArrayBlockingQueue[JObject](1000)
@@ -51,7 +56,7 @@ object TrackBlast {
     
     (1 to 100).foreach { id =>
       new Thread {
-        val client = new ReportGridClient[JValue](ReportGridConfig(Token.Test, Server.Dev, new HttpClientApache))
+        val client = new ReportGridClient[JValue](ReportGridConfig(Token.Test, apiUrl, new HttpClientApache))
         val path = "/benchmark/" + id
 
         override def run() {
