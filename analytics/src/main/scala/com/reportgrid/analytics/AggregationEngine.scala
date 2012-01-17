@@ -295,9 +295,10 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
   def getVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, ValueStats]] = {
+    val baseFilter = forTokenAndPath(token, path)
     internalSearchSeries[ValueStats](
       tagTerms,
-      variableSeriesKey(token, path, _, variable), 
+      variableSeriesKey(baseFilter, _, variable), 
       DataPath, variable_series.collection)
   }
 
@@ -313,7 +314,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     if (observation.order <= (maxIndexedOrder min token.limits.order)) {
       internalSearchSeries[CountType](
         tagTerms,
-        valueSeriesKey(token, path, _, observation), 
+        valueSeriesKey(forTokenAndPath(token, path), _, observation), 
         CountsPath, variable_value_series.collection)
     } else {
       getRawEvents(token, path, observation, tagTerms).map(countByTerms(_, tagTerms).toSeq)
@@ -552,7 +553,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
     getVariableLength(token, path, variable).flatMap { 
       case 0 =>
-        val extractor = extractValues[(JValue, CountType)](variableValuesKey(token, path, variable), variable_values.collection) _
+        val extractor = extractValues[(JValue, CountType)](variableValuesKey(forTokenAndPath(token, path), variable), variable_values.collection) _
         extractor((jvalue, count) => (jvalue, count)) map (_.toMap)
 
       case length =>
@@ -564,26 +565,23 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }    
   }
 
-  private def variableValuesKey(token: Token, path: Path, variable: Variable) = {
-    forTokenAndPath(token, path) & 
+  private def variableValuesKey(baseFilter: MongoFilter, variable: Variable) = {
+    //forTokenAndPath(token, path) & 
+    baseFilter &
     (JPath("." + valuesId) === variable.sig.hashSignature)
   }
 
-  private def variableSeriesKey(token: Token, path: Path, tagsSig: Sig, variable: Variable) = {
-    forTokenAndPath(token, path) & 
+  private def variableSeriesKey(baseFilter: MongoFilter, tagsSig: Sig, variable: Variable) = {
+    //forTokenAndPath(token, path) & 
+    baseFilter &
     (JPath("." + seriesId) === Sig(tagsSig, variable.sig).hashSignature)
   }
 
-  private def valueSeriesKey(token: Token, path: Path, tagsSig: Sig, observation: JointObservation[HasValue]) = {
-    forTokenAndPath(token, path) & 
+  private def valueSeriesKey(baseFilter: MongoFilter, tagsSig: Sig, observation: JointObservation[HasValue]) = {
+    //forTokenAndPath(token, path) & 
+    baseFilter &
     (JPath("." + seriesId) === Sig(tagsSig, observation.sig).hashSignature)
   }
-
-  private def infiniteSeriesKey(token: Token, path: Path, hasValue: HasValue) = {
-    forTokenAndPath(token, path) & 
-    (JPath("." + seriesId) === hasValue.sig.hashSignature)
-  }
-
 
   private def extractChildren[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
     indexdb {
@@ -689,12 +687,13 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   /** Creates patches to record variable observations.
    */
   private def variableValuesPatches(token: Token, path: Path, observations: Set[HasValue], count: CountType): MongoPatches = {
+    val baseFilter = forTokenAndPath(token, path)
     observations.foldLeft(MongoPatches.empty) { 
       case (patches, HasValue(variable, value)) =>
         val predicateField = MongoEscaper.encode(renderNormalized(value.serialize))
         val update = (JPath(".values") \ JPathField(predicateField)) inc count
 
-        patches + (variableValuesKey(token, path, variable) -> update)
+        patches + (variableValuesKey(baseFilter, variable) -> update)
     }
   }
 
@@ -744,6 +743,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   private def variableValueSeriesPatches(token: Token, path: Path, finiteReport: Report[HasValue], count: CountType): MongoPatches = {
+    val baseFilter = forTokenAndPath(token, path)
     val finitePatches = finiteReport.storageKeysets.foldLeft(MongoPatches.empty) {
       case (finitePatches, (storageKeys, finiteObservation)) => 
 
@@ -753,7 +753,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         // being stored. We will then construct an identical key when we query, and the fact that we have 
         // built aggregated documents will mean that we query for the minimal set of infinite value documents.
         val (dataKeySig, _) = dataKeySigs(storageKeys)
-        val docKey = valueSeriesKey(token, path, docKeySig(storageKeys), finiteObservation)
+        val docKey = valueSeriesKey(baseFilter, docKeySig(storageKeys), finiteObservation)
 
         finitePatches + (docKey -> ((CountsPath \ dataKeySig.hashSignature) inc count))
     } 
@@ -785,17 +785,18 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       withCount.map(_.foldLeft(MongoUpdate.Empty)(_ |+| _)).getOrElse(MongoUpdate.Empty)
     }
 
+    val baseFilter = forTokenAndPath(token, path)
     report.storageKeysets.foldLeft(MongoPatches.empty) {
       case (patches, (storageKeys, joint)) => 
         val (dataKeySig, _) = dataKeySigs(storageKeys)
         
         joint.obs.foldLeft(patches) { 
           case (patches, HasChild(Variable(vpath), child)) if vpath.length == 0 => 
-            val key = variableSeriesKey(token, path, docKeySig(storageKeys), Variable(vpath \ child))
+            val key = variableSeriesKey(baseFilter, docKeySig(storageKeys), Variable(vpath \ child))
             patches + (key -> countUpdate(dataKeySig))
 
           case (patches, HasValue(variable, jvalue)) =>             
-            val key = variableSeriesKey(token, path, docKeySig(storageKeys), variable)
+            val key = variableSeriesKey(baseFilter, docKeySig(storageKeys), variable)
             val update = statsUpdate(variable, jvalue, dataKeySig)
             if (update == MongoUpdate.Empty) patches else patches + (key -> update)
 
