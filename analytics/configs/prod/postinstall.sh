@@ -11,7 +11,10 @@ if /etc/init.d/monit stop; then
 fi
 
 # Stop and start the service
-stop analytics-v1
+if status analytics-v1 | grep running; then
+    stop analytics-v1
+fi
+
 sleep 5
 
 if ! RESULT=`start analytics-v1 2>&1` > /dev/null ; then
