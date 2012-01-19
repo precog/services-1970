@@ -5,6 +5,7 @@ import blueeyes._
 import blueeyes.concurrent.Future
 import blueeyes.core.http._
 import blueeyes.core.http.HttpStatusCodes._
+import blueeyes.core.http.HttpHeaders._
 import blueeyes.core.service._
 import blueeyes.json.JsonAST._
 import blueeyes.json.JsonDSL._
@@ -115,7 +116,7 @@ class TrackingService(aggregationEngine: AggregationEngine, storageReporting: St
 extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[JValue]]] with Logging {
   val service = (request: HttpRequest[Future[JValue]]) => {
     val tagExtractors = Tag.timeTagExtractor(timeSeriesEncoding, clock.instant(), autoTimestamp) ::
-                        Tag.locationTagExtractor(jessup(request.remoteHost))             :: Nil
+                        Tag.locationTagExtractor(jessup(request.remoteHost.orElse(request.headers.header(`X-Forwarded-For`).flatMap(_.ips.headOption.map(_.ip))))) :: Nil
 
     val count:  Int = request.parameters.get('count).flatMap(_.parseInt.toOption).getOrElse(1)
 
