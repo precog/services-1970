@@ -21,6 +21,7 @@ import rosetta.json.blueeyes._
 
 import java.util.concurrent.TimeUnit
 import scalaz.Scalaz._
+import scalaz.Validation
 import scalaz.Success
 import scalaz.Failure
 import scalaz.Semigroup
@@ -158,11 +159,13 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                     val trackableEvent = token.tokenId != storageReporting.tokenId
                     val billingPath = accountPath(path)
 
-                    if (trackableEvent) {
-                      aggregationEngine.store(token, path, eventName, jvalue, tagResults, count, rollup, reprocess)
-                    }
+                    val storeEventFuture = (if (trackableEvent) {
+                      aggregationEngine.store(token, path, eventName, jvalue, tagResults, count, rollup, reprocess).map(_ => ())
+                    } else {
+                      Future.sync(())
+                    }).map(_ => 0L.success[NonEmptyList[String]])
 
-                    if (reprocess) {
+                    storeEventFuture :: (if(reprocess) {
                       if (trackableEvent) storageReporting.stored(billingPath, path.rollups(rollup min path.length - 1).size)
                       List(Future.sync(0L.success[NonEmptyList[String]])) //skip immediate aggregation of historical data
                     } else {
@@ -178,7 +181,7 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                           case _ => 
                         }
                       }
-                    } 
+                    })
                   } 
                 }: _*
               ) map { results =>

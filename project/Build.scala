@@ -20,8 +20,10 @@ object ServicesBuild extends Build {
     credentials += Credentials(Path.userHome / ".ivy2" / ".rgcredentials")
   )
 
+  test in assembly := {}
+
   val blueeyesDeps = com.samskivert.condep.Depends( 
-    ("blueeyes",         null, "com.reportgrid"                  %% "blueeyes"         % "0.5.1")
+    ("blueeyes",         null, "com.reportgrid"                  %% "blueeyes"         % "0.5.2-SNAPSHOT" changing())
   )
 
   val clientLibDeps = com.samskivert.condep.Depends(
