@@ -61,7 +61,6 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
   import BijectionsChunkString._
   import BijectionsChunkFutureJson._
 
-  implicit val timeout = akka.actor.Actor.Timeout(5000) //for now
 
   def mongoFactory(configMap: ConfigMap): Mongo
 
@@ -74,6 +73,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
   def tokenManager(database: Database, tokensCollection: MongoCollection, deletedTokensCollection: MongoCollection): TokenManager
 
   val clock: Clock
+ 
+  // not easy to have configuration at outer levels so hardwiring implicit timeout
+  // for requestLogging, healthMonitor, etc
+  implicit val timeout = akka.actor.Actor.Timeout(120000) 
 
   val analyticsService = this.service("analytics", "1.0") {
     requestLogging {
@@ -295,19 +298,32 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           }
         } ->
         shutdown { state => 
+          
+          // So why st and impStop[T] you might ask?
+          // Well the implicit timeout used for healthMonitor, requestLogging, etc above needs to be short to
+          // prevent akka timeout related memory leaks
+
+          // implicit timeout already in scope means we need to specify explicitly
+          // added impStop to make implicit stop expression simpler
+          // not greate but trying to get this fix into production and get back to v2
+
+          def impStop[T](implicit s: Stop[T]): Stop[T] = s 
+          val st = akka.actor.Actor.Timeout(Long.MaxValue)
+
           Future.sync( 
             Option(
               Stoppable(
                 state.aggregationEngine, 
-                Stoppable(state.aggregationEngine.indexdb, Stoppable(state.indexMongo) :: Nil) ::
-                Stoppable(state.aggregationEngine.eventsdb, Stoppable(state.eventsMongo) :: Nil) :: Nil
-              )
+                Stoppable(state.aggregationEngine.indexdb, Stoppable(state.indexMongo)(impStop[Mongo], st) :: Nil)(impStop[Database], st) ::
+                Stoppable(state.aggregationEngine.eventsdb, Stoppable(state.eventsMongo)(impStop[Mongo], st) :: Nil)(impStop[Database], st) :: Nil
+              )(impStop[AggregationEngine], st)
             )
           )
         }
       }
     }
   }}
+
 }
 
 object AnalyticsService extends HttpRequestHandlerCombinators with PartialFunctionCombinators {

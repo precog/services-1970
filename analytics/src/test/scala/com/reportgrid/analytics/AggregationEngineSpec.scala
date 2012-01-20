@@ -172,7 +172,7 @@ trait AggregationEngineFixtures extends LocalMongo with Logging {
 
   val engine = AggregationEngine.forConsole(config, logger, eventsdb, indexdb, HealthMonitor.Noop)
 
-  implicit val timeout = akka.actor.Actor.Timeout(120000) //for now
+  implicit val timeout = akka.actor.Actor.Timeout(120000) 
 
   import blueeyes.concurrent.Future._
 
