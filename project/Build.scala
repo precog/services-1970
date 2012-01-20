@@ -23,7 +23,7 @@ object ServicesBuild extends Build {
   test in assembly := {}
 
   val blueeyesDeps = com.samskivert.condep.Depends( 
-    ("blueeyes",         null, "com.reportgrid"                  %% "blueeyes"         % "0.5.2-SNAPSHOT" changing())
+    ("blueeyes",         null, "com.reportgrid"                  %% "blueeyes"         % "0.5.2" changing())
   )
 
   val clientLibDeps = com.samskivert.condep.Depends(
