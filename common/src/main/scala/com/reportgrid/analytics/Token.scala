@@ -89,7 +89,7 @@ object Token extends TokenSerialization {
     path           = "test-account-root",
     permissions    = Permissions(true, true, true, true),
     expires        = Never,
-    limits         = Limits(order = 2, depth = 3, limit = 20, tags = 2)
+    limits         = Limits(order = 2, depth = 3, limit = 20, tags = 2, rollup = 5)
   )
 
   def newAccount(path: Path, limits: Limits, permissions: Permissions = Permissions.All, expires: DateTime = Never): Token = {

@@ -604,20 +604,67 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
 
   object sampleData extends Outside[List[Event]] with Scope {
     val outside = containerOfN[List, Event](30, fullEventGen).sample.get ->- {
-      _.foreach(event => jsonTestService.query("rollup", "1").post[JValue]("/vfs/test/foo.bar%40baz.com")(event.message))
+      _.foreach(event => jsonTestService.query("rollup", "1").post[JValue]("/vfs/test/foo.bar%40baz.com/tags/foo/")(event.message))
     }
   }
 
   "Analytics Service" should {
-    "roll up data to parent paths" in sampleData { sampleEvents =>
+    "roll up data to expected parent paths" in sampleData { sampleEvents =>
       lazy val tweetedCount = sampleEvents.count {
         case Event("tweeted", _, _) => true
         case _ => false
       }
 
-      jsonTestService.get[JValue]("/vfs/test/.tweeted/count?location=usa") must whenDelivered {
+      jsonTestService.get[JValue]("/vfs/test/foo.bar%40baz.com/tags/foo/.tweeted/count") must whenDelivered {
         beLike {
-          case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== tweetedCount
+          case HttpResponse(status, _, Some(result), _) => {
+            result.deserialize[Long] must_== tweetedCount
+          }
+        }
+      }
+    }
+    
+    "roll up data to expected parent paths with tags query" in sampleData { sampleEvents =>
+      lazy val tweetedCount = sampleEvents.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      jsonTestService.get[JValue]("/vfs/test/foo.bar%40baz.com/tags/foo/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => {
+            result.deserialize[Long] must_== tweetedCount
+          }
+        }
+      }
+    }
+    
+    "do not roll up data beyond expected parent paths" in sampleData { sampleEvents =>
+      lazy val tweetedCount = sampleEvents.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      jsonTestService.get[JValue]("/vfs/test/foo.bar%40baz.com/.tweeted/count") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => {
+            result.deserialize[Long] must_== 0 
+          }
+        }
+      }
+    }
+    
+    "do not roll up data beyond expected parent paths with tags query" in sampleData { sampleEvents =>
+      lazy val tweetedCount = sampleEvents.count {
+        case Event("tweeted", _, _) => true
+        case _ => false
+      }
+
+      jsonTestService.get[JValue]("/vfs/test/foo.bar%40baz.com/.tweeted/count?location=usa") must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(result), _) => {
+            result.deserialize[Long] must_== 0 
+          }
         }
       }
     }
@@ -638,7 +685,7 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
       val leaf = jsonTestService.post[JValue]("/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis) {
         JsonParser.parse("""{
           "select":"count",
-          "from":"/test/foo.bar@baz.com/",
+          "from":"/test/foo.bar@baz.com/tags/foo/",
           "properties":[
             {"property":".tweeted.gender", "limit":10,"order":"ascending"},
             {"property":".tweeted.recipientCount","limit":10,"order":"descending"}
@@ -649,7 +696,7 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
       val root = jsonTestService.post[JValue]("/intersect?start=" + minDate.getMillis + "&end=" + maxDate.getMillis) {
         JsonParser.parse("""{
           "select":"count",
-          "from":"/test/",
+          "from":"/test/foo.bar@baz.com/tags/",
           "properties":[
             {"property":".tweeted.gender", "limit":10,"order":"ascending"},
             {"property":".tweeted.recipientCount","limit":10,"order":"descending"}
