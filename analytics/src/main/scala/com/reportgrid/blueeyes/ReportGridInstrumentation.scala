@@ -52,7 +52,7 @@ trait ReportGridInstrumentation {
                     JField("method", req.method.toString),
                     JField("function", name) //TODO: Make this more informative
                   )),
-                  rollup = true,
+                  rollup = FullRollup,
                   tags = Set(TimeTag[JValue](start.toDate))
                 )
               }

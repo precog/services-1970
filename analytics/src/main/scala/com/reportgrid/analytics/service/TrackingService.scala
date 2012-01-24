@@ -15,8 +15,7 @@ import blueeyes.util.Clock
 
 import AnalyticsService._
 import external.Jessup
-import com.reportgrid.api.ReportGridTrackingClient
-import com.reportgrid.api.Trackable
+import com.reportgrid.api.{FullRollup, ReportGridTrackingClient, Trackable}
 import rosetta.json.blueeyes._
 
 import java.util.concurrent.TimeUnit
@@ -54,7 +53,7 @@ class ReportGridStorageReporting(val tokenId: String, client: ReportGridTracking
           path = path.toString,
           name = "stored",
           properties = JObject(JField("#timestamp", "auto") :: JField("count", count) :: JField("complexity", complexity) :: Nil),
-          rollup = true
+          rollup = FullRollup
         )
       )
   }
