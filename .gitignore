@@ -1,3 +1,7 @@
+# ignore condeps symlinks
+blueeyes
+client-libraries
+
 .idea
 tags
 lib_managed
