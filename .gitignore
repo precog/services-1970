@@ -1,6 +1,6 @@
 # ignore condeps symlinks
-blueeyes
-client-libraries
+/blueeyes
+/client-libraries
 
 .idea
 tags
