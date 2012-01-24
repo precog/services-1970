@@ -30,7 +30,7 @@ object ServicesBuild extends Build {
     ("client-libraries", null, "com.reportgrid"                  %% "scala-client" % "0.3.1")
   )
 
-  lazy val services = Project(id = "services", base = file(".")) aggregate(common, analytics, jessup, vistrack) //,billing)
+  lazy val services = Project(id = "services", base = file(".")) aggregate(common, analytics, jessup, vistrack ,billing)
 
   val commonSettings = nexusSettings ++ Seq(libraryDependencies ++= blueeyesDeps.libDeps)
   lazy val common = blueeyesDeps.addDeps(Project(id = "common", base = file("common")).settings(commonSettings: _*))
