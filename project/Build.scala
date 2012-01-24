@@ -23,11 +23,11 @@ object ServicesBuild extends Build {
   test in assembly := {}
 
   val blueeyesDeps = com.samskivert.condep.Depends( 
-    ("blueeyes",         null, "com.reportgrid"                  %% "blueeyes"         % "0.5.2" changing())
+    ("blueeyes",         null, "com.reportgrid"                  %% "blueeyes"         % "0.5.3-SNAPSHOT" changing())
   )
 
   val clientLibDeps = com.samskivert.condep.Depends(
-    ("client-libraries", null, "com.reportgrid"                  %% "scala-client" % "0.3.1")
+    ("client-libraries", null, "com.reportgrid"                  %% "scala-client" % "0.3.3-SNAPSHOT")
   )
 
   lazy val services = Project(id = "services", base = file(".")) aggregate(common, analytics, jessup, vistrack ,billing)
