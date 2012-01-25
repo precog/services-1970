@@ -61,6 +61,8 @@ trait ArbitraryEvent extends ArbitraryTime {
       )
     )
   )
+
+  val numbers = Arbitrary.arbDouble.arbitrary
   
   import Hierarchy._
   implicit val locGen: Gen[Hierarchy] = for {
@@ -92,7 +94,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     eventData, 
     List(Tag("timestamp", TimeReference(AggregationEngine.timeSeriesEncoding, time)), Tag("location", geoloc))
   )
-  
+
   implicit val eventDataGen = for {
     location       <- oneOf(Locations)
     retweet        <- oneOf(true, false)
@@ -102,6 +104,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     otherStartups  <- genOtherStartups
     twitterClient  <- oneOf(TwitterClients)
     tweet          <- identifier
+    someNumber     <- numbers
   } yield EventData(
     JObject(
       JField("location",       location.serialize) ::
@@ -112,6 +115,7 @@ trait ArbitraryEvent extends ArbitraryTime {
       JField("otherStartups",  otherStartups.serialize) ::
       JField("twitterClient",  twitterClient) ::
       JField("~tweet",         tweet) ::
+      JField("num",            someNumber) ::
       Nil
     )
   )
