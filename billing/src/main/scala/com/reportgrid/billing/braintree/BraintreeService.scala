@@ -415,19 +415,19 @@ class BraintreeService(gateway: BraintreeGateway, environment: Environment) exte
   // Helper methods
   
   private def collapseErrors(errors: ValidationErrors, verification: Option[CreditCardVerification]): String = {
-    val validationErrors = errors.getAllDeepValidationErrors().asScala.foldLeft("")((acc, a) => acc + " " + a.getMessage())
+    val validationErrors = errors.getAllDeepValidationErrors().asScala.map(_.getMessage())
 
     val verificationError = verification.map(ccv => {
       val majorCode = ccv.getProcessorResponseCode().substring(0,1)
       majorCode match {
         case "1" => ""
-        case "2" => " Credit card declined. Reason [" + ccv.getProcessorResponseText() + "]"
-        case "3" => " Error with credit card processing service. Reason [" + ccv.getProcessorResponseText() + "]"
-        case _   => " Error will billing service. Reason [Credit card processing gateway produced unexepcted error.]"
+        case "2" => "Credit card declined. Reason [" + ccv.getProcessorResponseText() + "]"
+        case "3" => "Error with credit card processing service. Reason [" + ccv.getProcessorResponseText() + "]"
+        case _   => "Error will billing service. Reason [Credit card processing gateway produced unexepcted error.]"
       }
     }).getOrElse("")
     
-    "Billing errors:" + validationErrors + verificationError 
+    "Billing errors: " + (validationErrors :+ verificationError).sorted.mkString(" ")
   }
 }
 

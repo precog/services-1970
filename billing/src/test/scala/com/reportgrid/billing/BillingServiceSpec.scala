@@ -273,17 +273,17 @@ class BillingServiceSpec extends TestBillingService {
           "bad cardnumber" in {
             val b = goodBilling.copy(number = "411")
             val t = createAccount1.copy(billing = Some(b))
-            ensureCreateAccountReturnsError(t, "Billing errors: Credit card type is not accepted by this merchant account. Credit card number must be 12-19 digits.")
+            ensureCreateAccountReturnsError(t, "Billing errors:  Credit card number must be 12-19 digits. Credit card type is not accepted by this merchant account.")
           }
           "bad expiration month" in {
             val b = goodBilling.copy(expMonth = 13)
             val t = createAccount1.copy(billing = Some(b))
-            ensureCreateAccountReturnsError(t, "Billing errors: Expiration date is invalid.")
+            ensureCreateAccountReturnsError(t, "Billing errors:  Expiration date is invalid.")
           }
           "bad expiration year" in {
             val b = goodBilling.copy(expYear = -123)
             val t = createAccount1.copy(billing = Some(b))
-            ensureCreateAccountReturnsError(t, "Billing errors: Expiration date is invalid.")
+            ensureCreateAccountReturnsError(t, "Billing errors:  Expiration date is invalid.")
           }
           "expired card" in {
             // Seems as if the sandbox won't decline an outdated expiration?
@@ -295,12 +295,12 @@ class BillingServiceSpec extends TestBillingService {
           "wrong cvv" in {
             val b = goodBilling.copy(cvv = "200")
             val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
-            ensureCreateAccountReturnsError(t, "Billing errors:")
+            ensureCreateAccountReturnsError(t, "Billing errors: ")
           }
           "cvv not verified" in {
             val b = goodBilling.copy(cvv = "201")
             val t = createAccount1.copy(billing = Some(b))
-            ensureCreateAccountReturnsError(t, "Billing errors:")
+            ensureCreateAccountReturnsError(t, "Billing errors: ")
           }
           //          "cvv non participation" in {
           //            val b = goodBilling.copy(cvv = "301")
@@ -310,17 +310,17 @@ class BillingServiceSpec extends TestBillingService {
           "empty cvv" in {
             val b = goodBilling.copy(cvv = "")
             val t = createAccount1.copy(billing = Some(b))
-            ensureCreateAccountReturnsError(t, "Billing errors: CVV is required.")
+            ensureCreateAccountReturnsError(t, "Billing errors:  CVV is required.")
           }
           "bad zipcode doesn't match" in {
             val b = goodBilling.copy(billingPostalCode = "20000")
             val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
-            ensureCreateAccountReturnsError(t, "Billing errors:")
+            ensureCreateAccountReturnsError(t, "Billing errors: ")
           }
           "bad zipcode not verified" in {
             val b = goodBilling.copy(billingPostalCode = "20001")
             val t = createAccount1.copy(planCreditOption = None, billing = Some(b))
-            ensureCreateAccountReturnsError(t, "Billing errors:")
+            ensureCreateAccountReturnsError(t, "Billing errors: ")
           }
           "empty zipcode" in {
             val b = goodBilling.copy(billingPostalCode = "")
