@@ -394,7 +394,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   private def getRawIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
     if (variableDescriptors.isEmpty) Future.async(Nil) else {
-      val futureHistograms = getHistograms(token, path, variableDescriptors)
       val eventVariables: Map[String, List[VariableDescriptor]] = variableDescriptors.groupBy(_.variable.name.head.collect{ case JPathField(name) => name }.get)
 
       val baseFilter = rawEventsBaseFilter(token, path)
@@ -403,25 +402,33 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       logger.trace("Querying mongo for intersection events with filter " + filter)
       val queryStart = System.currentTimeMillis()
 
-      (futureHistograms zip eventsdb(selectAll.from(events_collection).where(filter))) map { 
-        case (histograms, events) =>
+      eventsdb(selectAll.from(events_collection).where(filter)) map { events =>
           logger.trace("Got response for intersection after " + (System.currentTimeMillis() - queryStart) + " ms")
-          //logger.trace("Using histograms: " + histograms + " to limit results.")
           val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
 
           val resultMap = eventsByName.foldLeft(Map.empty[JArray, Map[JObject, CountType]]) {
             case (result, (eventName, namedEvents)) => 
               eventVariables.get(eventName) map { descriptors =>
-                val grouped: Map[Option[JArray], Iterable[JValue]] = namedEvents.groupBy { event =>
-                  descriptors.foldRight(Option(List.empty[JValue])) { 
-                    case (d, Some(values)) =>
-                      val value = (event \ "event" \ "data")(d.variable.name.tail)
-                      //ensure that the value exists in the limiting histogram
-                      if (value != JNothing && histograms(d).contains(value)) Some(value :: values) else None
-                    case _ => None
-                  } map { 
-                    ks => JArray(ks) 
+                type Histograms = Map[VariableDescriptor, Map[JValue, Int]]
+
+                /* Create histograms for the variables, discarding any events
+                 * for which the variable value doesn't exist. */
+                val allHistograms: Histograms = 
+                  namedEvents.map((event: JValue) => variableDescriptors.flatMap(d => 
+                    (event \ "event" \ "data").apply(d.variable.name.tail) match {
+                      case JNothing => None
+                      case goodVal => Some((d, Map(goodVal -> 1)))
+                    })(collection.breakOut): Histograms).asMA.sum
+
+                val toKeep: Map[VariableDescriptor, Set[JValue]] = allHistograms map {
+                  case (v, m) => v.sortOrder match {
+                    case SortOrder.Ascending  => (v -> m.toSeq.sortBy(_._2).take(v.maxResults).toMap.keySet)
+                    case SortOrder.Descending => (v -> m.toSeq.sortBy(-_._2).take(v.maxResults).toMap.keySet)
                   }
+                }
+
+                val grouped: Map[Option[JArray], Iterable[JValue]] = namedEvents.groupBy { event =>
+                  (descriptors map { d => (event \ "event" \ "data").apply(d.variable.name.tail).some.filter(toKeep(d)) }).sequence.map(JArray(_))
                 } 
                 
                 grouped.foldLeft(result) { 
