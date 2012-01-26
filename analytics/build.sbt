@@ -2,7 +2,7 @@ import AssemblyKeys._
 
 name := "analytics"
 
-version      := "1.3.7-SNAPSHOT"
+version      := "1.3.7"
 
 organization := "com.reportgrid"
 
