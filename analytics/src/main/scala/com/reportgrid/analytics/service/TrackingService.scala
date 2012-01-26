@@ -144,11 +144,12 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                       ("Errors occurred parsing the \"tag\" properties of the \"" + eventName + "\" event: " + compact(render(jvalue))) <:: errors
                     }
 
-                    // compensate for bare jvalues as events
-                    val event: JObject = jvalue match {
+                    // compensate for bare jvalues as events, escape field names in event to avoid dots
+                    import com.reportgrid.analytics.persistence.MongoSupport.escapeEventBody
+                    val event: JObject = escapeEventBody((jvalue match {
                       case obj: JObject => obj
                       case v => JObject(JField("value", v) :: Nil)
-                    }
+                    }))
               
                     val offset = clock.now().minusDays(1).toInstant
                     val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
@@ -159,7 +160,7 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                     val billingPath = accountPath(path)
 
                     val storeEventFuture = (if (trackableEvent) {
-                      aggregationEngine.store(token, path, eventName, jvalue, tagResults, count, rollup, reprocess).map(_ => ())
+                      aggregationEngine.store(token, path, eventName, event, tagResults, count, rollup, reprocess).map(_ => ())
                     } else {
                       Future.sync(())
                     }).map(_ => 0L.success[NonEmptyList[String]])

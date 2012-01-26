@@ -27,6 +27,17 @@ object MongoSupport extends AnalyticsSerialization {
     )
   )
 
+  def escapeEventBody(eventBody : JObject) = eventBody.transform {
+    case JField(n, v) => JField(MongoEscaper.encode(n), v)
+  }.asInstanceOf[JObject]
+
+  def unescapeEventBody[T <: JValue](eventBody : T) : T = eventBody match {
+    case JObject(fields) => JObject(fields.map(unescapeEventBody _)).asInstanceOf[T]
+    case JArray(elements) => JArray(elements.map(unescapeEventBody _)).asInstanceOf[T]
+    case JField(n, v) => JField(MongoEscaper.decode(n), unescapeEventBody(v)).asInstanceOf[T]
+    case _ => eventBody
+  }
+
   implicit val PeriodDecomposer = new Decomposer[Period] {
     def decompose(period: Period): JValue = JObject(
       JField("periodicity", period.periodicity.serialize) ::

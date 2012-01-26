@@ -166,6 +166,13 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
 
+  def retrieveEventsFor(filter : MongoFilter) : Future[scala.collection.IterableView[JObject, Iterator[JObject]]] = {
+    logger.trace("Retrieving events for " + filter.filter)
+    eventsdb(selectAll.from(events_collection).where(filter)).map {
+      events => events.map(unescapeEventBody).view.asInstanceOf[scala.collection.IterableView[JObject, Iterator[JObject]]]
+    }
+  }
+
   def withTagResults[A](tagResults: Tag.ExtractionResult)(f: Seq[Tag] => Future[A]): Future[ValidationNEL[String, A]] = {
     tagResults match {
       case Tag.Tags(tf)       => tf.flatMap(f).map(_.success[NonEmptyList[String]])
@@ -209,7 +216,10 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   /** Retrieves children of the specified path &amp; variable.  */
   def getVariableChildren(token: Token, path: Path, variable: Variable): Future[List[HasChild]] = {
     extractValues(forTokenAndPath(token, path) & forVariable(variable), variable_children.collection) { (jvalue, _) =>
-      HasChild(variable, jvalue.deserialize[JPathNode])
+      HasChild(variable, jvalue match {
+        case JString(str) => JPathField(str)
+        case JInt(index)  => JPathIndex(index.toInt)
+      })
     } 
   }
 
@@ -402,7 +412,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       logger.trace("Querying mongo for intersection events with filter " + filter)
       val queryStart = System.currentTimeMillis()
 
-      eventsdb(selectAll.from(events_collection).where(filter)) map { events =>
+      retrieveEventsFor(filter) map { events =>
           logger.trace("Got response for intersection after " + (System.currentTimeMillis() - queryStart) + " ms")
           val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
 
@@ -505,7 +515,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         ((JPath(".event.data") \ (variable.name.tail)) === value)
     }
 
-    eventsdb(selectAll.from(events_collection).where(filter)).map {
+    retrieveEventsFor(filter).map {
       _.filter { jv => 
         val eventPath = Path((jv \ "path").deserialize[String])
         //either the event path was equal to the path, or the difference between the length of the path (which must be longer)
@@ -560,6 +570,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
     getVariableLength(token, path, variable).flatMap { 
       case 0 =>
+        logger.trace("Filtering histogram with " + variableValuesKey(forTokenAndPath(token, path), variable))
         val extractor = extractValues[(JValue, CountType)](variableValuesKey(forTokenAndPath(token, path), variable), variable_values.collection) _
         extractor((jvalue, count) => (jvalue, count)) map (_.toMap)
 
@@ -605,17 +616,29 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   private def extractValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
     indexdb {
-      selectOne(".values").from(collection).where(filter)
+      selectOne(".values", ".indices").from(collection).where(filter)
     } map { 
-      case None => Nil
+      case None => logger.trace("extractValues got nothing"); Nil
 
       case Some(result) =>
+        logger.trace("extractValues got result: " + result)
+        val retVal = ((result \ "indices") match {
+          case JObject(fields) => 
+            fields.flatMap{ 
+              case JField(name, JInt(count)) => Some(extractor(JInt(name.toInt), count.toLong))
+              case badness => logger.warn("Non-index field found in indices: " + badness); None
+            }
+          case _ => Nil
+        }) ++ 
         (result \ "values").children.collect {
           case JField(name, count) =>
             val jvalue = JsonParser.parse(MongoEscaper.decode(name))
 
             extractor(jvalue, count.deserialize[CountType])
         }
+
+        logger.trace("extractValues transformed to " + retVal)
+        retVal
     }
   }
 
@@ -699,7 +722,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       case (patches, HasValue(variable, value)) =>
         val predicateField = MongoEscaper.encode(renderNormalized(value.serialize))
         val update = (JPath(".values") \ JPathField(predicateField)) inc count
-
+      
+        logger.trace("Inserting for %s, %s into %s".format(path, variable, variableValuesKey(baseFilter, variable)))
         patches + (variableValuesKey(baseFilter, variable) -> update)
     }
   }
@@ -708,12 +732,17 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
    */
   private def variableChildrenPatches(token: Token, path: Path, observations: Set[HasChild], count: CountType): MongoPatches = {
     observations.foldLeft(MongoPatches.empty) { 
-      case (patches, HasChild(variable, child)) =>
-
+      case (patches, HasChild(variable, childNode)) =>
         val filterVariable = forTokenAndPath(token, path) & forVariable(variable)
-        val predicateField = MongoEscaper.encode(renderNormalized(child.serialize))
 
-        val update = (JPath(".values") \ JPathField(predicateField)) inc count
+        val update = childNode match {
+          case JPathField(name) => 
+            // Need to quote the field name so that it deserializes to a string later
+            (JPath(".values") \ JPathField("\"" + name + "\"")) inc count
+
+          case index            => 
+            (JPath(".indices") \ index) inc count
+        }
 
         patches + (filterVariable -> update)
     }

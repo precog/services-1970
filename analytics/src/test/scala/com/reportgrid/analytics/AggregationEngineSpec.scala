@@ -315,7 +315,8 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
       forall(arrayValues) {
         case ((eventName, path), values) =>
-          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
+          logger.debug("Querying values for " + Variable(JPath(eventName) \ path))
+          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path)).deliverTo { t => logger.debug("Got : " + t) } must whenDelivered {
             haveTheSameElementsAs(values)
           }
       }
