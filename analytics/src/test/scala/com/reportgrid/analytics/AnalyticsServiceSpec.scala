@@ -770,7 +770,20 @@ class UnicodeAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEve
 }
 
 class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with FutureMatchers {
-  override val genTimeClock = PastClock(Hours.hours(24 * 90).toStandardDuration)
+  import org.scalacheck.Gen
+
+  override val genTimeClock = PastClock(Days.days(1).toStandardDuration)
+
+  // Overriding so that we generate events on either side of 24 hours ago
+  override val genTime = {
+    for {
+      periodicities <- pick(3, genTimePeriodicities)
+      direction <- Gen.oneOf(List(-1,1))
+      offsets <- periodicities map { case (periodicity, max) => choose(0, max).map{ offval => periodicity.jodaPeriod(offval  * direction).get }} sequence
+    } yield {
+      offsets.foldLeft(genTimeClock.now()) { (date, offset) => date.plus(offset) } toInstant
+    }
+  }
 
   object sampleData extends Outside[List[Event]] with Scope {
     def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
@@ -779,7 +792,7 @@ class ArchivalAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEv
   }
 
   "Analytics Service" should {
-    "store events in the events database, but not in the index." in sampleData { sampleEvents =>
+    "store archived events (> 1 day) in the events database, but not in the index." in sampleData { sampleEvents =>
       val (beforeCutoff, afterCutoff) = sampleEvents.partition(_.timestamp.exists(_ <= clock.now.minusDays(1)))
 
       lazy val tweetedCount = afterCutoff.count {
