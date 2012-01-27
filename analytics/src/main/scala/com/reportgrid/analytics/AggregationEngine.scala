@@ -217,10 +217,13 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   def getVariableChildren(token: Token, path: Path, variable: Variable): Future[List[(HasChild, Long)]] = {
     extractValues(forTokenAndPath(token, path) & forVariable(variable), variable_children.collection) { (jvalue, count) =>
       (HasChild(variable, jvalue match {
-        case JString(str) => JPathField(str)
+        case JString(str) => JPathField(str.replaceAll("^\\.+", "")) // Handle any legacy data (stores prefixed dot)
         case JInt(index)  => JPathIndex(index.toInt)
       }), count.toLong)
-    } 
+    }.map { 
+      // Sum up legacy and new keys with the same name
+      vals => vals.groupBy { case (name,count) => name }.map { case (name,values) => (name, values.map(_._2).sum) }.toList
+    }
   }
 
   /** Retrieves children of the specified path.  */
