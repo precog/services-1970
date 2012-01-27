@@ -228,7 +228,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
       forall(expectedChildren) { 
         case (eventName, children) => 
-          engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName))).map(_.map(_.child.toString)) must whenDelivered {
+          engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName))).map(_.map(_._1.child.toString)) must whenDelivered {
             haveTheSameElementsAs(children)
           }
       }

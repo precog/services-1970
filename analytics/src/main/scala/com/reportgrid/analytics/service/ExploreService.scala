@@ -38,7 +38,27 @@ extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JVal
   val service = (_: HttpRequest[A]) => Success(
     (token: Token, path: Path, variable: Variable) => {
       if (token.permissions.explore) {
-        aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_.child).serialize.ok)
+        aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_._1.child).serialize.ok)
+      } else {
+        Future.sync(HttpResponse[JValue](Unauthorized, content = Some("The specified token does not permit exploration of variable children.")))
+      }
+    }
+  )
+
+  val metadata = None
+}
+
+class VariableChildCountService[A](aggregationEngine: AggregationEngine) 
+extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
+  val service = (_: HttpRequest[A]) => Success(
+    (token: Token, path: Path, variable: Variable) => {
+      if (token.permissions.explore) {
+        aggregationEngine.getVariableChildren(token, path, variable).map(_.map{ info => (info._1.child, info._2) }.serialize.ok)
+//
+//        aggregationEngine.getVariableChildren(token, path, variable).map {
+//          children => JArray(children.map{ case (hasChild, count) => JArray(List(hasChild.child.serialize, count.serialize)) }).ok
+//          null
+//        }
       } else {
         Future.sync(HttpResponse[JValue](Unauthorized, content = Some("The specified token does not permit exploration of variable children.")))
       }

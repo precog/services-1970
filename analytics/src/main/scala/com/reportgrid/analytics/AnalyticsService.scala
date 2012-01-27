@@ -138,6 +138,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                       path("count") {
                         new VariableCountService(aggregationEngine).audited("count occurrences of a variable")
                       } ~ 
+                      path("childcount") {
+                        new VariableChildCountService[Future[JValue]](aggregationEngine).audited("count children of a variable")
+                      } ~
                       path("statistics") {
                         get { 
                           audited("variable statistics") {

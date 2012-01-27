@@ -214,12 +214,12 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   /** Retrieves children of the specified path &amp; variable.  */
-  def getVariableChildren(token: Token, path: Path, variable: Variable): Future[List[HasChild]] = {
-    extractValues(forTokenAndPath(token, path) & forVariable(variable), variable_children.collection) { (jvalue, _) =>
-      HasChild(variable, jvalue match {
+  def getVariableChildren(token: Token, path: Path, variable: Variable): Future[List[(HasChild, Long)]] = {
+    extractValues(forTokenAndPath(token, path) & forVariable(variable), variable_children.collection) { (jvalue, count) =>
+      (HasChild(variable, jvalue match {
         case JString(str) => JPathField(str)
         case JInt(index)  => JPathIndex(index.toInt)
-      })
+      }), count.toLong)
     } 
   }
 
@@ -275,7 +275,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
    */
   def getVariableLength(token: Token, path: Path, variable: Variable): Future[Int] = {
     getVariableChildren(token, path, variable).map { hasChildren =>
-      hasChildren.map(_.child.toString).filterNot(_.endsWith("/")).map(JPath(_)).foldLeft(0) {
+      hasChildren.map(_._1.child.toString).filterNot(_.endsWith("/")).map(JPath(_)).foldLeft(0) {
         case (length, jpath) =>
           jpath.nodes match {
             case JPathIndex(index) :: Nil => (index + 1).max(length)
