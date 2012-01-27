@@ -114,7 +114,15 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           val audit = auditor(state.auditClient, clock, state.tokenManager)
           import audit._
 
-          jsonp[ByteChunk] {
+                 
+          import FormatServiceHelpers.{logger => _, _}
+          val jsonpFormatter = jsonToJsonp[ByteChunk]
+                 
+          val formatters = Map("jsonp" -> jsonpFormatter,
+                               "csv"   -> jsonToCSV[ByteChunk])
+
+          (new SaveQueryService(state.eventsMongo.database("querycache1"))) {
+          formatService[ByteChunk](formatters, jsonpFormatter) {
             token(state.tokenManager) {
               /* The virtual file system, which is used for storing data,
                * retrieving data, and querying for metadata.
@@ -300,6 +308,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                 }
               }
             }
+          }
           }
         } ->
         shutdown { state => 
