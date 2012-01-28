@@ -22,6 +22,7 @@ mainClass := Some("com.reportgrid.analytics.AnalyticsServer")
 
 parallelExecution in Test := false
 
+seq(assemblySettings: _*)
+
 test in assembly := {}
 
-seq(assemblySettings: _*)
