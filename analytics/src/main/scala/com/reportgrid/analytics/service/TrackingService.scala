@@ -151,8 +151,10 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
                       case v => JObject(JField("value", v) :: Nil)
                     }))
               
-                    val offset = clock.now().minusDays(1).toInstant
-                    val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
+                    // Now that data is queried directly from raw events, we never flag for reprocess
+                    //val offset = clock.now().minusDays(1).toInstant
+                    //val reprocess = (event \ "#timestamp").validated[String].flatMap(_.parseLong).exists(_ <= offset.getMillis)
+                    val reprocess = false
 
                     val (tagResults, remainder) = Tag.extractTags(tagExtractors, event)
 

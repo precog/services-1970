@@ -25,6 +25,8 @@ import HttpStatusCodes.{BadRequest, Unauthorized, Forbidden}
 
 import net.lag.configgy.{Configgy, ConfigMap}
 
+import com.weiglewilczek.slf4s.Logging
+
 import org.joda.time.base.AbstractInstant
 import org.joda.time.Instant
 import org.joda.time.DateTime
@@ -148,7 +150,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                       } ~ 
                       path("properties/") {
                         path("count") {
-                          new VariableChildCountService[Future[JValue]](aggregationEngine).audited("count children of a variable")
+                          new VariableChildCountService(aggregationEngine).audited("count children of a variable")
                         }
                       } ~
                       path("statistics") {
@@ -190,7 +192,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                         path(/?) {
                           get { 
                             audited("Return a histogram of values of a variable.") { 
-                              (_: HttpRequest[Future[JValue]]) => aggregationEngine.getHistogram(_: Token, _: Path, _: Variable).map(_.serialize.ok)
+                              (r: HttpRequest[Future[JValue]]) => HistogramService.getHistogram(r, aggregationEngine, _: Token, _: Path, _: Variable, 0)
                             }
                           }
                         } ~
@@ -199,16 +201,16 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                             pathData("top/'limit", 'limit, parsePathInt("limit")) {
                               get { 
                                 audited("Return a histogram of the top 'limit values of a variable, by count.") { 
-                                  (_: HttpRequest[Future[JValue]]) => 
-                                    (limit: Int) => aggregationEngine.getHistogramTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok) 
+                                  (r: HttpRequest[Future[JValue]]) => 
+                                    (limit: Int) => HistogramService.getHistogram(r, aggregationEngine, _: Token, _: Path, _: Variable, limit)
                                 }
                               }
                             } ~
                             pathData("bottom/'limit", 'limit, parsePathInt("limit")) {
                               get { 
                                 audited("Return a histogram of the bottom 'limit values of a variable, by count.") { 
-                                  (_: HttpRequest[Future[JValue]]) => 
-                                    (limit: Int) => aggregationEngine.getHistogramBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                                  (r: HttpRequest[Future[JValue]]) => 
+                                    (limit: Int) => HistogramService.getHistogram(r, aggregationEngine, _: Token, _: Path, _: Variable, -limit)
                                 }
                               }
                             }
@@ -225,8 +227,11 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                       } ~
                       path("values") {
                         path(/?) {
-                          get { 
-                            new ExploreValuesService[Future[JValue]](aggregationEngine).audited("list of variable values") 
+                          get {
+                            audited("list of variable values") {
+                              (req: HttpRequest[Future[JValue]]) =>
+                                new ExploreValuesService(aggregationEngine,0).service(req)
+                            }
                           }
                         } ~
                         path("/") {
@@ -234,16 +239,16 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                             pathData("top/'limit", 'limit, parsePathInt("limit")) {
                               get { 
                                 audited("List the top n variable values") {
-                                  (_: HttpRequest[Future[JValue]]) => 
-                                    (limit: Int) => aggregationEngine.getValuesTop(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                                  (req: HttpRequest[Future[JValue]]) => 
+                                    (limit: Int) => new ExploreValuesService(aggregationEngine, limit).service(req)
                                 }
                               }
                             } ~
                             pathData("bottom/'limit", 'limit, parsePathInt("limit")) {
                               get { 
                                 audited("list of bottom variable values") {
-                                  (_: HttpRequest[Future[JValue]]) => 
-                                    (limit: Int) => aggregationEngine.getValuesBottom(_: Token, _: Path, _: Variable, limit).map(_.serialize.ok)
+                                  (req: HttpRequest[Future[JValue]]) => 
+                                    (limit: Int) => new ExploreValuesService(aggregationEngine, -limit).service(req)
                                 }
                               }
                             } ~
@@ -340,7 +345,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
 
 }
 
-object AnalyticsService extends HttpRequestHandlerCombinators with PartialFunctionCombinators {
+object AnalyticsService extends HttpRequestHandlerCombinators with PartialFunctionCombinators with Logging {
   import AnalyticsServiceSerialization._
   import AggregationEngine._
 
@@ -433,12 +438,12 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
 
         resultSet.foldLeft(SortedMap.empty[JObject, V](JObjectOrdering)) {
           case (acc, (obj, v)) => 
-            val key = JObject(
+            val key = normalize(JObject(
               obj.fields.flatMap {
                 case JField("datetime",  datetime) => newField(datetime.deserialize[DateTime](ZonedTimeExtractor(zone.getOrElse(DateTimeZone.UTC))))
                 case JField("timestamp", instant)  => newField(instant.deserialize[Instant].toDateTime(DateTimeZone.UTC))
                 case field => Some(field)
-              })
+              }))
 
             acc + (key -> acc.get(key).map(_ |+| v).getOrElse(v))
         }.toSeq

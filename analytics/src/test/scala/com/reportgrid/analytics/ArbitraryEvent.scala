@@ -48,6 +48,8 @@ trait ArbitraryEvent extends ArbitraryTime {
     lazy val message = JObject(JField(eventName, messageData) :: Nil)
 
     def timestamp: Option[Instant] = tags collect { case Tag(name, TimeReference(_, time)) => time } headOption
+
+    def location: Option[List[Hierarchy.Location]] = tags collect { case Tag(name, Hierarchy(locations)) => locations } headOption
   }
 
   val locations = List(
@@ -135,7 +137,7 @@ trait ArbitraryEvent extends ArbitraryTime {
     Year -> Long.MaxValue 
   )
 
-  def timeSlice(l: List[Event]) = {
+  def timeSlice(l: List[Event]) : (List[Event], Instant, Instant, Periodicity) = {
     val timestamps = l.map(_.tags.collect{ case Tag("timestamp", TimeReference(_, time)) => time }.head)
     val sortedEvents = l.zip(timestamps).sortBy(_._2)
     val sliceLength = sortedEvents.size / 2

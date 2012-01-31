@@ -13,10 +13,16 @@ import AnalyticsService._
 import AggregationEngine._
 import AnalyticsServiceSerialization._
 import com.reportgrid.ct.Mult.MDouble._
+import com.weiglewilczek.slf4s.Logging
 
 import scalaz.Scalaz._
 import scalaz.Success
 import scalaz.Validation
+
+trait FutureContent[T] {
+  def futureContent(request : HttpRequest[Future[T]]) = 
+    request.content.map(_.map(Some[T](_))).getOrElse(Future.sync[Option[T]](None))
+}
 
 class ExplorePathService[A](aggregationEngine: AggregationEngine) 
 extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]] {
@@ -48,17 +54,22 @@ extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JVal
   val metadata = None
 }
 
-class VariableChildCountService[A](aggregationEngine: AggregationEngine) 
-extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
-  val service = (_: HttpRequest[A]) => Success(
+class VariableChildCountService(val aggregationEngine: AggregationEngine) 
+extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
+with FutureContent[JValue]
+with ChildLocationsService {
+  val service = (request: HttpRequest[Future[JValue]]) => Success(
     (token: Token, path: Path, variable: Variable) => {
       if (token.permissions.explore) {
-        aggregationEngine.getVariableChildren(token, path, variable).map(_.map{ info => (info._1.child, info._2) }.serialize.ok)
-//
-//        aggregationEngine.getVariableChildren(token, path, variable).map {
-//          children => JArray(children.map{ case (hasChild, count) => JArray(List(hasChild.child.serialize, count.serialize)) }).ok
-//          null
-//        }
+        futureContent(request).flatMap {
+          requestContent => {
+            val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, requestContent))
+               
+            withChildLocations(token, path, terms, request.parameters) { 
+              aggregationEngine.getVariableChildren(token, path, variable, _).map(_.map{ info => (info._1.child, info._2) }.serialize)
+            }.map(_.ok)
+          }
+        }
       } else {
         Future.sync(HttpResponse[JValue](Unauthorized, content = Some("The specified token does not permit exploration of variable children.")))
       }
@@ -68,19 +79,35 @@ extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JVal
   val metadata = None
 }
 
-class ExploreValuesService[A](aggregationEngine: AggregationEngine) 
-extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
-  val service = (_: HttpRequest[A]) => Success(
+class ExploreValuesService(val aggregationEngine: AggregationEngine, limit: Int) 
+extends FutureContent[JValue]
+with ChildLocationsService with Logging {
+  val service = (request: HttpRequest[Future[JValue]]) => //Success(
     (token: Token, path: Path, variable: Variable) => {
-      if (token.permissions.explore) {
-        aggregationEngine.getValues(token, path, variable).map(_.toList.serialize.ok)
+      val result : Future[HttpResponse[JValue]] = if (token.permissions.explore) {
+        futureContent(request).flatMap {
+          requestContent => {
+            val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, requestContent))
+               
+            withChildLocations(token, path, terms, request.parameters) { 
+              newTerms => {
+                if (limit == 0) { // unlimited
+                  aggregationEngine.getValues(token, path, variable, newTerms).map(_.serialize)
+                } else if (limit > 0) { // topN 
+                  aggregationEngine.getValuesTop(token, path, variable, limit, newTerms).map(_.serialize)
+                } else { // bottomN
+                  aggregationEngine.getValuesBottom(token, path, variable, -limit, newTerms).map(_.serialize)
+                }
+              }
+            }.map(_.ok)
+          }
+        }
       } else {
         Future.sync(HttpResponse[JValue](Unauthorized, content = Some("The specified token does not permit exploration of the virtual filesystem.")))
       }
+      result
     }
-  )
-
-  val metadata = None
+  //)
 }
 
 class ExploreTagsService[A](aggregationEngine: AggregationEngine) 
@@ -115,7 +142,7 @@ extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JVal
 trait ChildLocationsService {
   def aggregationEngine: AggregationEngine
 
-  def withChildLocations(token: Token, path: Path, terms: List[TagTerm], parameters: Map[Symbol, String])(f: List[TagTerm] => Future[JValue]) = {
+  def withChildLocations(token: Token, path: Path, terms: List[TagTerm], parameters: Map[Symbol, String])(f: List[TagTerm] => Future[JValue]) : Future[JValue] = {
     parameters.get('use_tag_children) flatMap { tagName =>
       terms collectFirst { 
         case term @ HierarchyLocationTerm(`tagName`, location) =>
@@ -126,7 +153,7 @@ trait ChildLocationsService {
               f(HierarchyLocationTerm(tagName, childLoc) :: remainingTerms).map(JField(childLoc.path.path, _))
             }
 
-            Future(fields.toSeq: _*).map(JObject(_))
+            Future(fields.toSeq: _*).map(JObject(_).asInstanceOf[JValue])
           }
       }
     } getOrElse {
@@ -287,7 +314,7 @@ with ChildLocationsService {
 
 class IntersectionService(val aggregationEngine: AggregationEngine)
 extends CustomHttpService[Future[JValue], Token => Future[HttpResponse[JValue]]] 
-with ChildLocationsService {
+with ChildLocationsService with Logging {
   import Extractor._
   val service = (request: HttpRequest[Future[JValue]]) => Success(
     (token: Token) => {
@@ -301,6 +328,7 @@ with ChildLocationsService {
             val responseContent = select match {
               case Count => 
                 val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
+                logger.trace("Intersection count terms = " + terms)
                 withChildLocations(token, path, terms, request.parameters) {
                   aggregationEngine.getIntersectionCount(token, path, where, _)
                   .map(serializeIntersectionResult[CountType])
@@ -308,6 +336,7 @@ with ChildLocationsService {
                 
               case Series(periodicity) =>
                 val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, Some(content)))
+                logger.trace("Intersection series terms = " + terms)
                 withChildLocations(token, path, terms, request.parameters) {
                   aggregationEngine.getIntersectionSeries(token, path, where, _)
                   .map(_.map(transformTimeSeries[CountType](request, periodicity).second))
@@ -327,6 +356,33 @@ with ChildLocationsService {
   )
 
   val metadata = None
+}
+
+object HistogramService {
+  def childLocator(engine : AggregationEngine) = new ChildLocationsService { val aggregationEngine = engine }
+
+  val getHistogram = (request: HttpRequest[Future[JValue]], aggregationEngine : AggregationEngine, token: Token, path: Path, variable: Variable, limit: Int) => {
+    val futureContent: Future[Option[JValue]] = request.content.map(_.map[Option[JValue]](Some(_)))
+    .getOrElse(Future.sync[Option[JValue]](None))
+
+    futureContent flatMap { 
+      requestContent => {
+        val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, requestContent))
+                           
+        childLocator(aggregationEngine).withChildLocations(token, path, terms, request.parameters) { 
+          newTerms => {
+            if (limit == 0) { // unlimited
+              aggregationEngine.getHistogram(token, path, variable, newTerms).map(_.serialize)
+            } else if (limit > 0) { // topN 
+              aggregationEngine.getHistogramTop(token, path, variable, limit, newTerms).map(_.serialize)
+            } else { // bottomN
+              aggregationEngine.getHistogramBottom(token, path, variable, -limit, newTerms).map(_.serialize)
+            }
+          }
+        }.map(_.ok)
+      }
+    }
+  }
 }
 
 

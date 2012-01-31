@@ -23,6 +23,8 @@ sealed class Period private (val periodicity: Periodicity, val start: Instant) e
 
   lazy val end = periodicity.increment(start)
 
+  lazy val timeSpan = TimeSpan(start, end)
+
   /** The next period of this periodicity.
     */
   def next: Period = Period(periodicity, periodicity.increment(start))

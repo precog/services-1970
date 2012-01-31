@@ -234,6 +234,34 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       }
     }
 
+    "retrieve variable children limited by time ranges" in sampleData {
+      sampleEvents => {
+        val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
+        
+        // Select the middle 50% of the range
+        val rangeDelta = maxDate.getMillis - minDate.getMillis
+        val (rangeStart,rangeEnd) = (minDate.plus((rangeDelta * 0.25).toLong), minDate.plus((rangeDelta * 0.75).toLong))
+        val rangedEvents = events.filter( event => event.timestamp.map(ts => ts.compareTo(rangeStart) >= 0 && ts.compareTo(rangeEnd) < 0).getOrElse(false))
+
+        rangedEvents must not be empty
+
+        val expectedChildren = rangedEvents.foldLeft(Map.empty[String, Set[String]]) {
+          case (m, Event(eventName, EventData(JObject(fields)), _)) => 
+            val properties = fields.map("." + _.name)
+            m + (eventName -> (m.getOrElse(eventName, Set.empty[String]) ++ properties))
+        }
+
+        val terms = List(SpanTerm(AggregationEngine.timeSeriesEncoding, TimeSpan(rangeStart,rangeEnd)))
+
+        forall(expectedChildren) { 
+          case (eventName, children) => 
+            engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName)), terms).map(_.map(_._1.child.toString)) must whenDelivered {
+              haveTheSameElementsAs(children)
+            }
+        } 
+      }
+    }
+
     "retrieve path tags" in sampleData { sampleEvents =>
       //skip("disabled")
       val children: Set[String] = sampleEvents.flatMap({ case Event(_, _, tags) => tags.map(_.name) })(collection.breakOut)
@@ -298,7 +326,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
       forall(values) {
         case ((eventName, path), values) => 
-          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path)) must whenDelivered {
+          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path), Nil) must whenDelivered {
             haveTheSameElementsAs(values)
           }
       }
@@ -316,7 +344,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       forall(arrayValues) {
         case ((eventName, path), values) =>
           logger.debug("Querying values for " + Variable(JPath(eventName) \ path))
-          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path)).deliverTo { t => logger.debug("Got : " + t) } must whenDelivered {
+          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path), Nil) must whenDelivered {
             haveTheSameElementsAs(values)
           }
       }
@@ -332,8 +360,121 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (map, _) => map
       }
 
-      engine.getHistogramTop(TestToken, "/test", Variable(".tweeted.retweet"), 10) must whenDelivered {
+      engine.getHistogramTop(TestToken, "/test", Variable(".tweeted.retweet"), 10, Nil) must whenDelivered {
         haveTheSameElementsAs(retweetCounts)
+      }
+    }
+
+    "retrieve histograms limited by time ranges" in sampleData { 
+      sampleEvents => {
+        val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
+        
+        // Select the middle 50% of the range
+        val rangeDelta = maxDate.getMillis - minDate.getMillis
+        val (rangeStart,rangeEnd) = (minDate.plus((rangeDelta * 0.25).toLong), minDate.plus((rangeDelta * 0.75).toLong))
+        val rangedEvents = events.filter( event => event.timestamp.map(ts => ts.compareTo(rangeStart) >= 0 && ts.compareTo(rangeEnd) < 0).getOrElse(false))
+
+        rangedEvents must not be empty
+
+        val retweetCounts = rangedEvents.foldLeft(Map.empty[JValue,Long]) {
+          case (map, Event("tweeted", data, _)) => 
+            val key = data.value(".retweet")
+            map + (key -> map.get(key).map(_ + 1).getOrElse(1))
+          
+          case (map, _) => map
+        }
+
+        val queryTerms = List[TagTerm](
+          IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(rangeStart, rangeEnd))
+        )
+
+        engine.getHistogram(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered {
+          haveTheSameElementsAs(retweetCounts)
+        }
+      }                                       
+    }
+
+    "retrieve histograms limited by location" in sampleData { 
+      sampleEvents => {
+        val coloradoEvents = sampleEvents.filter {
+          event => event.location.map(_.exists {
+            case Hierarchy.NamedLocation("state", path) => path == Path("usa/colorado")
+            case _ => false
+          }).getOrElse(false)
+        }
+
+        coloradoEvents must not be empty
+          
+        val retweetCounts = coloradoEvents.foldLeft(Map.empty[JValue,Long]) {
+          case (map, Event("tweeted", data, _)) => 
+            val key = data.value(".retweet")
+            map + (key -> map.get(key).map(_ + 1).getOrElse(1))
+          
+          case (map, _) => map
+        }
+        
+
+        val queryTerms = List[TagTerm](
+          HierarchyLocationTerm("location", Hierarchy.NamedLocation("state", com.reportgrid.analytics.Path("usa/colorado")))
+        )
+
+        engine.getHistogram(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered {
+          haveTheSameElementsAs(retweetCounts)
+        }
+      }
+    }
+
+    "retrieve values limited by time ranges" in sampleData {
+      sampleEvents => {
+        val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
+        
+        // Select the middle 50% of the range
+        val rangeDelta = maxDate.getMillis - minDate.getMillis
+        val (rangeStart,rangeEnd) = (minDate.plus((rangeDelta * 0.25).toLong), minDate.plus((rangeDelta * 0.75).toLong))
+        val rangedEvents = events.filter( event => event.timestamp.map(ts => ts.compareTo(rangeStart) >= 0 && ts.compareTo(rangeEnd) < 0).getOrElse(false))
+
+        rangedEvents must not be empty
+
+        val retweetValues = rangedEvents.foldLeft(Set.empty[JValue]) {
+          case (set, Event("tweeted", data, _)) => 
+            set + data.value(".retweet")
+          case (set, _) => set
+        }
+
+        val queryTerms = List[TagTerm](
+          IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(rangeStart, rangeEnd))
+        )
+
+        engine.getValues(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered {
+          haveTheSameElementsAs(retweetValues)
+        }
+      }
+    }
+
+    "retrieve values limited by location" in sampleData {
+      sampleEvents => {
+        val coloradoEvents = sampleEvents.filter {
+          event => event.location.map(_.exists {
+            case Hierarchy.NamedLocation("state", path) => path == Path("usa/colorado")
+            case _ => false
+          }).getOrElse(false)
+        }
+
+        coloradoEvents must not be empty
+          
+        val retweetValues = coloradoEvents.foldLeft(Set.empty[JValue]) {
+          case (set, Event("tweeted", data, _)) => 
+            set + data.value(".retweet")
+          case (set, _) => set
+        }
+
+        val queryTerms = List[TagTerm](
+          HierarchyLocationTerm("location", Hierarchy.NamedLocation("state", com.reportgrid.analytics.Path("usa/colorado")))
+        )
+
+        engine.getValues(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered {
+          haveTheSameElementsAs(retweetValues)
+        }
       }
     }
 
