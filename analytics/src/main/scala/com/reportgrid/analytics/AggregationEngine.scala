@@ -564,8 +564,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     val tagsFilter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
 
     val anonLocationPrefixes : Seq[String] = tagTerms.collect {
-      // TODO: unhack dropping leading dots
-      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => path.path.path.replaceAll("^\\.","")
+      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => path.path
     }
 
     // We always need path and rollup and possibly need timestamp and/or location if we have proper tags
