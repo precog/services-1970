@@ -24,12 +24,22 @@ trait FutureContent[T] {
     request.content.map(_.map(Some[T](_))).getOrElse(Future.sync[Option[T]](None))
 }
 
+trait ColumnHeaders {
+  class Columnar[A](response : HttpResponse[A]) { 
+    def withColumns(columns: String*) : HttpResponse[A] = 
+      response.copy(headers = response.headers + ("Reportgrid-Columns" -> columns.mkString(",")))
+  }
+
+  implicit def responseToColumnar[A](r : HttpResponse[A]) = new Columnar(r)
+}
+
 class ExplorePathService[A](aggregationEngine: AggregationEngine) 
-extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]] {
+extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]]
+with ColumnHeaders {
   val service = (_: HttpRequest[A]) => Success(
     (token: Token, path: Path) => {
       if (token.permissions.explore) {
-        aggregationEngine.getPathChildren(token, path).map(_.serialize.ok)
+        aggregationEngine.getPathChildren(token, path).map(_.serialize.ok.withColumns("path"))
       } else {
         Future.sync(HttpResponse[JValue](Unauthorized, content = Some("The specified token does not permit exploration of the virtual filesystem.")))
       }
@@ -40,11 +50,12 @@ extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]] {
 }
 
 class ExploreVariableService[A](aggregationEngine: AggregationEngine) 
-extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JValue]]] {
+extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
+with ColumnHeaders {
   val service = (_: HttpRequest[A]) => Success(
     (token: Token, path: Path, variable: Variable) => {
       if (token.permissions.explore) {
-        aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_._1.child).serialize.ok)
+        aggregationEngine.getVariableChildren(token, path, variable).map(_.map(_._1.child).serialize.ok.withColumns("property"))
       } else {
         Future.sync(HttpResponse[JValue](Unauthorized, content = Some("The specified token does not permit exploration of variable children.")))
       }
@@ -57,6 +68,7 @@ extends CustomHttpService[A, (Token, Path, Variable) => Future[HttpResponse[JVal
 class VariableChildCountService(val aggregationEngine: AggregationEngine) 
 extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
 with FutureContent[JValue]
+with ColumnHeaders
 with ChildLocationsService {
   val service = (request: HttpRequest[Future[JValue]]) => Success(
     (token: Token, path: Path, variable: Variable) => {
@@ -67,7 +79,7 @@ with ChildLocationsService {
                
             withChildLocations(token, path, terms, request.parameters) { 
               aggregationEngine.getVariableChildren(token, path, variable, _).map(_.map{ info => (info._1.child, info._2) }.serialize)
-            }.map(_.ok)
+            }.map(_.ok.withColumns("property", "count"))
           }
         }
       } else {
@@ -81,6 +93,7 @@ with ChildLocationsService {
 
 class ExploreValuesService(val aggregationEngine: AggregationEngine, limit: Int) 
 extends FutureContent[JValue]
+with ColumnHeaders
 with ChildLocationsService with Logging {
   val service = (request: HttpRequest[Future[JValue]]) => //Success(
     (token: Token, path: Path, variable: Variable) => {
@@ -99,7 +112,7 @@ with ChildLocationsService with Logging {
                   aggregationEngine.getValuesBottom(token, path, variable, -limit, newTerms).map(_.serialize)
                 }
               }
-            }.map(_.ok)
+            }.map(_.ok.withColumns(variable.name.toString))
           }
         }
       } else {
@@ -111,10 +124,11 @@ with ChildLocationsService with Logging {
 }
 
 class ExploreTagsService[A](aggregationEngine: AggregationEngine) 
-extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]] {
+extends CustomHttpService[A, (Token, Path) => Future[HttpResponse[JValue]]] 
+with ColumnHeaders {
   val service = (_: HttpRequest[A]) => Success(
     (token: Token, path: Path) => {
-      aggregationEngine.getPathTags(token, path).map(_.serialize.ok)
+      aggregationEngine.getPathTags(token, path).map(_.serialize.ok.withColumns("tag"))
     }
   )
 
@@ -164,6 +178,7 @@ trait ChildLocationsService {
 
 class VariableCountService(val aggregationEngine: AggregationEngine)
 extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
+with ColumnHeaders
 with ChildLocationsService {
   val service = (request: HttpRequest[Future[JValue]]) => Success(
     (token: Token, path: Path, variable: Variable) => {
@@ -177,7 +192,7 @@ with ChildLocationsService {
           aggregationEngine.getVariableCount(token, path, variable, _).map(_.serialize)
         }
 
-        responseContent.map(_.ok)
+        responseContent.map(_.ok.withColumns(variable.name.toString))
       }
     }
   )
@@ -187,6 +202,7 @@ with ChildLocationsService {
 
 class VariableSeriesService[T: Decomposer : AbelianGroup](val aggregationEngine: AggregationEngine, f: ValueStats => T) 
 extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
+with ColumnHeaders
 with ChildLocationsService {
   //val service: HttpRequest[Future[JValue]] => Validation[NotServed,(Token, Path, Variable) => Future[HttpResponse[JValue]]] = 
   val service = (request: HttpRequest[Future[JValue]]) => {
@@ -203,7 +219,7 @@ with ChildLocationsService {
             .map(_.map(f.second).serialize)
           }
 
-          responseContent.map(_.ok)
+          responseContent.map(_.ok.withColumns("timestamp", "stat"))
         }
       }
     }
@@ -214,6 +230,7 @@ with ChildLocationsService {
 
 class ValueCountService(val aggregationEngine: AggregationEngine) 
 extends CustomHttpService[Future[JValue], (JValue) => (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
+with ColumnHeaders
 with ChildLocationsService {
   val service = (request: HttpRequest[Future[JValue]]) => Success(
     (value: JValue) => (token: Token, path: Path, variable: Variable) => {
@@ -227,7 +244,7 @@ with ChildLocationsService {
           .map(_.serialize)
         }
 
-        responseContent.map(_.ok)
+        responseContent.map(_.ok.withColumns("count"))
       }
     }
   )
@@ -237,6 +254,7 @@ with ChildLocationsService {
 
 class ValueSeriesService(val aggregationEngine: AggregationEngine) 
 extends CustomHttpService[Future[JValue], (JValue) => (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
+with ColumnHeaders
 with ChildLocationsService {
   val service = (request: HttpRequest[Future[JValue]]) => {
     request.parameters.get('periodicity).flatMap(Periodicity.byName)
@@ -252,7 +270,7 @@ with ChildLocationsService {
             .map(_.serialize)
           }
           
-          responseContent.map(_.ok)
+          responseContent.map(_.ok.withColumns("timestamp","value"))
         }
       }
     }
@@ -263,6 +281,7 @@ with ChildLocationsService {
 
 class SearchService(val aggregationEngine: AggregationEngine)
 extends CustomHttpService[Future[JValue], Token => Future[HttpResponse[JValue]]] 
+with ColumnHeaders
 with ChildLocationsService {
   import Extractor._
   val service = (request: HttpRequest[Future[JValue]]) => Success(
@@ -274,31 +293,31 @@ with ChildLocationsService {
                                 (content \ "where").validated[Set[HasValue]].map(JointObservation(_))
 
           queryComponents.apply { case (select, path, observation) => 
-            val responseContent = select match {
+            val (responseContent,columnNames) = select match {
               case Count => 
                 val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
-                withChildLocations(token, path, terms, request.parameters) {
+                (withChildLocations(token, path, terms, request.parameters) {
                   aggregationEngine.getObservationCount(token, path, observation, _)
                   .map(_.serialize)
-                }
+                }, List("count"))
 
               case Series(periodicity) => 
                 val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, Some(content)))
-                withChildLocations(token, path, terms, request.parameters) {
+                (withChildLocations(token, path, terms, request.parameters) {
                   aggregationEngine.getObservationSeries(token, path, observation, _)
                   .map(transformTimeSeries[CountType](request, periodicity))
                   .map(_.serialize)
-                }
+                }, List("timestamp", "count"))
 
               case Related => 
                 val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
-                withChildLocations(token, path, terms, request.parameters) {
+                (withChildLocations(token, path, terms, request.parameters) {
                   aggregationEngine.findRelatedInfiniteValues(token, path, observation, _)
                   .map(_.toList.serialize)
-                }
+                }, List("property"))
             }
 
-            responseContent.map(_.ok)
+            responseContent.map(_.ok.withColumns(columnNames: _*))
           } ||| { 
             errors => Future.sync(HttpResponse[JValue](BadRequest, content = Some(errors.message.serialize))) 
           }
@@ -313,7 +332,8 @@ with ChildLocationsService {
 }
 
 class IntersectionService(val aggregationEngine: AggregationEngine)
-extends CustomHttpService[Future[JValue], Token => Future[HttpResponse[JValue]]] 
+extends CustomHttpService[Future[JValue], Token => Future[HttpResponse[JValue]]]
+with ColumnHeaders
 with ChildLocationsService with Logging {
   import Extractor._
   val service = (request: HttpRequest[Future[JValue]]) => Success(
@@ -325,26 +345,26 @@ with ChildLocationsService with Logging {
                                 (content \ "properties").validated[List[VariableDescriptor]]
 
           queryComponents.apply { case (select, path, where) => 
-            val responseContent = select match {
+            val (responseContent, columnNames) = select match {
               case Count => 
                 val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
                 logger.trace("Intersection count terms = " + terms)
-                withChildLocations(token, path, terms, request.parameters) {
+                (withChildLocations(token, path, terms, request.parameters) {
                   aggregationEngine.getIntersectionCount(token, path, where, _)
                   .map(serializeIntersectionResult[CountType])
-                }
+                }, List("count"))
                 
               case Series(periodicity) =>
                 val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, Some(content)))
                 logger.trace("Intersection series terms = " + terms)
-                withChildLocations(token, path, terms, request.parameters) {
+                (withChildLocations(token, path, terms, request.parameters) {
                   aggregationEngine.getIntersectionSeries(token, path, where, _)
                   .map(_.map(transformTimeSeries[CountType](request, periodicity).second))
                   .map(serializeIntersectionResult[ResultSet[JObject, CountType]])
-                }
+                }, List("timestamp", "count"))
             }
 
-            responseContent.map(_.ok)
+            responseContent.map(_.ok.withColumns(columnNames: _*))
           } ||| { 
             errors => Future.sync(HttpResponse[JValue](BadRequest, content = Some(errors.message.serialize))) 
           }
@@ -358,7 +378,7 @@ with ChildLocationsService with Logging {
   val metadata = None
 }
 
-object HistogramService {
+object HistogramService extends ColumnHeaders {
   def childLocator(engine : AggregationEngine) = new ChildLocationsService { val aggregationEngine = engine }
 
   val getHistogram = (request: HttpRequest[Future[JValue]], aggregationEngine : AggregationEngine, token: Token, path: Path, variable: Variable, limit: Int) => {
@@ -379,7 +399,7 @@ object HistogramService {
               aggregationEngine.getHistogramBottom(token, path, variable, -limit, newTerms).map(_.serialize)
             }
           }
-        }.map(_.ok)
+        }.map(_.ok.withColumns("value", "count"))
       }
     }
   }
