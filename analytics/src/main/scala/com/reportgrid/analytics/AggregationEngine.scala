@@ -237,7 +237,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   def getRawVariableChildren(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[List[(HasChild, Long)]] = {
-    getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), tagTerms, getAllFields = true).map { _.foldLeft(Map.empty[HasChild, Long]) {
+    getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), tagTerms, Left(true)).map { _.foldLeft(Map.empty[HasChild, Long]) {
       case (acc, event) => {
         val varPath : JPath = JPath(".event.data") \ variable.name.tail
         (varPath.extract(event)) match {
@@ -356,66 +356,92 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
   def getVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, ValueStats]] = {
-    import ValueStats.Ops._
-
-    // TODO: rethink anon location handling (performance nightmare)
-
-    // Break out terms into timespan and locations (if any) 
-    val (intervalOpt,locations) = tagTerms.foldLeft(Pair[Option[IntervalTerm], List[HierarchyLocationTerm]](None,Nil)) {
-      case ((_,locs),interval @ IntervalTerm(encoding, periodicity, TimeSpan(start,end))) => (Some(interval),locs)
-      case ((interval,locs), loc @ HierarchyLocationTerm(name, location)) => (interval, loc :: locs)
+    // Break out terms into timespan, named locations, and anonymous location prefixes (if any) 
+    val (intervalOpt,locations,anonPrefixes) = tagTerms.foldLeft(Tuple3[Option[IntervalTerm], List[HierarchyLocationTerm], List[String]](None,Nil,Nil)) {
+      case ((_,locs,prefixes),interval @ IntervalTerm(encoding, periodicity, TimeSpan(start,end))) => (Some(interval), locs, prefixes)
+      case ((interval,locs,prefixes), loc @ HierarchyLocationTerm(name, Hierarchy.NamedLocation(_,_))) => (interval, loc :: locs, prefixes)
+      case ((interval,locs,prefixes), loc @ HierarchyLocationTerm(name, Hierarchy.AnonLocation(path))) => (interval, locs, path.path :: prefixes)
       case (acc,_) => acc
     }
 
-    // Permute the terms
-    val queryParams : Option[Stream[(JObject,Seq[TagTerm])]] = intervalOpt.map { interval => interval.periods.flatMap {
-      period => {
-        locations match {
-          case Nil => List((JObject(List(JField("timestamp", period.start.serialize))), Seq(SpanTerm(interval.encoding, period.timeSpan))))
-          case _ => {
-            locations.map { 
-              loc => (JObject(List(JField("timestamp", period.start.serialize), JField("location", loc.location.path))),
-                      Seq[TagTerm](SpanTerm(interval.encoding, period.timeSpan), loc))
-            }
+    val varPath = JPath(".event.data") \ variable.name.tail
+
+    def aggregateEvents(allEvents: Iterator[JObject]) : ValueStats = {
+      val startTime = System.currentTimeMillis
+      var count = 0
+      var sum = 0.0
+      var sumsq = 0.0
+      var numeric = false
+
+      allEvents.foreach {
+        event => {
+          count = count + 1
+          val eventValueStats = varPath.extract(event) match {
+            case JInt(v)    => val vd = v.toDouble; numeric = true; sum = sum + vd; sumsq = sumsq + (vd * vd)
+            case JDouble(d) => numeric = true; sum = sum + d; sumsq = sumsq + (d * d)
+            case _          => // noop
           }
         }
       }
-    }}
 
-    val varPath = JPath(".event.data") \ variable.name.tail
-    
-    queryParams.map { params =>
-      val results : Stream[Future[(JObject,ValueStats)]] = params.map {
-        case (tagVals, tags) => {
-          val stats : Future[ValueStats] = getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), tags).map { 
-            allEvents => {
-              val startTime = System.currentTimeMillis
-              var count = 0
-              var sum = 0.0
-              var sumsq = 0.0
-              var numeric = false
+      if (numeric) ValueStats(count, Some(sum), Some(sumsq)) else ValueStats(count, None, None)
+    }
 
-              allEvents.foreach {
-                event => {
-                  count = count + 1
-                  val eventValueStats = varPath.extract(event) match {
-                    case JInt(v)    => val vd = v.toDouble; numeric = true; sum = sum + vd; sumsq = sumsq + (vd * vd)
-                    case JDouble(d) => numeric = true; sum = sum + d; sumsq = sumsq + (d * d)
-                    case _          => // noop
+    // Run the query over the interval given
+    val results: Option[Future[ResultSet[JObject,ValueStats]]] = intervalOpt.map { interval => Future(interval.periods.map {
+      period => {
+        // If we have locations or prefixes, do location-based queries
+        if (! (locations.isEmpty && anonPrefixes.isEmpty)) {
+          // Named locations can be queried directly
+          val namedLocResults: List[Future[List[(JObject,ValueStats)]]] = locations.map {
+            case loc => {
+              getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), Seq[TagTerm](SpanTerm(interval.encoding, period.timeSpan), loc)).map {
+                events => List((JObject(List(JField("timestamp", period.start.serialize), JField("location", loc.location.path))),
+                                aggregateEvents(events.iterator)))
+              }
+            }
+          }
+
+          /* Because we can't filter on anonymous locations (they're free-form in the DB), we have to
+           * just grab all events for the given interval and then group them app-side */
+          val anonLocResults: Future[List[(JObject, ValueStats)]] = {
+            // Make sure we retrieve location as part of the fields
+            getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), Seq(SpanTerm(interval.encoding, period.timeSpan)), Right(List(JPath(".tags.#location")))).map {
+              rawEvents => {
+                // Compute statistics for any of the anon location prefixes that match our given events
+                val prefixResults = rawEvents.foldLeft(Map.empty[String,List[JObject]]) {
+                  case (acc, event) => locationValueMatch(anonPrefixes, event \ "tags" \ "#location") match {
+                    case Some(matchedPrefix) => acc + (matchedPrefix -> acc.get(matchedPrefix).map(event :: _).getOrElse(List(event)))
+                    case None                => acc
+                  }
+                }
+
+                /* Now we determine stats for each of our prefixes based on the map. Non-existent prefixes
+                 * Are set to zero so that we maintain a record for each period whether or not events match
+                 * that period. */
+                anonPrefixes.map {
+                  prefix => {
+                    val events = prefixResults.get(prefix).getOrElse(List())
+                    val result = (JObject(List(JField("timestamp", period.start.serialize), JField("location", JString(prefix)))),
+                                  aggregateEvents(events.iterator))
+                    result
                   }
                 }
               }
-
-              logger.trace("Completed variable series aggregation in " + (System.currentTimeMillis - startTime) + "ms")
-              if (numeric) ValueStats(count, Some(sum), Some(sumsq)) else ValueStats(count, None, None)
             }
           }
-          stats.map((tagVals, _))
+
+          Future((anonLocResults :: namedLocResults): _*).map(_.flatten)
+        } else {
+          // No location tags, so we'll just aggregate all events for this period
+          getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), Seq(SpanTerm(interval.encoding, period.timeSpan))).map {
+            events =>List((JObject(List(JField("timestamp", period.start.serialize))), aggregateEvents(events.iterator)))
+          }
         }
       }
-      val futureResults : Future[List[(JObject,ValueStats)]] = Future(results : _*)
-      futureResults.map(_.asInstanceOf[ResultSet[JObject,ValueStats]])
-    }.getOrElse(sys.error("Variable series requires a time span"))
+    }: _*).map{ _.flatten.sortBy(_._1)(JObjectOrdering) }}
+
+    results.getOrElse(sys.error("Variable series requires a time span"))
   }
 
   /** Retrieves a count of the specified observed state over the given time period */
@@ -468,7 +494,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       logger.trace("Querying mongo for intersection events with obs = " + observations)
       val queryStart = System.currentTimeMillis()
 
-      getRawEvents(token, path, observations, tagTerms, getEventName = true) map { events =>
+      getRawEvents(token, path, observations, tagTerms, Right(List(JPath(".event.name")))) map { events =>
           val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
 
           logger.trace("Got %d results for intersection after %d ms".format(eventsByName.map(_._2.size).sum, System.currentTimeMillis() - queryStart))
@@ -521,7 +547,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       case _ => Nil
     }
 
-    getRawEvents(token, path, observation, tagTerms, true) map { 
+    getRawEvents(token, path, observation, tagTerms, Left(true)) map { 
       _.flatMap {
         case JObject(fields) => findInfiniteValues(fields, JPath.Identity)
         case _ => Nil
@@ -554,7 +580,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     tagsFilters.reduceLeftOption(_ & _)
   }
 
-  def getRawEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm], getAllFields : Boolean = false, getEventName : Boolean = false) : Future[MongoSelectQuery#QueryResult] = {
+  def getRawEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm], extraFields : Either[Boolean,List[JPath]] = Left(false)) : Future[MongoSelectQuery#QueryResult] = {
     // the base filter is using a prefix-based match strategy to catch the path. This has the implication that paths are rolled up 
     // by default, which may not be exactly what we want. Hence, we later have to filter the returned results for only those where 
     // the rollup depth is greater than or equal to the difference in path length.
@@ -597,16 +623,11 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
          }})
     }
 
-    val fieldsToRetrieve = 
-      if (getAllFields) {
-        None 
-      } else {
-        if (getEventName) {
-          Some(JPath(".event.name") :: neededFields)
-        } else {
-          Some(neededFields)
-        }
-      }
+    val fieldsToRetrieve = extraFields match {
+      case Left(true)    => None // This means all fields
+      case Left(false)   => Some(neededFields)
+      case Right(extras) => Some((extras ::: neededFields).distinct)
+    }
 
     retrieveEventsFor(filter, fieldsToRetrieve).map {
       _.filter { jv => 
@@ -615,21 +636,24 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         //and the queried path must be within range of the specified rollup
         val rollupOK = eventPath == path || (jv \? "rollup").flatMap(_.validated[Int].toOption).exists(r => (eventPath - path).map(_.length).exists(_ <= r))
 
-        // The location of the event must either match the anonLocationPrefixes, or contain a field whose value matches
-        def locationValueMatches(locVal : JValue) : Boolean = locVal match {
-          case JString(eventLoc)       => anonLocationPrefixes.exists(eventLoc.startsWith)
-          case JField(_, value)        => locationValueMatches(value)
-          case JArray(values)          => values.exists(locationValueMatches)
-          case JObject(eventLocFields) => eventLocFields.exists(locationValueMatches)
-          case _                       => false
-        }   
-
-        val locationOK = anonLocationPrefixes.size == 0 || locationValueMatches(jv \ "tags" \ "#location")
+        val locationOK = anonLocationPrefixes.size == 0 || locationValueMatch(anonLocationPrefixes, jv \ "tags" \ "#location").isDefined
 
         rollupOK && locationOK
       }
     }
   }
+
+  // The location of the event must either match the anonLocationPrefixes, or contain a field whose value matches
+  def locationValueMatch(prefixes: Seq[String], locVal : JValue) : Option[String] = {
+    locVal match {
+      case JString(eventLoc)       => prefixes.find(eventLoc.startsWith)
+      case JField(_, value)        => locationValueMatch(prefixes, value)
+      case JArray(values)          => values.flatMap(locationValueMatch(prefixes,_)).headOption
+      case JObject(eventLocFields) => eventLocFields.flatMap(locationValueMatch(prefixes,_)).headOption
+      case _                       => None
+    }   
+  }
+
 
   private def searchQueriableExpansion[T](span: TimeSpan, f: (IntervalTerm) => Future[T]): Future[List[T]] = {
     import TimeSpan._

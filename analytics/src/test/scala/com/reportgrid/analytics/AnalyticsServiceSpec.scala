@@ -870,7 +870,7 @@ class StorageReportingAnalyticsServiceSpec extends TestAnalyticsService with Arb
           }
         }
       }
-    }.pendingUntilFixed("Need a refactor on storage reporting")
+    }.pendingUntilFixed("!!! Need a refactor on storage reporting")
 
     "multiple tracks should create a matching number of counts" in sampleData { sampleEvents =>
       (jsonTestService.get[JValue]("/vfs/test/.track/count") must whenDelivered {
@@ -894,7 +894,7 @@ class StorageReportingAnalyticsServiceSpec extends TestAnalyticsService with Arb
           }
         }
       }
-    }.pendingUntilFixed("Need a refactor on storage reporting")
+    }.pendingUntilFixed("!!! Need a refactor on storage reporting")
 
     def timeBoundedUsageSums(tokenId: String, path: String, start: DateMidnight, end: DateMidnight): Future[HttpResponse[JValue]] = {
       val client = service.contentType[JValue](application/(MimeTypes.json))
@@ -928,7 +928,7 @@ class StorageReportingAnalyticsServiceSpec extends TestAnalyticsService with Arb
           }
         }
       }
-    }.pendingUntilFixed("Need a refactor on storage reporting")
+    }.pendingUntilFixed("!!! Need a refactor on storage reporting")
     "time bounded histogram excludes expected counts" in { 
       skipped("This test fails to fail on missing data")
       val today = new DateTime(DateTimeZone.UTC).toDateMidnight
