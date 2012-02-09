@@ -519,6 +519,25 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       }
     }
 
+    "retrieve a time series of means of values of a variable over eternity" in sampleData { sampleEvents =>
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, Eternity, TimeSpan(new Instant(42), new Instant))
+      )
+
+      forall(expectedMeans(sampleEvents, "recipientCount", keysf(Eternity))) {
+        case (eventName, means) =>
+          val expected: Map[String, Double] = means.map{ case (k, v) => (k(0), v) }.toMap
+
+          engine.getVariableSeries(TestToken, "/test", Variable(JPath(eventName) \ "recipientCount"), queryTerms) must whenDelivered {
+            beLike { 
+              case result => 
+                val remapped: Map[String, Double] = result.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant].toString -> _) }.toMap 
+                remapped must_== expected
+            }
+          }
+      }
+    }
+
     "retrieve a time series of means of values of a variable" in sampleData { sampleEvents =>
       //skip("disabled")
       val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)

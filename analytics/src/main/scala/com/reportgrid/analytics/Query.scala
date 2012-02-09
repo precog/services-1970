@@ -48,8 +48,10 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   }
 
   // Compute the periods that this interval represents
-  def periods : Stream[Period] =
-    resultGranularity.period(span.start).datesUntil(span.end).map(Period(resultGranularity, _))
+  def periods : Stream[Period] = resultGranularity match {
+    case Periodicity.Eternity => Stream(Period.Eternity)
+    case _                    => resultGranularity.period(span.start).datesUntil(span.end).map(Period(resultGranularity, _))
+  }
 
   // see AggregationEngine.dataKeySigs._1
   override def storageKeys: Seq[(Sig, Stream[(Sig, JField)])] = {

@@ -384,7 +384,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         }
       }
 
-      if (numeric) ValueStats(count, Some(sum), Some(sumsq)) else ValueStats(count, None, None)
+      val aggregated = if (numeric) ValueStats(count, Some(sum), Some(sumsq)) else ValueStats(count, None, None)
+      logger.trace("Aggregated events to " + aggregated + " in " + (System.currentTimeMillis - startTime) + "ms")
+      aggregated
     }
 
     // Run the query over the interval given
@@ -434,6 +436,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
           Future((anonLocResults :: namedLocResults): _*).map(_.flatten)
         } else {
           // No location tags, so we'll just aggregate all events for this period
+          logger.trace("varseries has no location, just timespan")
           getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), Seq(SpanTerm(interval.encoding, period.timeSpan))).map {
             events =>List((JObject(List(JField("timestamp", period.start.serialize))), aggregateEvents(events.iterator)))
           }
