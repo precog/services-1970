@@ -13,7 +13,10 @@ import AnalyticsService._
 import AggregationEngine._
 import AnalyticsServiceSerialization._
 import com.reportgrid.ct.Mult.MDouble._
+
 import com.weiglewilczek.slf4s.Logging
+
+import org.joda.time.Instant
 
 import scalaz.Scalaz._
 import scalaz.Success
@@ -211,7 +214,12 @@ with ChildLocationsService {
     .map { periodicity =>
       (token: Token, path: Path, variable: Variable) => {
         request.content.map(_.map(Some(_))).getOrElse(Future.sync(None)).flatMap { content => 
-          val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, content))
+          // If no interval was specified, use Eternity
+          val intervalTag = intervalTerm(periodicity).apply(request.parameters, content).getOrElse {
+            IntervalTerm(AggregationEngine.timeSeriesEncoding, Periodicity.Eternity, TimeSpan(new Instant(0), new Instant))
+          }
+
+          val terms = List(locationTerm.apply(request.parameters, content), Some(intervalTag)).flatten
 
           val responseContent = withChildLocations(token, path, terms, request.parameters) {
             aggregationEngine.getVariableSeries(token, path, variable, _) 
