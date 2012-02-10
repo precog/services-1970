@@ -365,6 +365,25 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       }
     }
 
+    "retrieve the results of a histogram limited with a where clause" in sampleData { sampleEvents => 
+      def isFemaleEvent(e : Event) = e.data.value(".gender") match {
+        case JString("female") => true
+        case _                 => false
+      }
+
+      val femaleRetweetCounts = sampleEvents.filter(isFemaleEvent).foldLeft(Map.empty[JValue, Int]) {
+        case (map, Event("tweeted", data, _)) => 
+          val key = data.value(".retweet")
+          map + (key -> map.get(key).map(_ + 1).getOrElse(1))
+
+        case (map, _) => map
+      }
+
+      engine.getHistogramTop(TestToken, "/test", Variable(".tweeted.retweet"), 10, Nil, Set(HasValue(Variable(".tweeted.gender"), JString("female")))) must whenDelivered {
+        haveTheSameElementsAs(femaleRetweetCounts)
+      }
+    }
+
     "retrieve histograms limited by time ranges" in sampleData { 
       sampleEvents => {
         val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)

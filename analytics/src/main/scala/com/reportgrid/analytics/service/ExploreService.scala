@@ -105,14 +105,18 @@ with ChildLocationsService with Logging {
           requestContent => {
             val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, requestContent))
                
+            val whereClause = requestContent.flatMap {
+              content => (content \ "where").validated[Set[HasValue]].toOption
+            }.getOrElse(Set.empty[HasValue])
+
             withChildLocations(token, path, terms, request.parameters) { 
               newTerms => {
                 if (limit == 0) { // unlimited
-                  aggregationEngine.getValues(token, path, variable, newTerms).map(_.serialize)
+                  aggregationEngine.getValues(token, path, variable, newTerms, whereClause).map(_.serialize)
                 } else if (limit > 0) { // topN 
-                  aggregationEngine.getValuesTop(token, path, variable, limit, newTerms).map(_.serialize)
+                  aggregationEngine.getValuesTop(token, path, variable, limit, newTerms, whereClause).map(_.serialize)
                 } else { // bottomN
-                  aggregationEngine.getValuesBottom(token, path, variable, -limit, newTerms).map(_.serialize)
+                  aggregationEngine.getValuesBottom(token, path, variable, -limit, newTerms, whereClause).map(_.serialize)
                 }
               }
             }.map(_.ok.withColumns(variable.name.toString))
@@ -387,6 +391,7 @@ with ChildLocationsService with Logging {
 }
 
 object HistogramService extends ColumnHeaders {
+  import Extractor._
   def childLocator(engine : AggregationEngine) = new ChildLocationsService { val aggregationEngine = engine }
 
   val getHistogram = (request: HttpRequest[Future[JValue]], aggregationEngine : AggregationEngine, token: Token, path: Path, variable: Variable, limit: Int) => {
@@ -396,15 +401,19 @@ object HistogramService extends ColumnHeaders {
     futureContent flatMap { 
       requestContent => {
         val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, requestContent))
-                           
+
+        val whereClause = requestContent.flatMap {
+          content => (content \ "where").validated[Set[HasValue]].toOption
+        }.getOrElse(Set.empty[HasValue])
+
         childLocator(aggregationEngine).withChildLocations(token, path, terms, request.parameters) { 
           newTerms => {
             if (limit == 0) { // unlimited
-              aggregationEngine.getHistogram(token, path, variable, newTerms).map(_.serialize)
+              aggregationEngine.getHistogram(token, path, variable, newTerms, whereClause).map(_.serialize)
             } else if (limit > 0) { // topN 
-              aggregationEngine.getHistogramTop(token, path, variable, limit, newTerms).map(_.serialize)
+              aggregationEngine.getHistogramTop(token, path, variable, limit, newTerms, whereClause).map(_.serialize)
             } else { // bottomN
-              aggregationEngine.getHistogramBottom(token, path, variable, -limit, newTerms).map(_.serialize)
+              aggregationEngine.getHistogramBottom(token, path, variable, -limit, newTerms, whereClause).map(_.serialize)
             }
           }
         }.map(_.ok.withColumns("value", "count"))

@@ -284,12 +284,14 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
   
-  def getHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm]): Future[Map[JValue, CountType]] = {
+  def getHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
     logger.trace("Querying mongo for histogram on " + variable + " with tagTerms = " + tagTerms)
 
     val eventVarPath = JPath(".event.data") \ variable.name.tail // Where will we find the variable in the event?
 
-    getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), tagTerms).map(_.foldLeft(scala.collection.mutable.Map[JValue,CountType]()) {
+    val allObs = JointObservation(additionalConstraints + HasValue(variable, JNothing))
+
+    getRawEvents(token, path, allObs, tagTerms).map(_.foldLeft(scala.collection.mutable.Map[JValue,CountType]()) {
       case (sums, event) => {
         val eventValue = eventVarPath.extract(event)
         eventValue match {
@@ -307,22 +309,22 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 //    case terms => getRawHistogram(token, path, variable, terms)
 //  }
 
-  def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int, tagTerms : Seq[TagTerm]): Future[ResultSet[JValue, CountType]] = 
-    getHistogram(token, path, variable, tagTerms).map(v => v.toList.sortBy(- _._2).take(n))
+  def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[ResultSet[JValue, CountType]] = 
+    getHistogram(token, path, variable, tagTerms, additionalConstraints).map(v => v.toList.sortBy(- _._2).take(n))
 
-  def getHistogramBottom(token: Token, path: Path, variable: Variable, n: Int, tagTerms : Seq[TagTerm]): Future[ResultSet[JValue, CountType]] = 
-    getHistogram(token, path, variable, tagTerms).map(v => v.toList.sortBy(_._2).take(n))
+  def getHistogramBottom(token: Token, path: Path, variable: Variable, n: Int, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[ResultSet[JValue, CountType]] = 
+    getHistogram(token, path, variable, tagTerms, additionalConstraints).map(v => v.toList.sortBy(_._2).take(n))
 
   /** Retrieves values of the specified variable.
    */
-  def getValues(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[Seq[JValue]] = 
-    getHistogram(token, path, variable, tagTerms).map(_.map(_._1).toSeq)
+  def getValues(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Seq[JValue]] = 
+    getHistogram(token, path, variable, tagTerms, additionalConstraints).map(_.map(_._1).toSeq)
 
-  def getValuesTop(token: Token, path: Path, variable: Variable, n: Int, tagTerms: Seq[TagTerm]): Future[Seq[JValue]] = 
-    getHistogramTop(token, path, variable, n, tagTerms).map(_.map(_._1))
+  def getValuesTop(token: Token, path: Path, variable: Variable, n: Int, tagTerms: Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Seq[JValue]] = 
+    getHistogramTop(token, path, variable, n, tagTerms, additionalConstraints).map(_.map(_._1))
 
-  def getValuesBottom(token: Token, path: Path, variable: Variable, n: Int, tagTerms: Seq[TagTerm]): Future[Seq[JValue]] = 
-    getHistogramBottom(token, path, variable, n, tagTerms).map(_.map(_._1))
+  def getValuesBottom(token: Token, path: Path, variable: Variable, n: Int, tagTerms: Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Seq[JValue]] = 
+    getHistogramBottom(token, path, variable, n, tagTerms, additionalConstraints).map(_.map(_._1))
 
   /** Retrieves the length of array properties, or 0 if the property is not an array.
    */
@@ -480,7 +482,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
           case SortOrder.Descending => getHistogramTop _
         }
 
-        histogram(token, path, descriptor.variable, descriptor.maxResults, Nil).map(h => (descriptor, h.toMap))
+        histogram(token, path, descriptor.variable, descriptor.maxResults, Nil, Set.empty[HasValue]).map(h => (descriptor, h.toMap))
       }: _*
     } map {
       _.toMap
