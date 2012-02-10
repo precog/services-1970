@@ -215,15 +215,15 @@ with ChildLocationsService {
       (token: Token, path: Path, variable: Variable) => {
         request.content.map(_.map(Some(_))).getOrElse(Future.sync(None)).flatMap { content => 
           // If no interval was specified, use Eternity
-          val intervalTag = intervalTerm(periodicity).apply(request.parameters, content).getOrElse {
-            IntervalTerm(AggregationEngine.timeSeriesEncoding, Periodicity.Eternity, TimeSpan(new Instant(0), new Instant))
+          val (intervalTag,eternalQuery) = intervalTerm(periodicity).apply(request.parameters, content).map((_,false)).getOrElse {
+            (IntervalTerm(AggregationEngine.timeSeriesEncoding, Periodicity.Eternity, TimeSpan(new Instant(0), new Instant)),true)
           }
 
           val terms = List(locationTerm.apply(request.parameters, content), Some(intervalTag)).flatten
 
           val responseContent = withChildLocations(token, path, terms, request.parameters) {
             aggregationEngine.getVariableSeries(token, path, variable, _) 
-            .map(transformTimeSeries[ValueStats](request, periodicity))
+            .map{ r => if (eternalQuery) r else transformTimeSeries[ValueStats](request, periodicity).apply(r) } // eternal queries don't get shifted/grouped (how could they?)
             .map(_.map(f.second).serialize)
           }
 
