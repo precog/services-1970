@@ -12,7 +12,7 @@ scalacOptions ++= Seq("-deprecation", "-unchecked")
 
 libraryDependencies ++= Seq(
   "commons-codec" % "commons-codec"         % "1.5",
-  "org.specs2"              %% "specs2"     % "1.7"  % "test",
+  "org.specs2"              %% "specs2"     % "1.8"  % "test",
   "org.scala-tools.testing" %% "scalacheck" % "1.9"  % "test"
 )
 
