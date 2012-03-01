@@ -191,7 +191,7 @@ object ReaggregationTool extends Logging {
       } flatMap {
         case (complexity, mongoUpdate) => 
           print("%")
-          eventsdb(update(events_collection).set(mongoUpdate).where("_id" === (obj \ "_id"))) map { _ =>
+          eventsdb(update(events_collection).set(mongoUpdate).where("accountTokenId" === (obj \ "accountTokenId") & "path" === (obj \ "path") & "timestamp" === (obj \ "timestamp") & "_id" === (obj \ "_id"))) map { _ =>
             print(".")
             //healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
             complexity
