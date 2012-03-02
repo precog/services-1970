@@ -68,6 +68,66 @@ with ColumnHeaders {
   val metadata = None
 }
 
+class RawEventService(val aggregationEngine: AggregationEngine, defaultLimit: Int)
+extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]]
+with FutureContent[JValue]
+with ChildLocationsService
+with ColumnHeaders {
+  val service = (request: HttpRequest[Future[JValue]]) => Success(
+    (token: Token, path: Path, variable: Variable) => {
+      if (token.permissions.read) {
+        futureContent(request).flatMap {
+          requestContent => {
+            val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, requestContent))
+            // Compute the desired fields relative to the event, but only those that specify actual properties (length > 1)
+            val desiredFields: Option[List[JPath]] = request.parameters.get('properties).map {
+              rawFields => rawFields.split(',').map(JPath(_)).filter(_.length > 0).toList
+            }
+
+            // Which fields to extract from the DB
+            val retrieveFields : Either[Boolean,List[JPath]] = desiredFields.map(_.map(p => JPath(".event.data") \ p)).toRight(true)
+            val limit: Int = request.parameters.get('limit).map {
+              limitStr => try { limitStr.toInt } catch { case e => defaultLimit }
+            }.getOrElse(defaultLimit)
+
+            withChildLocations(token, path, terms, request.parameters) { 
+              // Take the head of the variable so that we can retrieve the whole event
+              newTerms => aggregationEngine.getRawEvents(token, path, JointObservation(HasValue(Variable(variable.name.nodes.head), JNothing)), newTerms, retrieveFields).map { 
+                _.take(limit).map {
+                  // Pull out only the fields we want
+                  obj =>  {
+                    val dataPath = JPath(".event.data")
+                    
+                    desiredFields.map {
+                      fields => {
+                        fields.foldLeft(JObject.empty) {
+                          case (acc, path) if obj(dataPath \ path) != JNothing => acc.set(path, obj(dataPath \ path)).asInstanceOf[JObject]
+                          case (acc, _) => acc
+                        }
+                      }
+                    }.getOrElse {
+                      // Concatenate all data fields and tags
+                      obj.get(dataPath) match {
+                        case data: JObject => data
+                        case _             => JObject.empty
+                      }
+                    }
+                  }
+                }.toList.serialize 
+              }
+            }
+          }.map(_.ok.withColumns("event"))
+        }
+      } else {
+        Future.sync(HttpResponse[JValue](Unauthorized, content = Some("The specified token does not permit exploration of variable children.")))
+      }
+    }
+    
+  )
+
+  val metadata = None
+}
+
 class VariableChildCountService(val aggregationEngine: AggregationEngine) 
 extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
 with FutureContent[JValue]

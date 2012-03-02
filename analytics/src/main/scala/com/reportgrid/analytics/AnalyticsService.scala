@@ -53,7 +53,7 @@ import com.reportgrid.ct.Mult.MDouble._
 import com.reportgrid.instrumentation.blueeyes.ReportGridInstrumentation
 import com.reportgrid.api.ReportGridTrackingClient
 
-case class AnalyticsState(eventsMongo: Mongo, indexMongo: Mongo, aggregationEngine: AggregationEngine, tokenManager: TokenManager, storageReporting: StorageReporting, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup)
+case class AnalyticsState(eventsMongo: Mongo, indexMongo: Mongo, aggregationEngine: AggregationEngine, tokenManager: TokenManager, storageReporting: StorageReporting, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup, defaultRawLimit: Int)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombinators with ReportGridInstrumentation {
   import AggregationEngine._
@@ -107,7 +107,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
               tokenMgr, 
               storageReporting(config.configMap("storageReporting")),
               auditClient(config.configMap("audit")),
-              jessup(config.configMap("jessup")))
+              jessup(config.configMap("jessup")),
+              config.getInt("raw_event_fetch_limit", 10000)
+            )
           }
         } ->
         request { (state: AnalyticsState) =>
@@ -145,6 +147,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
                   } ~
                   path("/") { 
                     commit {
+                      path("events") {
+                        new RawEventService(aggregationEngine, state.defaultRawLimit).audited("Retrieve raw events")
+                      } ~
                       path("count") {
                         new VariableCountService(aggregationEngine).audited("count occurrences of a variable")
                       } ~ 

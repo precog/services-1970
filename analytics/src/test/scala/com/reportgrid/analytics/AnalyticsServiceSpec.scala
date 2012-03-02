@@ -218,6 +218,63 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
     }
 
+    "retrieve full raw events" in sampleData { 
+      sampleEvents => {
+        val eventName = sampleEvents.head.eventName
+
+        val expected : List[JValue] = sampleEvents.filter(_.eventName == eventName).map(_.data.value)
+
+        // This also tests to make sure that only the event name (and not properties) are used in the underlying query
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".dummy/events") must whenDelivered {
+          beLike {
+              case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
+                val nonTagData = result.deserialize[List[JValue]].map {
+                  case JObject(fields) => JObject(fields.filterNot(_.name.startsWith("#")))
+                  case other => other
+                }
+                (status must_== HttpStatusCodes.OK) and
+                (nonTagData must haveTheSameElementsAs(expected))
+              }
+          }
+        }
+      }
+    }
+
+    "retrieve full raw events with limit" in sampleData { 
+      sampleEvents => {
+        val eventName = sampleEvents.head.eventName
+
+        val expected : List[JValue] = sampleEvents.filter(_.eventName == eventName).map(_.data.value)
+
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + "/events?limit=1") must whenDelivered {
+          beLike {
+              case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
+                (status must_== HttpStatusCodes.OK) and
+                (result.deserialize[List[JValue]].length must_== 1)
+              }
+          }
+        }
+      }
+    }
+
+    "retrieve raw events with select fields" in sampleData {
+      sampleEvents => {
+        val eventName = sampleEvents.head.eventName
+
+        val fieldName : String = sampleEvents.head.data.fields.head.name
+
+        val expected : List[JValue] = sampleEvents.filter(_.eventName == eventName).map(v => JObject.empty.set(JPath(fieldName), v.data.value \ fieldName))
+
+        jsonTestService.get[JValue]("/vfs/test/.%s/events?properties=.%s".format(eventName, fieldName)) must whenDelivered {
+          beLike {
+            case HttpResponse(HttpStatus(status, _), _, Some(result), _) => 
+              (status must_== HttpStatusCodes.OK) and
+              (result.deserialize[List[JValue]] must haveTheSameElementsAs(expected))
+          }
+        }        
+      }
+    }
+      
     "explore variables" in sampleData { sampleEvents =>
       val expectedChildren = sampleEvents.foldLeft(Map.empty[String, Set[String]]) {
         case (m, Event(eventName, EventData(JObject(fields)), _)) => 
