@@ -108,7 +108,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
               storageReporting(config.configMap("storageReporting")),
               auditClient(config.configMap("audit")),
               jessup(config.configMap("jessup")),
-              config.getInt("raw_event_fetch_limit", 10000)
+              config.getInt("raw_event_fetch_limit", 1000)
             )
           }
         } ->

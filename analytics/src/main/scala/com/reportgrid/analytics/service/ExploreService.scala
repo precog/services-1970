@@ -116,6 +116,12 @@ with ColumnHeaders {
                 }.toList.serialize 
               }
             }
+          }.map {
+            case JObject(fields) => JArray(fields.flatMap { 
+              case JField(name, JArray(values)) => values 
+              case _                            => Nil // Discard things that aren't array fields
+            })
+            case other           => other // Simple arrays (no tags specified)
           }.map(_.ok.withColumns("event"))
         }
       } else {
