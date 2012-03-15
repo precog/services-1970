@@ -123,8 +123,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     )
   }
 
-  private val variable_series           = AggregationStage("variable_series")
-  private val variable_value_series     = AggregationStage("variable_value_series")
+  //private val variable_series           = AggregationStage("variable_series")
+  //private val variable_value_series     = AggregationStage("variable_value_series")
 
   private val variable_values           = AggregationStage("variable_values")
   private val variable_children         = AggregationStage("variable_children")
@@ -133,7 +133,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   private val path_tags                 = AggregationStage("path_tags")
   private val hierarchy_children        = AggregationStage("hierarchy_children")
 
-  def flushStages = List(variable_series, variable_value_series, variable_values, variable_children, path_children).map(_.stage.flushAll).sequence.map(_.sum)
+  def flushStages = List(/* variable_series, variable_value_series, */ variable_values, variable_children, path_children).map(_.stage.flushAll).sequence.map(_.sum)
 
   val events_collection: MongoCollection = config.getString("events.collection", "events")
 
@@ -213,8 +213,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     (hierarchy_children putAll addHierarchyChildren(token, path, allTags).patches) +
     (variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches) + 
     //(variable_value_series putAll vvSeriesPatches.patches) + 
-    (variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches) + 
-    (variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches)
+    (variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches)// + 
+    //(variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches)
   }
 
   /** Retrieves children of the specified path &amp; variable.  */
@@ -977,9 +977,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   def stop(timeout: akka.actor.Actor.Timeout) = {
-    val stageStops = variable_value_series.stage.stop ::
-                     variable_series.stage.stop ::
-                     variable_children.stage.stop ::
+    val stageStops = variable_children.stage.stop ::
                      variable_values.stage.stop ::
                      path_children.stage.stop :: 
                      path_tags.stage.stop :: 
@@ -1028,13 +1026,13 @@ object AggregationEngine {
     ),
     "variable_values" -> Map(
       "var_val_id"        -> (List("accountTokenId", "path", valuesId), false)
-    ),
-    "variable_series" -> Map(
-      "var_series_id"     -> (List("accountTokenId", "path", seriesId), false)
-    ),
-    "variable_value_series" -> Map(
-      "var_val_series_id" -> (List("accountTokenId", "path", seriesId), false)
-    )
+    )// ,
+//    "variable_series" -> Map(
+//      "var_series_id"     -> (List("accountTokenId", "path", seriesId), false)
+//    ),
+//    "variable_value_series" -> Map(
+//      "var_val_series_id" -> (List("accountTokenId", "path", seriesId), false)
+//    )
   )
 
   private def createIndices(database: Database, toCreate: Map[String, Map[String, (List[String], Boolean)]]) = {
