@@ -293,7 +293,7 @@ with ChildLocationsService {
 
           val responseContent = withChildLocations(token, path, terms, request.parameters) {
             aggregationEngine.getVariableSeries(token, path, variable, _) 
-            .map{ r => if (eternalQuery) r else transformTimeSeries[ValueStats](request, periodicity).apply(r) } // eternal queries don't get shifted/grouped (how could they?)
+            .map{ r => if (eternalQuery || periodicity == Periodicity.Single) r else transformTimeSeries[ValueStats](request, periodicity).apply(r) } // eternal and single queries don't get shifted/grouped (how could they?)
             .map(_.map(f.second).serialize)
           }
 

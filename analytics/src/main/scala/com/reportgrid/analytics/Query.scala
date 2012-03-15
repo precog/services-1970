@@ -50,6 +50,7 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   // Compute the periods that this interval represents
   def periods : Stream[Period] = resultGranularity match {
     case Periodicity.Eternity => Stream(Period.Eternity)
+    case Periodicity.Single   => Stream(Period.Single(span.start, span.end))
     case _                    => resultGranularity.period(span.start).datesUntil(span.end).map(Period(resultGranularity, _))
   }
 

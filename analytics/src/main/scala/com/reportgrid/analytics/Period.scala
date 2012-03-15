@@ -21,7 +21,7 @@ sealed class Period private (val periodicity: Periodicity, val start: Instant) e
 
   def withPeriodicity(p: Periodicity): Period = Period(p, start)
 
-  lazy val end = periodicity.increment(start)
+  def end = periodicity.increment(start)
 
   lazy val timeSpan = TimeSpan(start, end)
 
@@ -61,6 +61,14 @@ sealed class Period private (val periodicity: Periodicity, val start: Instant) e
 
 object Period {
   val Eternity = apply(Periodicity.Eternity, Instants.Zero)
+
+  class SinglePeriod(startInstant: Instant, endInstant: Instant) extends Period(Periodicity.Single, startInstant) {
+    override def end = endInstant
+    import Stream.empty
+    override def to(that: Instant): Stream[Period] = empty
+  }
+
+  def Single(startInstant: Instant, endInstant: Instant) = new SinglePeriod(startInstant, endInstant)
 
   /** Constructs a period from a periodicity and any time occurring within the
    * period.

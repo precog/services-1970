@@ -280,6 +280,24 @@ object Periodicity {
     override def jodaPeriod(count: Int) = None
   }
 
+  case object Single extends Periodicity {
+    override final val byteValue = 7: Byte
+
+    def floor(time: Instant) = time
+
+    def increment(time: Instant, amount: Int = 1) = time
+
+    def decrement(time: Instant, amount: Int = 1) = time
+
+    def indexOf(time: DateTime, in: Periodicity): Option[Int] = None
+
+    override val finer = None
+
+    override def offsetFraction(zone: DateTimeZone, time: Instant) = None
+
+    override def jodaPeriod(count: Int) = None
+  }
+
   val All = Second   ::
             Minute   ::
             Hour     ::
@@ -287,6 +305,7 @@ object Periodicity {
             Week     ::
             Month    ::
             Year     ::
+            Single ::
             Eternity ::
             Nil
 
@@ -297,6 +316,7 @@ object Periodicity {
             Week     ::
             Month    ::
             Year     ::
+            Single ::
             Nil
 
   val Default = Periodicity.Minute to Periodicity.Eternity
