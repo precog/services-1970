@@ -139,6 +139,30 @@ object AdSamples {
   val campaigns = for (i <- 0 to 30) yield "c" + i
   val eventNames = List("impression", "click", "conversion")
 
+  val browsers = List("chrome", "ie", "firefox", "safari", "opera", "other")
+  val envs = List("Win7", "WinVista", "WinXP", "MacOSX", "Linux", "iPad", "iPhone", "Android", "other")
+  val rawLocations = List(
+    List("usa", "colorado", "boulder"),
+    List("usa", "colorado", "denver"),
+    List("usa", "colorado", "colorado springs"),
+    List("usa", "california", "los angeles"),
+    List("usa", "california", "san francisco"),
+    List("usa", "nevada", "las vegas"),
+    List("italy", "lombaridia", "milano"),
+    List("portugal", "beja", "serpa")
+  )
+
+  val rawKeywords = List(
+    List("apple","pear","peach"),
+    List("apple"),
+    List("pear","preach"),
+    List("peach"),
+    List("kiwi"),
+    List("lemon","orange"),
+    List("orange"),
+    List("pear","orange","kiwi")
+  )
+
   def gaussianIndex(size: Int): Int = {
     // multiplying by size / 5 means that 96% of the time, the sampled value will be within the range and no second try will be necessary
     val testIndex = (scala.util.Random.nextGaussian * (size / 5)) + (size / 2)
@@ -150,20 +174,55 @@ object AdSamples {
     import scala.math._
     round(exp(-random * 8) * size).toInt.min(size - 1).max(0)
   }
+
+  def adSample() = JObject(
+    JField("gender", oneOf(genders).sample) ::
+    JField("platform", platforms(exponentialIndex(platforms.size))) ::
+    JField("campaign", campaigns(gaussianIndex(campaigns.size))) ::
+    JField("cpm", chooseNum(1, 100).sample) ::
+    JField("ageRange", ageRanges(gaussianIndex(ageRanges.size))) :: Nil
+  )
+
+  def impressionSample() = JObject(List(
+    JField("impression", JObject(List(
+      JField("browser", oneOf(browsers).sample),
+      JField("evn", oneOf(envs).sample),
+      JField("gender", oneOf(genders).sample),
+      JField("age", chooseNum(18,97).sample),
+      JField("#location", location()),
+      JField("keywords", keywords()),
+      JField("#timestamp", timestamp())
+    )))
+  ))
+
+  def keywords() = JObject( oneOf(rawKeywords).sample.get.map{ JField(_, true) } )
+
+  def timestamp(): Long = {
+    val random = new java.util.Random
+    val now = new DateTime()
+    val start = now.minusMonths(1)
+    val finish = now.plusMonths(1)
+    val range = (finish.getMillis - start.getMillis).toInt
+    val offset = random.nextInt(range)
+    start.getMillis + offset
+  }
+
+  def location() = {
+    val loc = oneOf(rawLocations).sample
+    JObject(List(
+      JField("country", loc(0)),
+      JField("state", loc.take(2).mkString("/")),
+      JField("city", loc.mkString("/"))
+    ))
+  }
 }
 
-case class DistributedSampleSet(queriableSampleSize: Int, queriableSamples: Option[List[JObject]] = None) extends SampleSet { self =>
+case class DistributedSampleSet(queriableSampleSize: Int, queriableSamples: Option[List[JObject]] = None, sampler: () => JObject = AdSamples.adSample _) extends SampleSet { self =>
   import AdSamples._
   def next = {
-    val sample = JObject(
-      JField("gender", oneOf(genders).sample) ::
-      JField("platform", platforms(exponentialIndex(platforms.size))) ::
-      JField("campaign", campaigns(gaussianIndex(campaigns.size))) ::
-      JField("cpm", chooseNum(1, 100).sample) ::
-      JField("ageRange", ageRanges(gaussianIndex(ageRanges.size))) :: Nil
-    )
+    val sample = sampler() 
     
-    (sample, if (queriableSamples.exists(_.size >= queriableSampleSize)) this else this.copy(queriableSamples = Some(sample :: self.queriableSamples.getOrElse(Nil))))
+    (sample, if (queriableSamples.exists(_.size >= queriableSampleSize)) this else new DistributedSampleSet(queriableSampleSize, Some(sample :: self.queriableSamples.getOrElse(Nil)), sampler))
   }
 }
 
@@ -239,7 +298,7 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
                 path       = testApi.path,
                 name       = eventNames(exponentialIndex(eventNames.size)),
                 properties = sample,
-                rollup     = false,
+                rollup     = FullRollup,
                 //timestamp  = Some(conf.clock.now().toDate),
                 headers    = Map("User-Agent" -> "ReportGridBenchmark")
               )
@@ -348,7 +407,7 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
               path       = resultsApi.path,
               name       = "track",
               properties = JObject(List(JField("time", JInt(time)))),
-              rollup     = false,
+              rollup     = NoRollup,
               count = Some(1)
             )
 
@@ -358,7 +417,7 @@ class AnalyticsBenchmark(testApi: BenchmarkApi, resultsApi: BenchmarkApi, conf: 
               path       = resultsApi.path + "/" + queryType.toString.toLowerCase,
               name       = "query",
               properties = JObject(List(JField("time", JInt(time)))),
-              rollup     = false,
+              rollup     = NoRollup,
               count = Some(1)
             )
 
