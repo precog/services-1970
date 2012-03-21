@@ -184,7 +184,8 @@ object Queries {
     CountQuery,
     BrowseQuery,
     DateRangeCountQuery,
-    TagChildrenCountQuery
+    TagChildrenCountQuery,
+    HistogramDateRangeQuery
   ) 
 
   sealed trait Query {
@@ -224,7 +225,7 @@ object Queries {
     def query(path: String)(implicit config: Config) = {
       val dateRange = Map[String, String]() +
                 ("start" -> (new DateTime().minusDays(15).getMillis() + "")) +
-                ("finish" -> (new DateTime().plusDays(15).getMillis() + ""))
+                ("end" -> (new DateTime().plusDays(15).getMillis() + ""))
       (queryGlue( "vfs/%s/.impression/count".format(path), dateRange ), None)
     }
   }
@@ -246,9 +247,19 @@ object Queries {
       val gender = if(random.nextBoolean) "male" else "female"
       val dateRange = Map[String, String]() +
                 ("start" -> (new DateTime().minusDays(15).getMillis() + "")) +
-                ("finish" -> (new DateTime().plusDays(15).getMillis() + ""))
+                ("end" -> (new DateTime().plusDays(15).getMillis() + ""))
       (queryGlue( "vfs/%s/.impression.gender/values/%%22%s%%22/count".format(path, gender), dateRange ), None)
     }
   }
 
+  case object HistogramDateRangeQuery extends Query {
+    def name = "hist_date_range"
+    val random = new java.util.Random
+    def query(path: String)(implicit config: Config) = {
+      val dateRange = Map[String, String]() +
+                ("start" -> (new DateTime().minusDays(15).getMillis() + "")) +
+                ("end" -> (new DateTime().plusDays(15).getMillis() + ""))
+      (queryGlue( "vfs/%s/.impression.browser/histogram".format(path), dateRange ), None)
+    }
+  }
 }

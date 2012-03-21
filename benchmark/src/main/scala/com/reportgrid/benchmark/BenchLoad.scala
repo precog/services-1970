@@ -26,7 +26,9 @@ object BenchLoad {
   val notifyLock = new Object
 
   var maxCount : Option[Int] = None
-  var pathCount : Option[Int] = None 
+  var threadCount : Option[Int] = None 
+    
+  val workQueue = new ArrayBlockingQueue[(JObject, Int)](10000)
 
   def notifyError() {
     notifyLock.synchronized {
@@ -50,33 +52,34 @@ object BenchLoad {
         max = Long.MinValue
       }
     }
+    
+    maxCount.foreach { mc => if (count >= mc) { println("Shutdown"); sys.exit() } }
   } 
+  
+  val sampleSet = new DistributedSampleSet(10)
+  val pathCount = 100
   
   def main(args: Array[String]) {
     val apiUrl = args match {
       case Array(url) => Server(url)
-      case Array(url, pathCountArg) => 
-        println("PathCount = " + pathCountArg); pathCount = Some(pathCountArg.toInt); Server(url)
-      case Array(url, pathCountArg, maxSamples) => 
-        println("PathCount = " + pathCountArg + " Max = " + maxSamples); pathCount = Some(pathCountArg.toInt); maxCount = Some(maxSamples.toInt); Server(url)
+      case Array(url, threadCountArg) => 
+        println("ThreadCount = " + threadCountArg); threadCount = Some(threadCountArg.toInt); Server(url)
+      case Array(url, threadCountArg, maxSamples) => 
+        println("ThreadCount = " + threadCountArg + " Max = " + maxSamples); threadCount = Some(threadCountArg.toInt); maxCount = Some(maxSamples.toInt); Server(url)
       case _ => Server.Dev
     }
-
-    val sampleSet = new DistributedSampleSet(10)
-
-    val client = new ReportGridClient[JValue](ReportGridConfig(Token.Test, apiUrl, new HttpClientApache))
-
+    
     startTime = System.currentTimeMillis()
 
-    val threads = (1 to pathCount.get).map { pathId =>
-      val path = "/stress/test%09d".format(pathId)
+    val threads = (1 to threadCount.get).map { threadId =>
       new Thread() {
+        val client = new ReportGridClient[JValue](ReportGridConfig(Token.Test, apiUrl, new HttpClientApache))
         override def run() {
-          var cnt = 0
-          while (maxCount.map( cnt < _).getOrElse(true)) {
+          def insert(cnt: Int = 0): Unit = {
             try {
               val started = System.nanoTime()
-              val (query, _) = sampleSet.next
+              val (query, pathId) = workQueue.take() 
+              val path = "/stress/test%09d".format(pathId)
               client.track(path,
                            "impression",
                            properties = query,
@@ -86,15 +89,32 @@ object BenchLoad {
             } catch {
               case e => notifyError()
             }
-            cnt += 1
-            if(pathId % 10 == 0 && cnt % 10 == 0) {
-              println("Insert progress: " + pathId + "-" + cnt)
+            if(threadId % 10 == 0 && cnt % 10 == 0) {
+              println("Insert progress: " + threadId + "-" + cnt)
             }
+            insert(cnt + 1)
           }
+
+          insert()
         }
       }
     }
     threads.foreach( _.start )
+    
+    while(true) {
+      def loadQueue(i: Int = 0): Unit = {
+        val (sample, _) = sampleSet.next
+        workQueue.put((sample, i))
+        if(i < pathCount) {
+          loadQueue(i+1)
+        } else {
+          ()
+        }
+      }
+      loadQueue()
+    }
+    
     threads.foreach( _.join )
   }
+ 
 }
