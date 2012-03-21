@@ -50,8 +50,6 @@ object BenchLoad {
         max = Long.MinValue
       }
     }
-
-    maxCount.foreach { mc => if (count >= mc) { println("Shutdown"); sys.exit() } }
   } 
   
   def main(args: Array[String]) {
