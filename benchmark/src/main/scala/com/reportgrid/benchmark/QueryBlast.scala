@@ -12,6 +12,7 @@ import _root_.blueeyes.core.service.engines.HttpClientXLightWeb
 import _root_.blueeyes.core.data.BijectionsChunkString._
 import org.joda.time._
 import java.util.concurrent._
+import java.util.concurrent.atomic
 import java.util.Date
 import java.lang.{Thread, Object}
 
@@ -24,7 +25,7 @@ object QueryBlast {
   var min = Long.MaxValue
   var max = Long.MinValue
   
-  val interval = 100
+  val interval = 1000
   val intervalDouble = interval.toDouble
   
   val notifyLock = new Object
@@ -61,18 +62,32 @@ object QueryBlast {
       }
 
       statsMap += (name -> stats)
+    }
+  }
 
-      if ((count + errors) % interval == 0) {
-        val now = System.currentTimeMillis()
-        statsMap foreach { 
-          case (name, stats) =>
-            println("%-20d\t%12d\t%f\t%f\t%f\t%f\t%s".format(now, errors, intervalDouble / ((now - startTime) / 1000.0d), stats.min / 1000000.0d, stats.max / 1000000.0d, (stats.sum / stats.count) / 1000000.0d, name))
-        }
-        statsMap = Map[String, Stats]()
-        startTime = now
+  def displayStats {
+    notifyLock.synchronized {
+      val now = System.currentTimeMillis()
+      println("=================================")
+      statsMap foreach { 
+        case (name, stats) =>
+          println("%-20d\t%12d\t%f\t%f\t%f\t%f\t%s".format(now, errors, stats.count / ((now - startTime) / 1000.0d), stats.min / 1000000.0d, stats.max / 1000000.0d, (stats.sum / stats.count) / 1000000.0d, name))
+      }
+      statsMap = Map[String, Stats]()
+      startTime = now
+    }
+  }
+
+  val displayThread = new Thread {
+    override def run() {
+      while (true) {
+        Thread.sleep(1000)
+        displayStats
       }
     }
-  } 
+  }
+
+  displayThread.start()
 
   private val usageMessage = """
 usage: command {baseUrl} {verbose}
@@ -189,7 +204,7 @@ object Queries {
   ) 
 
   sealed trait Query {
-    def name: String
+    val name: String
     def query(path: String)(implicit config: Config): (String, Option[String])
 
     def queryGlue(middle: String, params: Map[String, String] = Map.empty)(implicit config: Config): String = {
@@ -207,21 +222,21 @@ object Queries {
   }
 
   case object CountQuery extends Query {
-    def name = "count"
+    val name = "count"
     def query(path: String)(implicit config: Config) = {
       (queryGlue( "vfs/%s/.impression/count".format(path) ), None)
     }
   }
   
   case object BrowseQuery extends Query {
-    def name = "browse"
+    val name = "browse"
     def query(path: String)(implicit config: Config) = {
       (queryGlue( "vfs/%s/".format(path) ), None)
     }
   }
 
   case object DateRangeCountQuery extends Query {
-    def name = "date_range_count"
+    val name = "date_range_count"
     def query(path: String)(implicit config: Config) = {
       val dateRange = Map[String, String]() +
                 ("start" -> (new DateTime().minusDays(15).getMillis() + "")) +
@@ -231,7 +246,7 @@ object Queries {
   }
 
   case object TagChildrenCountQuery extends Query {
-    def name = "tag_children_count"
+    val name = "tag_children_count"
     def query(path: String)(implicit config: Config) = {
       val location = Map[String, String]() +
                 ("usage_tag_children" -> "location") +
@@ -241,7 +256,7 @@ object Queries {
   }
   
   case object ValueDateRangeCountQuery extends Query {
-    def name = "value_date_range_count"
+    val name = "value_date_range_count"
     val random = new java.util.Random
     def query(path: String)(implicit config: Config) = {
       val gender = if(random.nextBoolean) "male" else "female"
@@ -253,7 +268,7 @@ object Queries {
   }
 
   case object HistogramDateRangeQuery extends Query {
-    def name = "hist_date_range"
+    val name = "hist_date_range"
     val random = new java.util.Random
     def query(path: String)(implicit config: Config) = {
       val dateRange = Map[String, String]() +
