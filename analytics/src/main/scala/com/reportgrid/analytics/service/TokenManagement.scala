@@ -1,5 +1,4 @@
-package com.reportgrid
-package analytics
+package com.reportgrid.analytics
 package service
 
 import blueeyes._

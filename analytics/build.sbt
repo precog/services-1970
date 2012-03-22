@@ -10,7 +10,10 @@ scalaVersion := "2.9.1"
 
 scalacOptions ++= Seq("-deprecation", "-unchecked")
 
+compileOrder := CompileOrder.JavaThenScala
+
 libraryDependencies ++= Seq(
+  "com.reportgrid"          %% "blueeyes"           % "0.5.3-SNAPSHOT" changing(),
   "joda-time"               % "joda-time"           % "1.6.2",
   "ch.qos.logback"          % "logback-classic"     % "1.0.0",
   "org.scalaz"              %% "scalaz-core"        % "6.0.2",
