@@ -357,6 +357,28 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
     }
 
+    "count events by time range" in sampleData { sampleEvents => {
+      val timestamps = sampleEvents.map(_.tags.collect{ case Tag("timestamp", TimeReference(_, time)) => time.getMillis }.head)
+      val sortedEvents = sampleEvents.zip(timestamps).sortBy(_._2)
+
+      val (subsetEvents,subsetTimestamps) = sortedEvents.take(sampleEvents.size / 2).unzip
+      val counts = subsetEvents.foldLeft(Map.empty[String, Int]) { case (m, Event(name, _, _)) => m + (name -> (m.getOrElse(name, 0) + 1)) }
+      val (startTime: Long, endTime: Long) = (subsetTimestamps.head, subsetTimestamps.last)
+
+      counts forall {
+        case (name, count) =>
+          jsonTestService.get[JValue]("/vfs/test/."+name+"/count?start="+startTime+"&end="+(endTime + 1)) must whenDelivered {
+            beLike {
+              case HttpResponse(status, _, Some(result), _) => {
+                if (result.deserialize[Long] != count) { println("Mismatch on " + name) }
+                result.deserialize[Long] must_== count
+              }
+            }
+          } 
+      }
+    }}
+      
+
     "not roll up by default" in {
       jsonTestService.get[JValue]("/vfs/.tweeted/count?location=usa") must whenDelivered {
         beLike {
@@ -462,7 +484,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             }
           }
       }
-    })//.pendingUntilFixed
+    })
 
     "intersection series must sum to count over the same period" in sampleData { sampleEvents =>
       val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)

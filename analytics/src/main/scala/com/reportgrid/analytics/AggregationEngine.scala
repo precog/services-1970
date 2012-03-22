@@ -353,7 +353,12 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   /** Retrieves a count of how many times the specified variable appeared in a path */
   def getVariableCount(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[CountType] = {
-    getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), tagTerms).map { _.size }
+    rawEventsVariableFilter(token, path, variable, tagTerms).map {
+      filter => eventsdb(count.from(events_collection).where(filter))
+    }.getOrElse {
+      // Not much we can do, we have to actually scan the table to match anon locs
+      getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), tagTerms).map { _.size }
+    } 
   }
 
   /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
@@ -583,6 +588,38 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
 
     tagsFilters.reduceLeftOption(_ & _)
+  }
+
+  private def rawEventsVariableFilter(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
+    val hasAnonLoc = tagTerms.contains { v : Any => v match {
+      case loc @ HierarchyLocationTerm(_, Hierarchy.AnonLocation(_)) => true
+      case _ => false
+    } }
+
+    if (hasAnonLoc) {
+      val baseFilter = rawEventsBaseFilter(token, path)
+
+      // Some tags can be filtered. We can no longer pre-filter for anon locations, since anon locations are free-form in raw events
+      val tagsFilter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
+
+      val eventName = variable.name.head.flatMap {
+        case JPathField(name) => Some(name)
+        case _                => None
+      }
+
+      val (variableName,variableField) = variable.name.tail.nodes match {
+        case Nil   => (None,None)
+          // We can only consume up to the first indexed value (mongo is unhappy with selecting indexed fields)
+          case nodes => (Some(variable.name.tail), Some(JPath(nodes.takeWhile(_.isInstanceOf[JPathField]))))
+      }
+
+      val varFilter = eventName.map(JPath(".event.name") === _) & 
+        variableName.map { varTail => (JPath(".event.data") \ (varTail)).isDefined }
+
+      Some(tagsFilter & varFilter)
+    } else {
+      None
+    }
   }
 
   def getRawEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm], extraFields : Either[Boolean,List[JPath]] = Left(false)) : Future[MongoSelectQuery#QueryResult] = {
