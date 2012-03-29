@@ -123,17 +123,13 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     )
   }
 
-  //private val variable_series           = AggregationStage("variable_series")
-  //private val variable_value_series     = AggregationStage("variable_value_series")
-
-  private val variable_values           = AggregationStage("variable_values")
   private val variable_children         = AggregationStage("variable_children")
   private val path_children             = AggregationStage("path_children")
 
   private val path_tags                 = AggregationStage("path_tags")
   private val hierarchy_children        = AggregationStage("hierarchy_children")
 
-  def flushStages = List(/* variable_series, variable_value_series, */ variable_values, variable_children, path_children).map(_.stage.flushAll).sequence.map(_.sum)
+  def flushStages = List(variable_children, path_children).map(_.stage.flushAll).sequence.map(_.sum)
 
   val events_collection: MongoCollection = config.getString("events.collection", "events")
 
@@ -202,7 +198,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
     val (finiteObs, infiniteObs) = JointObservations.ofValues(event, 1 /*order*/, depth, limit)
     val finiteOrder1 = finiteObs.filter(_.order == 1)
-    //val vvSeriesPatches = variableValueSeriesPatches(token, path, Report(tags, finiteObs), count)
     val childObservations = JointObservations.ofChildren(event, 1)
     val childSeriesReport = Report(tags, (JointObservations.ofInnerNodes(event, 1) ++ finiteOrder1 ++ infiniteObs.map(JointObservation(_))).map(_.of[Observation]))
 
@@ -211,10 +206,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     (path_children put addChildOfPath(forTokenAndPath(token, path), "." + eventName)) + 
     (path_tags put addPathTags(token, path, allTags)) +
     (hierarchy_children putAll addHierarchyChildren(token, path, allTags).patches) +
-    (variable_values putAll variableValuesPatches(token, path, finiteOrder1.flatMap(_.obs), count).patches) + 
-    //(variable_value_series putAll vvSeriesPatches.patches) + 
     (variable_children putAll variableChildrenPatches(token, path, childObservations.flatMap(_.obs), count).patches)// + 
-    //(variable_series putAll variableSeriesPatches(token, path, childSeriesReport, count).patches)
   }
 
   /** Retrieves children of the specified path &amp; variable.  */
@@ -303,11 +295,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       }
     }.toMap) // One-time conversion cost
   }
-
-//tagTerms match {
-//    //case Nil => getHistogramInternal(token, path, variable)
-//    case terms => getRawHistogram(token, path, variable, terms)
-//  }
 
   def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[ResultSet[JValue, CountType]] = 
     getHistogram(token, path, variable, tagTerms, additionalConstraints).map(v => v.toList.sortBy(- _._2).take(n))
@@ -732,47 +719,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
 
-
-  /** Retrieves a histogram of the values a variable acquires over its lifetime.
-   */
-  private def getHistogramInternal(token: Token, path: Path, variable: Variable): Future[Map[JValue, CountType]] = {
-    if (variable.name.endsInInfiniteValueSpace) {    
-      sys.error("Cannot obtain a histogram of a variable with a potentially infinite number of values.")
-    }
-
-    getVariableLength(token, path, variable).flatMap { 
-      case 0 =>
-        logger.trace("Filtering histogram with " + variableValuesKey(forTokenAndPath(token, path), variable))
-        val extractor = extractValues[(JValue, CountType)](variableValuesKey(forTokenAndPath(token, path), variable), variable_values.collection) _
-        extractor((jvalue, count) => (jvalue, count)) map (_.toMap)
-
-      case length =>
-        val futures = for (index <- 0 until length) yield {
-          getHistogramInternal(token, path, Variable(variable.name \ JPathIndex(index)))
-        }
-
-        for (results <- Future(futures: _*)) yield results.foldLeft(Map.empty[JValue, CountType])(_ |+| _)
-    }    
-  }
-
-  private def variableValuesKey(baseFilter: MongoFilter, variable: Variable) = {
-    //forTokenAndPath(token, path) & 
-    baseFilter &
-    (JPath("." + valuesId) === variable.sig.hashSignature)
-  }
-
-  private def variableSeriesKey(baseFilter: MongoFilter, tagsSig: Sig, variable: Variable) = {
-    //forTokenAndPath(token, path) & 
-    baseFilter &
-    (JPath("." + seriesId) === Sig(tagsSig, variable.sig).hashSignature)
-  }
-
-  private def valueSeriesKey(baseFilter: MongoFilter, tagsSig: Sig, observation: JointObservation[HasValue]) = {
-    //forTokenAndPath(token, path) & 
-    baseFilter &
-    (JPath("." + seriesId) === Sig(tagsSig, observation.sig).hashSignature)
-  }
-
   private def extractChildren[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
     indexdb {
       select(".child", ".count").from(collection).where(filter)
@@ -888,20 +834,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
   /** Creates patches to record variable observations.
    */
-  private def variableValuesPatches(token: Token, path: Path, observations: Set[HasValue], count: CountType): MongoPatches = {
-    val baseFilter = forTokenAndPath(token, path)
-    observations.foldLeft(MongoPatches.empty) { 
-      case (patches, HasValue(variable, value)) =>
-        val predicateField = MongoEscaper.encode(renderNormalized(value.serialize))
-        val update = (JPath(".values") \ JPathField(predicateField)) inc count
-      
-        logger.trace("Inserting for %s, %s into %s".format(path, variable, variableValuesKey(baseFilter, variable)))
-        patches + (variableValuesKey(baseFilter, variable) -> update)
-    }
-  }
-
-  /** Creates patches to record variable observations.
-   */
   private def variableChildrenPatches(token: Token, path: Path, observations: Set[HasChild], count: CountType): MongoPatches = {
     observations.foldLeft(MongoPatches.empty) { 
       case (patches, HasChild(variable, childNode)) =>
@@ -950,72 +882,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     )
   }
 
-//  private def variableValueSeriesPatches(token: Token, path: Path, finiteReport: Report[HasValue], count: CountType): MongoPatches = {
-//    val baseFilter = forTokenAndPath(token, path)
-//    val finitePatches = finiteReport.storageKeysets.foldLeft(MongoPatches.empty) {
-//      case (finitePatches, (storageKeys, finiteObservation)) => 
-//
-//        // When we query for associated infinite values, we will use the queriable expansion (heap shaped) 
-//        // of the specified time series so here we need to construct a value series key that records where 
-//        // the observation was made(as described by the data keys of the storage keys), not where it is 
-//        // being stored. We will then construct an identical key when we query, and the fact that we have 
-//        // built aggregated documents will mean that we query for the minimal set of infinite value documents.
-//        val (dataKeySig, _) = dataKeySigs(storageKeys)
-//        val docKey = valueSeriesKey(baseFilter, docKeySig(storageKeys), finiteObservation)
-//
-//        finitePatches + (docKey -> ((CountsPath \ dataKeySig.hashSignature) inc count))
-//    } 
-//
-//    finitePatches
-//  }
-
-  private def variableSeriesPatches(token: Token, path: Path, report: Report[Observation], count: CountType): MongoPatches = {
-    def countUpdate(sig: Sig): MongoUpdate = (DataPath \ sig.hashSignature \ "count") inc count
-
-    def statsUpdate(variable: Variable, jvalue: JValue, sig: Sig): MongoUpdate = {
-      import scala.math.BigInt._
-
-      // build a patch including the count, sum, and sum of the squares of integral values
-      val dataPath = DataPath \ sig.hashSignature
-      val updates = List(
-        jvalue option {
-          case JInt(i)    => (dataPath \ "sum") inc (count * i)
-          case JDouble(i) => (dataPath \ "sum") inc (count * i)
-          case JBool(i)   => (dataPath \ "sum") inc (count * (if (i) 1 else 0))
-        },
-        jvalue option {
-          case JInt(i)    => (dataPath \ "sumsq") inc (count * (i * i))
-          case JDouble(i) => (dataPath \ "sumsq") inc (count * (i * i))
-        }
-      )
-
-      val withCount = updates.flatten |> { u => u.nonEmpty.option(countUpdate(sig) :: u) }
-      withCount.map(_.foldLeft(MongoUpdate.Empty)(_ |+| _)).getOrElse(MongoUpdate.Empty)
-    }
-
-    val baseFilter = forTokenAndPath(token, path)
-    report.storageKeysets.foldLeft(MongoPatches.empty) {
-      case (patches, (storageKeys, joint)) => 
-        val (dataKeySig, _) = dataKeySigs(storageKeys)
-        
-        joint.obs.foldLeft(patches) { 
-          case (patches, HasChild(Variable(vpath), child)) if vpath.length == 0 => 
-            val key = variableSeriesKey(baseFilter, docKeySig(storageKeys), Variable(vpath \ child))
-            patches + (key -> countUpdate(dataKeySig))
-
-          case (patches, HasValue(variable, jvalue)) =>             
-            val key = variableSeriesKey(baseFilter, docKeySig(storageKeys), variable)
-            val update = statsUpdate(variable, jvalue, dataKeySig)
-            if (update == MongoUpdate.Empty) patches else patches + (key -> update)
-
-          case _ => patches
-        }
-    }
-  }
-
   def stop(timeout: akka.actor.Actor.Timeout) = {
     val stageStops = variable_children.stage.stop ::
-                     variable_values.stage.stop ::
                      path_children.stage.stop :: 
                      path_tags.stage.stop :: 
                      hierarchy_children.stage.stop :: Nil
@@ -1060,16 +928,7 @@ object AggregationEngine {
     ),
     "variable_children" -> Map(
       "variable_query"    -> (List("accountTokenId", "path", "variable"), false)
-    ),
-    "variable_values" -> Map(
-      "var_val_id"        -> (List("accountTokenId", "path", valuesId), false)
-    )// ,
-//    "variable_series" -> Map(
-//      "var_series_id"     -> (List("accountTokenId", "path", seriesId), false)
-//    ),
-//    "variable_value_series" -> Map(
-//      "var_val_series_id" -> (List("accountTokenId", "path", seriesId), false)
-//    )
+    )
   )
 
   private def createIndices(database: Database, toCreate: Map[String, Map[String, (List[String], Boolean)]]) = {
