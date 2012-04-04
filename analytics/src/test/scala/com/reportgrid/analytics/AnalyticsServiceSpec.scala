@@ -442,6 +442,40 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       } 
     }
 
+    "return variable series means using a where clause" in sampleData { sampleEvents =>
+      val desiredTwitterClient : JString = sampleEvents.head.data.value.get("twitterClient") match {
+        case js : JString => js
+        case other => JString("broken!")
+      }
+
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents.filter {
+        case Event(_, EventData(obj), _) => obj.get("twitterClient") == desiredTwitterClient
+      })
+
+      val expected = expectedMeans(events, "recipientCount", keysf(granularity))
+
+      val queryTerms = JObject(
+        JField("start", minDate.getMillis) ::
+        JField("end", maxDate.getMillis) ::
+        JField("location", "usa") :: 
+        JField("where", JArray(List(JObject(JField("variable", ".tweeted.twitterClient") :: JField("value", desiredTwitterClient) :: Nil)))) :: Nil
+      )
+
+      (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/"+granularity.name+"/means")(queryTerms)) must whenDelivered {
+        beLike {
+          case HttpResponse(status, _, Some(contents), _) => 
+            val resultData = (contents: @unchecked) match {
+              case JArray(values) => values.collect { 
+                case JArray(List(JObject(List(JField("timestamp", k), JField("location", k2))), JDouble(v))) => 
+                  (List(k.deserialize[Instant].toString, k2.deserialize[String]), v)
+              }
+            }
+
+            resultData.toMap must haveTheSameElementsAs(expected("tweeted"))
+        }
+      } 
+    }
+
     "return variable value series counts" in sampleData { sampleEvents =>
       val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
       val expectedTotals = valueCounts(events) 

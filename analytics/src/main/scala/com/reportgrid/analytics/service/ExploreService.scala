@@ -291,8 +291,12 @@ with ChildLocationsService {
 
           val terms = List(locationTerm.apply(request.parameters, content), Some(intervalTag)).flatten
 
+          val whereClause = content.flatMap {
+            content => (content \ "where").validated[Set[HasValue]].toOption
+          }.getOrElse(Set.empty[HasValue])
+
           val responseContent = withChildLocations(token, path, terms, request.parameters) {
-            aggregationEngine.getVariableSeries(token, path, variable, _) 
+            aggregationEngine.getVariableSeries(token, path, variable, _, whereClause) 
             .map{ r => if (eternalQuery || periodicity == Periodicity.Single) r else transformTimeSeries[ValueStats](request, periodicity).apply(r) } // eternal and single queries don't get shifted/grouped (how could they?)
             .map(_.map(f.second).serialize)
           }

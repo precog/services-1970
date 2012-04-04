@@ -349,7 +349,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
-  def getVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, ValueStats]] = {
+  def getVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty): Future[ResultSet[JObject, ValueStats]] = {
     // Break out terms into timespan, named locations, and anonymous location prefixes (if any) 
     val (intervalOpt,locations,anonPrefixes) = tagTerms.foldLeft(Tuple3[Option[IntervalTerm], List[HierarchyLocationTerm], List[String]](None,Nil,Nil)) {
       case ((_,locs,prefixes),interval @ IntervalTerm(encoding, periodicity, TimeSpan(start,end))) => (Some(interval), locs, prefixes)
@@ -383,6 +383,10 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       aggregated
     }
 
+    val allObs = JointObservation(additionalConstraints + HasValue(variable, JNothing))
+
+    logger.trace("Obtaining variable series on " + allObs)
+
     // Run the query over the interval given
     val results: Option[Future[ResultSet[JObject,ValueStats]]] = intervalOpt.map { interval => Future(interval.periods.map {
       period => {
@@ -391,7 +395,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
           // Named locations can be queried directly
           val namedLocResults: List[Future[List[(JObject,ValueStats)]]] = locations.map {
             case loc => {
-              getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), Seq[TagTerm](SpanTerm(interval.encoding, period.timeSpan), loc)).map {
+              getRawEvents(token, path, allObs, Seq[TagTerm](SpanTerm(interval.encoding, period.timeSpan), loc)).map {
                 events => List((JObject(List(JField("timestamp", period.start.serialize), JField("location", loc.location.path))),
                                 aggregateEvents(events.iterator)))
               }
@@ -400,9 +404,9 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
 
           /* Because we can't filter on anonymous locations (they're free-form in the DB), we have to
            * just grab all events for the given interval and then group them app-side */
-          val anonLocResults: Future[List[(JObject, ValueStats)]] = {
+          val anonLocResults: Future[List[(JObject, ValueStats)]] = if (!anonPrefixes.isEmpty) {
             // Make sure we retrieve location as part of the fields
-            getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), Seq(SpanTerm(interval.encoding, period.timeSpan)), Right(List(JPath(".tags.#location")))).map {
+            getRawEvents(token, path, allObs, Seq(SpanTerm(interval.encoding, period.timeSpan)), Right(List(JPath(".tags.#location")))).map {
               rawEvents => {
                 // Compute statistics for any of the anon location prefixes that match our given events
                 val prefixResults = rawEvents.foldLeft(Map.empty[String,List[JObject]]) {
@@ -425,13 +429,13 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
                 }
               }
             }
-          }
+          } else Future.sync(List[(JObject,ValueStats)]()) 
 
           Future((anonLocResults :: namedLocResults): _*).map(_.flatten)
         } else {
           // No location tags, so we'll just aggregate all events for this period
           logger.trace("varseries has no location, just timespan")
-          getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), Seq(SpanTerm(interval.encoding, period.timeSpan))).map {
+          getRawEvents(token, path, allObs, Seq(SpanTerm(interval.encoding, period.timeSpan))).map {
             events =>List((JObject(List(JField("timestamp", period.start.serialize))), aggregateEvents(events.iterator)))
           }
         }
