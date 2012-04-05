@@ -700,7 +700,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (map, _) => map
       }
 
-      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms) must whenDelivered {
+      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms, Set()) must whenDelivered {
         beLike { case result => 
           result.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts
         }
@@ -727,7 +727,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (map, _) => map
       }
 
-      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms).
+      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms, Set()).
       map(_.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap) must {
         whenDelivered[Map[List[JValue], CountType]]( be_== (expectedCounts) )(FutureTimeouts(5, toDuration(3000).milliseconds))
       }
@@ -752,7 +752,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (map, _) => map
       }
 
-      engine.getIntersectionSeries(TestToken, "/test", descriptors, queryTerms) must {
+      engine.getIntersectionSeries(TestToken, "/test", descriptors, queryTerms, Set()) must {
         whenDelivered[ResultSet[JArray, ResultSet[JObject, CountType]]] ({
           beLike { 
             case results => 

@@ -457,8 +457,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     getRawEvents(token, path, observation, tagTerms).map(countByTerms(_, tagTerms).toSeq)
   }
 
-  def getIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, CountType]] = {
-    getIntersectionSeries(token, path, properties, tagTerms) map {
+  def getIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, CountType]] = {
+    getIntersectionSeries(token, path, properties, tagTerms, constraints) map {
       _.foldLeft(SortedMap.empty[JArray, CountType](JArrayOrdering)) {
         case (total, (key, timeSeries)) => 
           total + (key -> total.get(key).map(_ |+| timeSeries.total).getOrElse(timeSeries.total))
@@ -466,8 +466,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     } 
   }
 
-  def getIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
-    getRawIntersectionSeries(token, path, variableDescriptors, tagTerms)
+  def getIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
+    getRawIntersectionSeries(token, path, variableDescriptors, tagTerms, constraints)
   }
 
   private def getHistograms(token: Token, path: Path, variableDescriptors: List[VariableDescriptor]): Future[Map[VariableDescriptor, Map[JValue, CountType]]] = {
@@ -485,12 +485,12 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
 
-  private def getRawIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
+  private def getRawIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
     if (variableDescriptors.isEmpty) Future.async(Nil) else {
       val eventVariables: Map[String, List[VariableDescriptor]] = variableDescriptors.groupBy(_.variable.name.head.collect{ case JPathField(name) => name }.get)
 
       // We'll limit our query to just the fields we need to obtain the intersection, plus the event name
-      val observations = JointObservation(variableDescriptors.map(vd => HasValue(vd.variable, JNothing)): _*)
+      val observations = JointObservation(constraints.toSeq ++ variableDescriptors.map(vd => HasValue(vd.variable, JNothing)): _*)
 
       logger.trace("Querying mongo for intersection events with obs = " + observations)
       val queryStart = System.currentTimeMillis()

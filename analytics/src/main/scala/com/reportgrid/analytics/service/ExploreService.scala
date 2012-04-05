@@ -72,6 +72,7 @@ class RawEventService(val aggregationEngine: AggregationEngine, defaultLimit: In
 extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]]
 with FutureContent[JValue]
 with ChildLocationsService
+with Logging
 with ColumnHeaders {
   val service = (request: HttpRequest[Future[JValue]]) => Success(
     (token: Token, path: Path, variable: Variable) => {
@@ -79,10 +80,17 @@ with ColumnHeaders {
         futureContent(request).flatMap {
           requestContent => {
             val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, requestContent))
+           
             // Compute the desired fields relative to the event, but only those that specify actual properties (length > 1)
             val desiredFields: Option[List[JPath]] = request.parameters.get('properties).map {
               rawFields => rawFields.split(',').map(JPath(_)).filter(_.length > 0).toList
             }
+
+            val whereClause = request.parameters.get('content).flatMap {
+              content => (JsonParser.parse(content) \ "where").validated[Set[HasValue]].toOption
+            }.getOrElse(Set.empty[HasValue]).toList
+
+            logger.trace("Raw event query where claus(es) = " + whereClause)
 
             // Which fields to extract from the DB
             val retrieveFields : Either[Boolean,List[JPath]] = desiredFields.map(_.map(p => JPath(".event.data") \ p)).toRight(true)
@@ -92,7 +100,7 @@ with ColumnHeaders {
 
             withChildLocations(token, path, terms, request.parameters) { 
               // Take the head of the variable so that we can retrieve the whole event
-              newTerms => aggregationEngine.getRawEvents(token, path, JointObservation(HasValue(Variable(variable.name.nodes.head), JNothing)), newTerms, retrieveFields).map { 
+              newTerms => aggregationEngine.getRawEvents(token, path, JointObservation(HasValue(Variable(variable.name.nodes.head), JNothing) :: whereClause : _*), newTerms, retrieveFields).map { 
                 _.take(limit).map {
                   // Pull out only the fields we want
                   obj =>  {
@@ -163,7 +171,8 @@ with ChildLocationsService {
 class ExploreValuesService(val aggregationEngine: AggregationEngine, limit: Int) 
 extends FutureContent[JValue]
 with ColumnHeaders
-with ChildLocationsService with Logging {
+with ChildLocationsService
+with Logging {
   val service = (request: HttpRequest[Future[JValue]]) => //Success(
     (token: Token, path: Path, variable: Variable) => {
       val result : Future[HttpResponse[JValue]] = if (token.permissions.explore) {
@@ -171,9 +180,11 @@ with ChildLocationsService with Logging {
           requestContent => {
             val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, requestContent))
                
-            val whereClause = requestContent.flatMap {
-              content => (content \ "where").validated[Set[HasValue]].toOption
+            val whereClause = request.parameters.get('content).flatMap {
+              content => (JsonParser.parse(content) \ "where").validated[Set[HasValue]].toOption
             }.getOrElse(Set.empty[HasValue])
+
+            logger.trace("Explore values where claus(es) = " + whereClause)
 
             withChildLocations(token, path, terms, request.parameters) { 
               newTerms => {
@@ -426,13 +437,15 @@ with ChildLocationsService with Logging {
                                 (content \ "from").validated[String].map(token.path / _) |@|
                                 (content \ "properties").validated[List[VariableDescriptor]]
 
+          val whereClause = (content \ "where").validated[Set[HasValue]].toOption.getOrElse(Set.empty[HasValue])
+
           queryComponents.apply { case (select, path, where) => 
             val (responseContent, columnNames) = select match {
               case Count => 
                 val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, Some(content)))
                 logger.trace("Intersection count terms = " + terms)
                 (withChildLocations(token, path, terms, request.parameters) {
-                  aggregationEngine.getIntersectionCount(token, path, where, _)
+                  aggregationEngine.getIntersectionCount(token, path, where, _, whereClause)
                   .map(serializeIntersectionResult[CountType])
                 }, List("count"))
                 
@@ -440,7 +453,7 @@ with ChildLocationsService with Logging {
                 val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, Some(content)))
                 logger.trace("Intersection series terms = " + terms)
                 (withChildLocations(token, path, terms, request.parameters) {
-                  aggregationEngine.getIntersectionSeries(token, path, where, _)
+                  aggregationEngine.getIntersectionSeries(token, path, where, _, whereClause)
                   .map(_.map(transformTimeSeries[CountType](request, periodicity).second))
                   .map(serializeIntersectionResult[ResultSet[JObject, CountType]])
                 }, List("timestamp", "count"))

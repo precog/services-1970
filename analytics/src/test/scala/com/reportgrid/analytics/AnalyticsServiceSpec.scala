@@ -1,6 +1,8 @@
 package com.reportgrid
 package analytics
 
+import java.net.URLEncoder
+
 import blueeyes._
 import blueeyes.core.data._
 import blueeyes.core.http._
@@ -218,6 +220,57 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
     }
 
+    "retrieve values for a given property" in sampleData {
+      sampleEvents => {
+        val eventName = sampleEvents.head.eventName
+
+        val expected : List[JValue] = sampleEvents.filter {
+          ev => ev.eventName == eventName
+        }.map(_.data.value.get("num")).distinct
+        
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".num/values") must whenDelivered {
+          beLike {
+              case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
+                val nonTagData = result.deserialize[List[JValue]].map {
+                  case JObject(fields) => JObject(fields.filterNot(_.name.startsWith("#")))
+                  case other => other
+                }
+                (status must_== HttpStatusCodes.OK) and
+                (nonTagData must containAllOf(expected).only)
+              }
+          }
+        }
+
+      }
+    }
+
+    "retrieve values for a given property with a where clause" in sampleData {
+      sampleEvents => {
+        val eventName = sampleEvents.head.eventName
+
+        val constraintField: JField = sampleEvents.head.data.fields.head
+        
+        val expected : List[JValue] = sampleEvents.filter {
+          ev => ev.eventName == eventName && ev.data.get(constraintField.name) == constraintField.value
+        }.map(_.data.value.get("num")).distinct
+
+        val content = """{"where":[{"variable":".%s.%s","value":"%s"}]}""".format(eventName, constraintField.name, constraintField.value.values.toString)
+        
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".num/values?content=" + URLEncoder.encode(content, "UTF-8")) must whenDelivered {
+          beLike {
+              case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
+                val nonTagData = result.deserialize[List[JValue]].map {
+                  case JObject(fields) => JObject(fields.filterNot(_.name.startsWith("#")))
+                  case other => other
+                }
+                (status must_== HttpStatusCodes.OK) and
+                (nonTagData must containAllOf(expected).only)
+              }
+          }
+        }
+      }
+    }
+
     "retrieve full raw events" in sampleData { 
       sampleEvents => {
         val eventName = sampleEvents.head.eventName
@@ -234,6 +287,34 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
                 }
                 (status must_== HttpStatusCodes.OK) and
                 (nonTagData must haveTheSameElementsAs(expected))
+              }
+          }
+        }
+      }
+    }
+
+    "retrieve full raw events with a where clause" in sampleData { 
+      sampleEvents => {
+        val eventName = sampleEvents.head.eventName
+
+        val constraintField: JField = sampleEvents.head.data.fields.head
+
+        val expected : List[JValue] = sampleEvents.filter {
+          ev => ev.eventName == eventName && ev.data.get(constraintField.name) == constraintField.value
+        }.map(_.data.value)
+
+        val content = """{"where":[{"variable":".%s.%s","value":"%s"}]}""".format(eventName, constraintField.name, constraintField.value.values.toString)
+
+        // This also tests to make sure that only the event name (and not properties) are used in the underlying query
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + "/events?content=" + URLEncoder.encode(content, "UTF-8")) must whenDelivered {
+          beLike {
+              case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
+                val nonTagData = result.deserialize[List[JValue]].map {
+                  case JObject(fields) => JObject(fields.filterNot(_.name.startsWith("#")))
+                  case other => other
+                }
+                (status must_== HttpStatusCodes.OK) and
+                (nonTagData must containAllOf(expected).only)
               }
           }
         }
@@ -537,6 +618,46 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       }
 
       def seriesResponse = jsonTestService.post[JValue]("/intersect")(JsonParser.parse(baseQuery.format(minDate.getMillis, maxDate.getMillis, "series/"+granularity.name))) map {
+        case HttpResponse(_, _, Some(JObject(fields)), _) => JObject(
+          fields map {
+            case JField(label, JArray(values)) => JField(label, values.foldLeft(0L) { case (total, JArray(_ :: count :: Nil)) => total + count.deserialize[Long] }.serialize)
+          }
+        )
+      }
+
+      (countResponse zip seriesResponse) must whenDelivered {
+        beLike {
+          case (a, b) => (a must_!= 0) and (a must_== b)
+        }
+      }
+    }
+
+    "intersection series must sum to count over the same period with a where clause" in sampleData { sampleEvents =>
+      val desiredTwitterClient : JString = sampleEvents.head.data.value.get("twitterClient") match {
+        case js : JString => js
+        case other => JString("broken!")
+      }
+
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents.filter {
+        case Event(_, EventData(obj), _) => obj.get("twitterClient") == desiredTwitterClient
+      })
+
+      val expectedTotals = valueCounts(events) 
+
+      val baseQuery = """{
+        "start": %1d,
+        "end": %1d,
+        "select":"%s",
+        "from":"/test/",
+        "properties":[{"property":".tweeted.gender","limit":10,"order":"descending"}],
+        "where":[{"variable":".tweeted.twitterClient","value":"%s"}]
+      }"""
+      
+      def countResponse = jsonTestService.post[JValue]("/intersect")(JsonParser.parse(baseQuery.format(minDate.getMillis, maxDate.getMillis, "count", desiredTwitterClient.values))) map {
+        case HttpResponse(_, _, Some(content), _) => content
+      }
+
+      def seriesResponse = jsonTestService.post[JValue]("/intersect")(JsonParser.parse(baseQuery.format(minDate.getMillis, maxDate.getMillis, "series/"+granularity.name, desiredTwitterClient.values))) map {
         case HttpResponse(_, _, Some(JObject(fields)), _) => JObject(
           fields map {
             case JField(label, JArray(values)) => JField(label, values.foldLeft(0L) { case (total, JArray(_ :: count :: Nil)) => total + count.deserialize[Long] }.serialize)
