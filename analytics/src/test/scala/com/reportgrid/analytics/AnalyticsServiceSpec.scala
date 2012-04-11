@@ -518,7 +518,8 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
               }
             }
 
-            resultData.toMap must haveTheSameElementsAs(expected("tweeted"))
+            // TODO: Should fix data generation so that we always have "tweeted" events
+            resultData.toMap must haveTheSameElementsAs(expected.get("tweeted").getOrElse(Map()))
         }
       } 
     }
@@ -552,7 +553,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
               }
             }
 
-            resultData.toMap must haveTheSameElementsAs(expected("tweeted"))
+            resultData.toMap must haveTheSameElementsAs(expected.get("tweeted").getOrElse(Map()))
         }
       } 
     }
