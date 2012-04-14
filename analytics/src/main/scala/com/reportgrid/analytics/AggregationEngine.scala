@@ -123,6 +123,43 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     )
   }
 
+  // Helpers for map/reduce
+  val matchesPathFunc = """
+  function matchesPath(baseDepth, rollup, path) {
+      var count = 0;
+      var parts = path.split("/");
+  
+      for (var i = 0; i < parts.length; i++) {
+          if (parts[i].length > 0) {
+              count++;
+          }
+      }
+  
+      return (count - baseDepth) <= rollup;
+  }
+
+"""
+
+  val matchesAnonLocFunc = """
+// obj = "#location" value, prefixes = array of prefix strings
+  function matchesAnonLoc(obj, prefixes) {
+      if (typeof obj == 'string' && prefixes.some(function(prefix) { return obj.substring(0, prefix.length) == prefix })) { // seriously? No startsWith?
+          return true;
+      }
+      if (typeof obj == 'object') {
+          for (var prop in obj) {
+              if (matchesAnonLoc(obj[prop], prefixes)) {
+                  return true;
+              }
+          }
+      }
+      return false;
+  }
+  
+"""
+
+
+
   private val variable_children         = AggregationStage("variable_children")
   private val path_children             = AggregationStage("path_children")
 
@@ -212,6 +249,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   /** Retrieves children of the specified path &amp; variable.  */
   def getVariableChildren(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm] = Nil): Future[List[(HasChild, Long)]] = {
     logger.debug("Retrieving variable children for " + path + " : " + variable)
+
     if (tagTerms.size == 0) {
       extractValues(forTokenAndPath(token, path) & forVariable(variable), variable_children.collection) { (jvalue, count) =>
         (HasChild(variable, jvalue match {
@@ -224,28 +262,55 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       }
     } else {
       logger.debug("Using raw events for variable children")
-      getRawVariableChildren(token, path, variable, tagTerms)
+      getMRVariableChildren(token, path, variable, tagTerms)
     }
   }
 
-  def getRawVariableChildren(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[List[(HasChild, Long)]] = {
-    getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), tagTerms, Left(true)).map { _.foldLeft(Map.empty[HasChild, Long]) {
-      case (acc, event) => {
-        val varPath : JPath = JPath(".event.data") \ variable.name.tail
-        (varPath.extract(event)) match {
-          case JObject(fields) => {
-            fields.foldLeft(acc){ 
-              case (innerAcc,JField(name, _)) if ! name.startsWith("#") => {
-                val key = HasChild(variable, name)
-                innerAcc + (key -> (innerAcc.get(key).map(_ + 1).getOrElse(1))) 
+  def getMRVariableChildren(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[List[(HasChild, Long)]] = {
+    val emitter = """
+  var c = {};
+  for (var prop in this%s) {
+    if (prop[0] != '#') {
+      c[prop] = true;
+    }
+  }
+  emit("children", { children : c });
+""".format(JPath(".event.data") \ variable.name.tail)
+
+    val reducer = """
+function(key, values) {
+    var c = {};
+    for (var i = 0; i < values.length; i++) {
+        for (var prop in values[i].children) {
+          if (typeof c[prop] == 'undefined') {
+            c[prop] = values[i]['children'][prop];
+          } else {
+            c[prop] += values[i]['children'][prop];
+          }
+        }
+    }
+    return {children : c};
+}
+"""
+
+    queryMapReduce(token, path, variable, tagTerms, Set(), emitter, reducer) { output =>
+      eventsdb(selectAll.from(output.outputCollection)).map { 
+        objs => {
+          val results = objs.toList.map {
+            jo => jo("value")("children") match {
+              case JObject(fields) => fields.map {
+                case JField(name, JInt(i))    => (HasChild(variable, JPathField(name)), i.longValue)
+                case JField(name, JDouble(d)) => (HasChild(variable, JPathField(name)), d.toLong)
+                case invalid                  => logger.error("Invalid result returned from getChildren map/reduce: " + invalid); sys.error("Invalid result")
               }
-              case (innerAcc, _) => innerAcc
+              case invalid         => logger.error("Invalid result returned from getChildren map/reduce: " + invalid); sys.error("Invalid result")
             }
           }
-          case other => acc
+          logger.trace("MapReduce Results = " + results)
+          results.flatten
         }
       }
-    }.toList}
+    }
   }
 
   /** Retrieves children of the specified path.  */
@@ -275,26 +340,85 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       }
     }
   }
-  
+
+  private def queryMapReduce[T](token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], where: Set[HasValue], emitter: String, reducer: String)(finalizer: MapReduceOutput => Future[T]): Future[T] = {
+    val fullFilter = List(Some(rawEventsBaseFilter(token, path)), 
+                          eventNameFilter(variable),
+                          rawEventsTagsFilter(tagTerms), 
+                          constraintFilter(where)).flatten.reduceLeft(_ & _)
+
+    // Results go to temp collection. This works around a MongoDB Java driver bug as well as allowing for result sets > 16MB
+    val resultCollection = ("mapreduce" + java.util.UUID.randomUUID.toString).replace("-","")
+
+    logger.trace("MR: Sending results to " + resultCollection)
+
+    val anonLocationPrefixes : Seq[String] = tagTerms.collect {
+      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => path.path
+    }
+
+    val mapHelpers = matchesPathFunc + (if (anonLocationPrefixes.isEmpty) "" else matchesAnonLocFunc)
+
+    val anonMatchCriteria = if (anonLocationPrefixes.isEmpty) "" else " && matchesAnonLoc(this['tags']['#location'], %s".format(anonLocationPrefixes.mkString("[\"", "\",\"", "\"])"))
+    
+    val mapFunc = """
+function() {
+%s
+
+  if (matchesPath(%d, this.rollup, this.path)%s) {
+    %s;
+  }
+}
+""".format(mapHelpers, path.length, anonMatchCriteria, emitter)
+
+    logger.trace("MR: MapFunc = " + mapFunc)
+    logger.trace("MR: Filter " + compact(render(fullFilter.filter)))
+    
+    eventsdb(mapReduce(mapFunc, reducer).from(events_collection).where(fullFilter).into(resultCollection)).flatMap {
+      output => {
+        val ret = finalizer(output)
+        //output.drop()
+        ret
+      }
+    }
+  }
+
   def getHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
-    logger.trace("Querying mongo for histogram on " + variable + " with tagTerms = " + tagTerms)
+    logger.trace("Map/reduce for histogram on " + variable + " with tagTerms = " + tagTerms + " and add'l constraints: " + additionalConstraints)
 
-    val eventVarPath = JPath(".event.data") \ variable.name.tail // Where will we find the variable in the event?
+    val emitter = "emit(this%s, 1)".format(JPath(".event.data") \ variable.name.tail)
 
-    val allObs = JointObservation(additionalConstraints + HasValue(variable, JNothing))
+    val reduceFunc = """
+function(key, values) {
+    var count = 0;
+    for (var i = 0; i < values.length; i++) {
+        count += values[i];
+    }
+    return count;
+}
+"""
 
-    getRawEvents(token, path, allObs, tagTerms).map(_.foldLeft(scala.collection.mutable.Map[JValue,CountType]()) {
-      case (sums, event) => {
-        val eventValue = eventVarPath.extract(event)
-        eventValue match {
-          case JArray(List())   => sums // discard non-values
-          case JObject(List())  => sums // discard non-values
-          case JArray(elements) => elements.foldLeft(sums) { case (sum,element) => sum += (element -> sum.get(element).map(_ + 1).getOrElse(1)) }
-          case _                => sums += (eventValue -> (sums.get(eventValue).map(_ + 1).getOrElse(1)))
+    queryMapReduce(token, path, variable, tagTerms, additionalConstraints, emitter, reduceFunc) { output =>
+      logger.trace("Fetching from " + output.outputCollection)
+      eventsdb(selectAll.from(output.outputCollection)).map { 
+        objs => {
+          val resultMap = objs.toList.map {
+            jo => {
+              val key = jo("_id")
+              val count: Long = jo("value") match {
+                case JInt(bd) => bd.longValue
+                case JDouble(d) => d.toLong
+                case invalid => logger.error("Invalid count returned from getHistogram map/reduce: " + invalid); sys.error("Invalid result")
+              }
+              (key,count)
+            }
+          }.toMap
+          logger.trace("MapReduce Results = " + resultMap)
+          resultMap
         }
       }
-    }.toMap) // One-time conversion cost
+    }
   }
+  
 
   def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[ResultSet[JValue, CountType]] = 
     getHistogram(token, path, variable, tagTerms, additionalConstraints).map(v => v.toList.sortBy(- _._2).take(n))
@@ -556,10 +680,14 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     }
   }
 
+  // the base filter is using a prefix-based match strategy to catch the path. This has the implication that paths are rolled up 
+  // by default, which may not be exactly what we want. Hence, we later have to filter the returned results for only those where 
+  // the rollup depth is greater than or equal to the difference in path length.
   private def rawEventsBaseFilter(token: Token, path: Path): MongoFilter = {
     JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path").regex("^" + path.path)
   }
 
+  // Some tags can be filtered. We can no longer pre-filter for location, since location is free-form in raw events
   private def rawEventsTagsFilter(tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
     val tagsFilters: Seq[MongoFilter]  = tagTerms.collect {
       case IntervalTerm(_, _, span) => 
@@ -570,15 +698,26 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
         (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
 
-//      // We can't pre-filter for anonymous locations. Must be done post-retrieval
-//      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) =>
-//        MongoFilterBuilder(JPath(".tags") \ ("#"+ tagName)).contains[MongoPrimitiveString](path.path)
-
       case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) =>
         MongoFilterBuilder(JPath(".tags") \ ("#" + tagName) \ name) === path.path
     }
 
     tagsFilters.reduceLeftOption(_ & _)
+  }
+
+  private def eventNameFilter(variable: Variable): Option[MongoFilter] =
+    variable.name.head.flatMap {
+      case JPathField(name) => Some(JPath(".event.name") === name)
+      case _                => None
+    }
+
+  private def constraintFilter(constraints : Set[HasValue]): Option[MongoFilter] = {
+    val filters : Set[MongoFilter] = constraints.map {
+      case HasValue(Variable(name), JNothing) => (JPath(".event.data") \ name.tail).isDefined
+      case HasValue(Variable(name), value)    => (JPath(".event.data") \ name.tail) === value
+    }
+
+    filters.reduceLeftOption(_ & _)
   }
 
   private def rawEventsVariableFilter(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
