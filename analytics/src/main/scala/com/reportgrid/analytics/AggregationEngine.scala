@@ -158,6 +158,17 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   
 """
 
+  private def jvalToLong(jv : JValue) = jv match {
+    case JInt(bd) => bd.longValue
+    case JDouble(d) => d.toLong
+    case invalid => sys.error("Can't convert " + invalid + " to Long")
+  }
+
+  private def jvalToDouble(jv : JValue) = jv match {
+    case JInt(bd) => bd.doubleValue
+    case JDouble(d) => d
+    case invalid => sys.error("Can't convert " + invalid + " to Double")
+  }
 
 
   private val variable_children         = AggregationStage("variable_children")
@@ -464,12 +475,58 @@ function(key, values) {
 
   /** Retrieves a count of how many times the specified variable appeared in a path */
   def getVariableCount(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[CountType] = {
-    rawEventsVariableFilter(token, path, variable, tagTerms).map {
-      filter => eventsdb(count.from(events_collection).where(filter))
-    }.getOrElse {
-      // Not much we can do, we have to actually scan the table to match anon locs
-      getRawEvents(token, path, JointObservation(HasValue(variable, JNothing)), tagTerms).map { _.size }
-    } 
+    val baseFilter = rawEventsVariableFilter(token, path, variable, tagTerms)
+
+    val emitter = "emit('count', 1)"
+
+    val reduceFunc = """
+function(key, values) {
+    var count = 0;
+    for (var i = 0; i < values.length; i++) {
+        count += values[i];
+    }
+    return count;
+}
+"""
+
+    // TODO: Allow for constraints
+    queryMapReduce(token, path, variable, tagTerms, Set(), emitter, reduceFunc) {
+      output => eventsdb(selectOne().from(output.outputCollection)).map {
+        result => result.map { jo => jvalToLong(jo("value")) }.getOrElse(0l)
+      }
+    }
+  }
+
+  def aggregateVariableSeries(token: Token, path: Path, variable: Variable, encoding: TimeSeriesEncoding, period: Period, otherTerms: Seq[TagTerm], additionalConstraints: Set[HasValue]): Future[ValueStats] = {
+    val emitter = """
+  if (typeof this%1$s == 'number') {
+    var squared = this%1$s * this%1$s;
+    emit(%2$d, { count : 1, sum : this%1$s, sumsq: squared});
+  } else {
+    emit(%2$d, { count : 1, sum : 0, sumsq: 0});
+  }
+""".format(JPath(".event.data") \ variable.name.tail, period.start.getMillis)
+
+    val reduceFunc = """
+function(key, values) {
+  var count = 0;
+  var sum = 0;
+  var sumsq = 0;
+
+  for (var i = 0; i < values.length; i++) {
+    count += values[i].count;
+    sum   += values[i].sum;
+    sumsq += values[i].sumsq;
+  }
+  return { "count" : count, "sum" : sum, "sumsq" : sumsq };
+}
+"""
+
+    queryMapReduce(token, path, variable, otherTerms ++ Seq(SpanTerm(encoding, period.timeSpan)), additionalConstraints, emitter, reduceFunc) {
+          output => eventsdb(selectOne().from(output.outputCollection)).map {
+            result => result.map { jo => ValueStats(jvalToLong(jo("value")("count")), Some(jvalToDouble(jo("value")("sum"))), Some(jvalToDouble(jo("value")("sumsq")))) }.get
+          }
+    }
   }
 
   /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
@@ -519,9 +576,9 @@ function(key, values) {
           // Named locations can be queried directly
           val namedLocResults: List[Future[List[(JObject,ValueStats)]]] = locations.map {
             case loc => {
-              getRawEvents(token, path, allObs, Seq[TagTerm](SpanTerm(interval.encoding, period.timeSpan), loc)).map {
-                events => List((JObject(List(JField("timestamp", period.start.serialize), JField("location", loc.location.path))),
-                                aggregateEvents(events.iterator)))
+              aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(loc), additionalConstraints).map {
+                vs => List((JObject(List(JField("timestamp", period.start.serialize), JField("location", loc.location.path))),
+                            vs))
               }
             }
           }
@@ -559,8 +616,8 @@ function(key, values) {
         } else {
           // No location tags, so we'll just aggregate all events for this period
           logger.trace("varseries has no location, just timespan")
-          getRawEvents(token, path, allObs, Seq(SpanTerm(interval.encoding, period.timeSpan))).map {
-            events =>List((JObject(List(JField("timestamp", period.start.serialize))), aggregateEvents(events.iterator)))
+          aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(), additionalConstraints).map {
+            vs => List((JObject(List(JField("timestamp", period.start.serialize))),vs))
           }
         }
       }
@@ -711,6 +768,12 @@ function(key, values) {
       case _                => None
     }
 
+  private def variableExistsFilter(variable: Variable): Option[MongoFilter] = 
+    variable.name.tail.nodes match {
+      case Nil => None
+      case _   => Some((JPath(".event.data") \ variable.name.tail).isDefined)
+    }
+
   private def constraintFilter(constraints : Set[HasValue]): Option[MongoFilter] = {
     val filters : Set[MongoFilter] = constraints.map {
       case HasValue(Variable(name), JNothing) => (JPath(".event.data") \ name.tail).isDefined
@@ -720,36 +783,19 @@ function(key, values) {
     filters.reduceLeftOption(_ & _)
   }
 
-  private def rawEventsVariableFilter(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
-    val hasAnonLoc = tagTerms.contains { v : Any => v match {
-      case loc @ HierarchyLocationTerm(_, Hierarchy.AnonLocation(_)) => true
-      case _ => false
-    } }
-
-    if (hasAnonLoc) {
-      val baseFilter = rawEventsBaseFilter(token, path)
-
-      // Some tags can be filtered. We can no longer pre-filter for anon locations, since anon locations are free-form in raw events
-      val tagsFilter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
-
-      val eventName = variable.name.head.flatMap {
-        case JPathField(name) => Some(name)
-        case _                => None
-      }
-
-      val (variableName,variableField) = variable.name.tail.nodes match {
-        case Nil   => (None,None)
-          // We can only consume up to the first indexed value (mongo is unhappy with selecting indexed fields)
-          case nodes => (Some(variable.name.tail), Some(JPath(nodes.takeWhile(_.isInstanceOf[JPathField]))))
-      }
-
-      val varFilter = eventName.map(JPath(".event.name") === _) & 
-        variableName.map { varTail => (JPath(".event.data") \ (varTail)).isDefined }
-
-      Some(tagsFilter & varFilter)
-    } else {
-      None
+  private def hasAnonLocs(tagTerms: Seq[TagTerm]): Boolean = 
+    tagTerms.contains { 
+      v : Any => v match {
+        case loc @ HierarchyLocationTerm(_, Hierarchy.AnonLocation(_)) => true
+        case _ => false
+      } 
     }
+
+  private def rawEventsVariableFilter(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): MongoFilter = {
+    List(Some(rawEventsBaseFilter(token, path)),
+         rawEventsTagsFilter(tagTerms),
+         eventNameFilter(variable),
+         variableExistsFilter(variable)).flatten.reduceLeft(_ & _)
   }
 
   def getRawEvents(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm], extraFields : Either[Boolean,List[JPath]] = Left(false)) : Future[MongoSelectQuery#QueryResult] = {
