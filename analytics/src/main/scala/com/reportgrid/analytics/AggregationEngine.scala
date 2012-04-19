@@ -373,6 +373,12 @@ function(key, values) {
     
     val mapFunc = """
 function() {
+  if(!Array.isArray) {  
+    Array.isArray = function (arg) {  
+      return Object.prototype.toString.call(arg) == '[object Array]';  
+    };  
+  }  
+
 %s
 
   if (matchesPath(%d, this.rollup, this.path)%s) {
@@ -386,8 +392,10 @@ function() {
     
     eventsdb(mapReduce(mapFunc, reducer).from(events_collection).where(fullFilter).into(resultCollection)).flatMap {
       output => {
+        logger.trace("MR complete on " + resultCollection + ", running finalizer")
         val ret = finalizer(output)
         //output.drop()
+        logger.trace("MR finalizer complete for " + resultCollection)
         ret
       }
     }
@@ -396,7 +404,21 @@ function() {
   def getHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
     logger.trace("Map/reduce for histogram on " + variable + " with tagTerms = " + tagTerms + " and add'l constraints: " + additionalConstraints)
 
-    val emitter = "emit(this%s, 1)".format(JPath(".event.data") \ variable.name.tail)
+    val emitter = """
+    if (Array.isArray(this%1$s)) {
+      for (var index in this%1$s) {
+        if (this%1$s[index] != null) {
+          emit(this%1$s[index], 1);
+        }
+      }
+    } else {
+      if (this%1$s != null) {
+        emit(this%1$s, 1);
+      }
+    }
+""".format(JPath(".event.data") \ variable.name.tail)
+
+    logger.trace("Getting histogram with emitter: " + emitter)
 
     val reduceFunc = """
 function(key, values) {
@@ -415,11 +437,7 @@ function(key, values) {
           val resultMap = objs.toList.map {
             jo => {
               val key = jo("_id")
-              val count: Long = jo("value") match {
-                case JInt(bd) => bd.longValue
-                case JDouble(d) => d.toLong
-                case invalid => logger.error("Invalid count returned from getHistogram map/reduce: " + invalid); sys.error("Invalid result")
-              }
+              val count: Long = jvalToLong(jo("value"))
               (key,count)
             }
           }.toMap
@@ -499,11 +517,12 @@ function(key, values) {
 
   def aggregateVariableSeries(token: Token, path: Path, variable: Variable, encoding: TimeSeriesEncoding, period: Period, otherTerms: Seq[TagTerm], additionalConstraints: Set[HasValue]): Future[ValueStats] = {
     val emitter = """
-  if (typeof this%1$s == 'number') {
-    var squared = this%1$s * this%1$s;
-    emit(%2$d, { count : 1, sum : this%1$s, sumsq: squared});
+  var v = this%1$s;
+  if (typeof(v) == 'number' || v instanceof NumberLong) {
+    var squared = v * v;
+    emit("%2$d", { c : 1, s : v, q: squared });
   } else {
-    emit(%2$d, { count : 1, sum : 0, sumsq: 0});
+    emit("%2$d", { c : 1, s : NaN, q: NaN });
   }
 """.format(JPath(".event.data") \ variable.name.tail, period.start.getMillis)
 
@@ -514,18 +533,23 @@ function(key, values) {
   var sumsq = 0;
 
   for (var i = 0; i < values.length; i++) {
-    count += values[i].count;
-    sum   += values[i].sum;
-    sumsq += values[i].sumsq;
+    count += values[i].c;
+    sum   += values[i].s;
+    sumsq += values[i].q;
   }
-  return { "count" : count, "sum" : sum, "sumsq" : sumsq };
+  return { c : count, s : sum, q : sumsq };
 }
 """
 
     queryMapReduce(token, path, variable, otherTerms ++ Seq(SpanTerm(encoding, period.timeSpan)), additionalConstraints, emitter, reduceFunc) {
-          output => eventsdb(selectOne().from(output.outputCollection)).map {
-            result => result.map { jo => ValueStats(jvalToLong(jo("value")("count")), Some(jvalToDouble(jo("value")("sum"))), Some(jvalToDouble(jo("value")("sumsq")))) }.get
+      output => {
+        eventsdb(selectOne().from(output.outputCollection)).map {
+          result => {
+            logger.trace("MR: result from " + output.outputCollection + " = " + result)
+            result.map { jo => ValueStats(jvalToLong(jo("value")("c")), Some(jvalToDouble(jo("value")("s"))), Some(jvalToDouble(jo("value")("q")))) }.getOrElse { ValueStats(0,None,None) }
           }
+        }
+      }
     }
   }
 
@@ -576,6 +600,7 @@ function(key, values) {
           // Named locations can be queried directly
           val namedLocResults: List[Future[List[(JObject,ValueStats)]]] = locations.map {
             case loc => {
+              logger.trace("varseries with named location")
               aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(loc), additionalConstraints).map {
                 vs => List((JObject(List(JField("timestamp", period.start.serialize), JField("location", loc.location.path))),
                             vs))
@@ -586,6 +611,7 @@ function(key, values) {
           /* Because we can't filter on anonymous locations (they're free-form in the DB), we have to
            * just grab all events for the given interval and then group them app-side */
           val anonLocResults: Future[List[(JObject, ValueStats)]] = if (!anonPrefixes.isEmpty) {
+            logger.trace("varseries with anon locations")
             // Make sure we retrieve location as part of the fields
             getRawEvents(token, path, allObs, Seq(SpanTerm(interval.encoding, period.timeSpan)), Right(List(JPath(".tags.#location")))).map {
               rawEvents => {

@@ -189,6 +189,7 @@ trait AggregationEngineFixtures extends LocalMongo with Logging {
 
 
 
+
 class AggregationEngineSpec extends AggregationEngineTests with AggregationEngineFixtures {
   import AggregationEngine._
 
@@ -539,6 +540,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     }
 
     "retrieve a time series of means of values of a variable over eternity" in sampleData { sampleEvents =>
+      logger.trace("Retrieving time series means")
       val queryTerms = List[TagTerm](
         IntervalTerm(AggregationEngine.timeSeriesEncoding, Eternity, TimeSpan(new Instant(42), new Instant))
       )
