@@ -35,6 +35,8 @@ import scalaz._
 import Scalaz._
 import Periodicity._
 
+import java.util.concurrent.TimeUnit
+
 // For DB cleanup
 import com.weiglewilczek.slf4s.Logging
 import com.mongodb.Mongo
@@ -572,13 +574,13 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (eventName, means) =>
           val expected: Map[String, Double] = means.map{ case (k, v) => (k(0), v) }.toMap
 
-          engine.getVariableSeries(TestToken, "/test", Variable(JPath(eventName) \ "recipientCount"), queryTerms) must whenDelivered {
+          engine.getVariableSeries(TestToken, "/test", Variable(JPath(eventName) \ "recipientCount"), queryTerms) must whenDelivered[ResultSet[JObject,ValueStats]]{
             beLike { 
               case result => 
                 val remapped: Map[String, Double] = result.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant].toString -> _) }.toMap 
                 remapped must_== expected
             }
-          }
+          }(FutureTimeouts(5, Duration(30, TimeUnit.SECONDS)))
       }
     }
 
