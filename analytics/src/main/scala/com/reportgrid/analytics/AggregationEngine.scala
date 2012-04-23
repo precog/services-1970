@@ -349,12 +349,32 @@ function(key, values) {
     logger.trace("Aggregation: Filter components = " + fullFilterParts.flatten)
 
     val fullFilter = fullFilterParts.flatten.reduceLeft(_ & _)
-    
-    val finalPipe = JArray(JObject(List(JField("$match", fullFilter.filter))) :: pipeline)
 
-    logger.trace("Final pipe = " + render(finalPipe))
+    val matchStep = JObject(List(JField("$match", fullFilter.filter)))
 
-    eventsdb(aggregation(finalPipe).from(events_collection)).flatMap(finalizer)
+    // Just in case the value is an array, we try to unwind first and then check to see if the result is an error
+    val unwindPipe = JObject(List(JField("$unwind", "$" + (JPath(".event.data") \ variable.name.tail).toString.drop(1))))
+
+    val finalPipe = JArray(matchStep :: unwindPipe :: pipeline)
+
+    logger.trace("Aggregation: Final pipe = " + pretty(render(finalPipe)))
+
+    eventsdb(aggregation(finalPipe).from(events_collection)).flatMap {
+      firstResult => {
+        logger.trace("Aggregation: received unwound result: " + firstResult)
+        val unwindInvalid = firstResult match {
+          case Some(obj) => (obj("ok") == JInt(0) || obj("ok") == JDouble(0)) && obj("code") == JInt(15978)
+          case _         => false
+        }
+        
+        if (unwindInvalid) {
+          logger.trace("Unwind invalid, re-running without unwind")
+          eventsdb(aggregation(JArray(matchStep :: pipeline)).from(events_collection)).flatMap(finalizer)
+        } else {
+          finalizer(firstResult)
+        }
+      }
+    }
   }
 
   private def queryMapReduce[T](token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], where: Set[HasValue], emitter: String, reducer: String)(finalizer: MapReduceOutput => Future[T]): Future[T] = {
@@ -411,16 +431,19 @@ function() {
     }
   }
 
-  def getAggrHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
-    if (hasAnonLocs(tagTerms)) {
-      sys.error("Not yet!") //getMRHistogram(token, path, variable, tagTerms, additionalConstraints)
-    } else {
-      val variableName = (JPath(".event.data") \ variable.name.tail).toString.drop(1) // Drop leading dot
+  def getHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
+    val isArrayVar = variable.name.nodes.lastOption match {
+      case Some(JPathIndex(_)) => true
+      case _ => false
+    }
 
-//      import blueeyes.json.JsonDSL._
-//
-//      val projection : JObject = ("$project", (variableName, 1))
-//      val grouping   : JObject = ("$group", ("_id", "$" + variableName) ~ ("count", ("$sum", 1)))
+    if (hasAnonLocs(tagTerms) || isArrayVar) {
+      if (isArrayVar) { logger.trace("Forcing MR on histogram over array variable") }
+
+      getMRHistogram(token, path, variable, tagTerms, additionalConstraints)
+    } else {
+      logger.trace("Aggregation for histogram on " + variable + " with tagTerms = " + tagTerms + " and add'l constraints: " + additionalConstraints)
+      val variableName = (JPath(".event.data") \ variable.name.tail).toString.drop(1) // Drop leading dot
 
       val pipeline = List(JObject(List(JField("$project", JObject(List(JField(variableName, JInt(1))))),
                                        JField("$group", JObject(List(JField("_id", "$" + variableName),
@@ -428,20 +451,22 @@ function() {
 
       queryAggregation(token, path, variable, tagTerms, additionalConstraints, pipeline)  {
         case Some(result) => result("result") match {
-          case JArray(objs) => Future.sync(objs.toList.map {
-            jo => {
-              val key = jo("_id")
-              val count: Long = jvalToLong(jo("count"))
-              (key,count)
-            }
-          }.toMap)
+          case JArray(objs) => {
+            logger.trace("Aggregation results: " + objs)
+            Future.sync(objs.toList.flatMap {
+              jo => {
+                val key = jo("_id")
+                val count: Long = jvalToLong(jo("count"))
+                if (key == JNull) None else Some((key,count)) // We don't report Null values
+              }
+            }.toMap)
+          }
         }
       }
     }
   }
 
-  def getHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
-
+  def getMRHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
     logger.trace("Map/reduce for histogram on " + variable + " with tagTerms = " + tagTerms + " and add'l constraints: " + additionalConstraints)
 
     val emitter = """
@@ -457,8 +482,6 @@ function() {
       }
     }
 """.format(JPath(".event.data") \ variable.name.tail)
-
-    logger.trace("Getting histogram with emitter: " + emitter)
 
     val reduceFunc = """
 function(key, values) {
