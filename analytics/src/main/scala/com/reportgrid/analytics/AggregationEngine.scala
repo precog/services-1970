@@ -267,7 +267,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   var c = {};
   for (var prop in this%s) {
     if (prop[0] != '#') {
-      c[prop] = true;
+      c[prop] = 1;
     }
   }
   emit("children", { children : c });
