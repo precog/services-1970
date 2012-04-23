@@ -36,7 +36,7 @@
     <appender-ref ref="EVENTLOG" />
   </logger>
 
-  <root level="debug">
+  <root level="trace">
     <appender-ref ref="SERVERLOG" />
   </root>
 </configuration>
