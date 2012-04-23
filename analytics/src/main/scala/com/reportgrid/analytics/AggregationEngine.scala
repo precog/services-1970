@@ -533,28 +533,15 @@ function(key, values) {
 
   /** Retrieves a count of how many times the specified variable appeared in a path */
   def getVariableCount(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[CountType] = {
-    val emitter = "emit('count', 1)"
+    val fullFilterParts = List(Some(rawEventsBaseFilter(token, path)), 
+                               rawEventsTagsFilter(tagTerms), 
+                               Some(pathRollupFilter(path)),
+                               eventNameFilter(variable),
+                               variableExistsFilter(variable))
 
-    val reduceFunc = """
-function(key, values) {
-    var count = 0;
-    for (var i = 0; i < values.length; i++) {
-        count += values[i];
-    }
-    return count;
-}
-"""
+    val fullFilter = fullFilterParts.flatten.reduceLeft(_ & _)
 
-    // TODO: Allow for constraints
-    queryMapReduce(token, path, variable, tagTerms, Set(), emitter, reduceFunc) {
-      output => eventsdb(selectOne().from(output.outputCollection)).map {
-        result => {
-          var resultMap = result.map { jo => jvalToLong(jo("value")) }.getOrElse(0l)
-          logger.trace("getVariableCount resultMap = " + resultMap)
-          resultMap
-        }
-      }
-    }
+    eventsdb(count.from(events_collection).where(fullFilter))
   }
 
   def aggregateVariableSeries(token: Token, path: Path, variable: Variable, encoding: TimeSeriesEncoding, period: Period, otherTerms: Seq[TagTerm], additionalConstraints: Set[HasValue]): Future[ValueStats] = {
