@@ -124,22 +124,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   }
 
   // Helpers for map/reduce
-  val matchesPathFunc = """
-  function matchesPath(baseDepth, rollup, path) {
-      var count = 0;
-      var parts = path.split("/");
-  
-      for (var i = 0; i < parts.length; i++) {
-          if (parts[i].length > 0) {
-              count++;
-          }
-      }
-  
-      return (count - baseDepth) <= rollup;
-  }
-
-"""
-
   val matchesAnonLocFunc = """
 // obj = "#location" value, prefixes = array of prefix strings
   function matchesAnonLoc(obj, prefixes) {
@@ -155,7 +139,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       }
       return false;
   }
-  
 """
 
   private def jvalToLong(jv : JValue) = jv match {
@@ -191,6 +174,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
       withTagResults { (tags: Seq[Tag]) =>
         val instant = tags.collect{ case Tag("timestamp", TimeReference(_, instant)) => instant }.headOption.getOrElse(clock.instant)
 
+        val min_rollup = path.length - rollup
+
         val record = JObject(
           JField("token",     token.tokenId.serialize) ::
           JField("accountTokenId", token.accountTokenId.serialize) ::
@@ -199,7 +184,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
           JField("tags",      tags.map(_.serialize).reduceLeftOption(_ merge _).serialize) ::
           JField("count",     count.serialize) ::
           JField("timestamp", instant.serialize) :: 
-          JField("rollup",    rollup.serialize) :: 
+          JField("min_ru",    min_rollup.serialize) :: 
           (if (reprocess) JField("reprocess", true.serialize) :: Nil else Nil)
         )
 
@@ -352,11 +337,37 @@ function(key, values) {
     }
   }
 
+  // Cannot be used for queries with anon locs
+  private def queryAggregation[T](token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], where: Set[HasValue], pipeline: List[JObject])(finalizer: Option[JObject] => Future[T]): Future[T] = {
+    val fullFilterParts = List(Some(rawEventsBaseFilter(token, path)), 
+                               rawEventsTagsFilter(tagTerms), 
+                               Some(pathRollupFilter(path)),
+                               eventNameFilter(variable),
+                               variableExistsFilter(variable),
+                               constraintFilter(where))
+    
+    logger.trace("Aggregation: Filter components = " + fullFilterParts.flatten)
+
+    val fullFilter = fullFilterParts.flatten.reduceLeft(_ & _)
+    
+    val finalPipe = JArray(JObject(List(JField("$match", fullFilter.filter))) :: pipeline)
+
+    logger.trace("Final pipe = " + render(finalPipe))
+
+    eventsdb(aggregation(finalPipe).from(events_collection)).flatMap(finalizer)
+  }
+
   private def queryMapReduce[T](token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], where: Set[HasValue], emitter: String, reducer: String)(finalizer: MapReduceOutput => Future[T]): Future[T] = {
-    val fullFilter = List(Some(rawEventsBaseFilter(token, path)), 
-                          eventNameFilter(variable),
-                          rawEventsTagsFilter(tagTerms), 
-                          constraintFilter(where)).flatten.reduceLeft(_ & _)
+    val fullFilterParts = List(Some(rawEventsBaseFilter(token, path)), 
+                               rawEventsTagsFilter(tagTerms), 
+                               Some(pathRollupFilter(path)),
+                               eventNameFilter(variable),
+                               variableExistsFilter(variable),
+                               constraintFilter(where))
+    
+    logger.trace("MR: Filter components = " + fullFilterParts.flatten)
+
+    val fullFilter = fullFilterParts.flatten.reduceLeft(_ & _)
 
     // Results go to temp collection. This works around a MongoDB Java driver bug as well as allowing for result sets > 16MB
     val resultCollection = ("mapreduce" + java.util.UUID.randomUUID.toString).replace("-","")
@@ -367,9 +378,9 @@ function(key, values) {
       case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => path.path
     }
 
-    val mapHelpers = matchesPathFunc + (if (anonLocationPrefixes.isEmpty) "" else matchesAnonLocFunc)
+    val mapHelpers = if (anonLocationPrefixes.isEmpty) "" else matchesAnonLocFunc
 
-    val anonMatchCriteria = if (anonLocationPrefixes.isEmpty) "" else " && matchesAnonLoc(this['tags']['#location'], %s".format(anonLocationPrefixes.mkString("[\"", "\",\"", "\"])"))
+    val emitterClause = if (anonLocationPrefixes.isEmpty) emitter else "if (matchesAnonLoc(this['tags']['#location'], %s) { %s }".format(anonLocationPrefixes.mkString("[\"", "\",\"", "\"])"), emitter)
     
     val mapFunc = """
 function() {
@@ -378,21 +389,20 @@ function() {
       return Object.prototype.toString.call(arg) == '[object Array]';  
     };  
   }  
-
 %s
 
-  if (matchesPath(%d, this.rollup, this.path)%s) {
-    %s;
-  }
+  %s;
 }
-""".format(mapHelpers, path.length, anonMatchCriteria, emitter)
+""".format(mapHelpers, emitterClause)
 
     logger.trace("MR: MapFunc = " + mapFunc)
+    logger.trace("MR: Reducer = " + reducer)
     logger.trace("MR: Filter " + compact(render(fullFilter.filter)))
     
     eventsdb(mapReduce(mapFunc, reducer).from(events_collection).where(fullFilter).into(resultCollection)).flatMap {
       output => {
-        logger.trace("MR complete on " + resultCollection + ", running finalizer")
+        logger.trace("MR complete on " + resultCollection + " with result: " + output.status)
+        logger.trace("MR running finalizer for " + resultCollection)
         val ret = finalizer(output)
         //output.drop()
         logger.trace("MR finalizer complete for " + resultCollection)
@@ -401,7 +411,37 @@ function() {
     }
   }
 
+  def getAggrHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
+    if (hasAnonLocs(tagTerms)) {
+      sys.error("Not yet!") //getMRHistogram(token, path, variable, tagTerms, additionalConstraints)
+    } else {
+      val variableName = (JPath(".event.data") \ variable.name.tail).toString.drop(1) // Drop leading dot
+
+//      import blueeyes.json.JsonDSL._
+//
+//      val projection : JObject = ("$project", (variableName, 1))
+//      val grouping   : JObject = ("$group", ("_id", "$" + variableName) ~ ("count", ("$sum", 1)))
+
+      val pipeline = List(JObject(List(JField("$project", JObject(List(JField(variableName, JInt(1))))),
+                                       JField("$group", JObject(List(JField("_id", "$" + variableName),
+                                                                     JField("count", JObject(List(JField("$sum", JInt(1)))))))))))
+
+      queryAggregation(token, path, variable, tagTerms, additionalConstraints, pipeline)  {
+        case Some(result) => result("result") match {
+          case JArray(objs) => Future.sync(objs.toList.map {
+            jo => {
+              val key = jo("_id")
+              val count: Long = jvalToLong(jo("count"))
+              (key,count)
+            }
+          }.toMap)
+        }
+      }
+    }
+  }
+
   def getHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
+
     logger.trace("Map/reduce for histogram on " + variable + " with tagTerms = " + tagTerms + " and add'l constraints: " + additionalConstraints)
 
     val emitter = """
@@ -493,8 +533,6 @@ function(key, values) {
 
   /** Retrieves a count of how many times the specified variable appeared in a path */
   def getVariableCount(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[CountType] = {
-    val baseFilter = rawEventsVariableFilter(token, path, variable, tagTerms)
-
     val emitter = "emit('count', 1)"
 
     val reduceFunc = """
@@ -510,7 +548,11 @@ function(key, values) {
     // TODO: Allow for constraints
     queryMapReduce(token, path, variable, tagTerms, Set(), emitter, reduceFunc) {
       output => eventsdb(selectOne().from(output.outputCollection)).map {
-        result => result.map { jo => jvalToLong(jo("value")) }.getOrElse(0l)
+        result => {
+          var resultMap = result.map { jo => jvalToLong(jo("value")) }.getOrElse(0l)
+          logger.trace("getVariableCount resultMap = " + resultMap)
+          resultMap
+        }
       }
     }
   }
@@ -768,6 +810,10 @@ function(key, values) {
   // the rollup depth is greater than or equal to the difference in path length.
   private def rawEventsBaseFilter(token: Token, path: Path): MongoFilter = {
     JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path").regex("^" + path.path)
+  }
+
+  private def pathRollupFilter(path: Path): MongoFilter = {
+    MongoFilterBuilder(JPath(".min_ru")) <= path.length
   }
 
   // Some tags can be filtered. We can no longer pre-filter for location, since location is free-form in raw events
