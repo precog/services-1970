@@ -875,7 +875,7 @@ function(key, values) {
     val rawTagsFilter = tagsFilter(tagTerms).map(rawBaseFilter & _).getOrElse(rawBaseFilter)
 
     // We always need path and rollup and possibly need timestamp and/or location if we have proper tags
-    val baseFieldsToRetrieve : List[JPath] = JPath(".path") :: JPath(".rollup") :: tagTerms.flatMap {
+    val baseFieldsToRetrieve : List[JPath] = tagTerms.flatMap {
       case i : IntervalTerm          => Some(JPath(".timestamp"))
       case s : SpanTerm              => Some(JPath(".timestamp"))
       case l : HierarchyLocationTerm => Some(JPath(".tags.#location"))
