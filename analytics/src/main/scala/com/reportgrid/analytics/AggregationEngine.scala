@@ -123,24 +123,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     )
   }
 
-  // Helpers for map/reduce
-  val matchesAnonLocFunc = """
-// obj = "#location" value, prefixes = array of prefix strings
-  function matchesAnonLoc(obj, prefixes) {
-      if (typeof obj == 'string' && prefixes.some(function(prefix) { return obj.substring(0, prefix.length) == prefix })) { // seriously? No startsWith?
-          return true;
-      }
-      if (typeof obj == 'object') {
-          for (var prop in obj) {
-              if (matchesAnonLoc(obj[prop], prefixes)) {
-                  return true;
-              }
-          }
-      }
-      return false;
-  }
-"""
-
   private def jvalToLong(jv : JValue) = jv match {
     case JInt(bd) => bd.longValue
     case JDouble(d) => d.toLong
@@ -339,9 +321,8 @@ function(key, values) {
 
   // Cannot be used for queries with anon locs
   private def queryAggregation[T](token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], where: Set[HasValue], pipeline: List[JObject])(finalizer: Option[JObject] => Future[T]): Future[T] = {
-    val fullFilterParts = List(Some(rawEventsBaseFilter(token, path)), 
-                               rawEventsTagsFilter(tagTerms), 
-                               Some(pathRollupFilter(path)),
+    val fullFilterParts = List(Some(baseFilter(token, path)), 
+                               tagsFilter(tagTerms), 
                                eventNameFilter(variable),
                                variableExistsFilter(variable),
                                constraintFilter(where))
@@ -378,9 +359,8 @@ function(key, values) {
   }
 
   private def queryMapReduce[T](token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], where: Set[HasValue], emitter: String, reducer: String)(finalizer: MapReduceOutput => Future[T]): Future[T] = {
-    val fullFilterParts = List(Some(rawEventsBaseFilter(token, path)), 
-                               rawEventsTagsFilter(tagTerms), 
-                               Some(pathRollupFilter(path)),
+    val fullFilterParts = List(Some(baseFilter(token, path)), 
+                               tagsFilter(tagTerms), 
                                eventNameFilter(variable),
                                variableExistsFilter(variable),
                                constraintFilter(where))
@@ -394,14 +374,6 @@ function(key, values) {
 
     logger.trace("MR: Sending results to " + resultCollection)
 
-    val anonLocationPrefixes : Seq[String] = tagTerms.collect {
-      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => path.path
-    }
-
-    val mapHelpers = if (anonLocationPrefixes.isEmpty) "" else matchesAnonLocFunc
-
-    val emitterClause = if (anonLocationPrefixes.isEmpty) emitter else "if (matchesAnonLoc(this['tags']['#location'], %s) { %s }".format(anonLocationPrefixes.mkString("[\"", "\",\"", "\"])"), emitter)
-    
     val mapFunc = """
 function() {
   if(!Array.isArray) {  
@@ -409,11 +381,10 @@ function() {
       return Object.prototype.toString.call(arg) == '[object Array]';  
     };  
   }  
-%s
 
   %s;
 }
-""".format(mapHelpers, emitterClause)
+""".format(emitter)
 
     logger.trace("MR: MapFunc = " + mapFunc)
     logger.trace("MR: Reducer = " + reducer)
@@ -437,9 +408,8 @@ function() {
       case _ => false
     }
 
-    if (hasAnonLocs(tagTerms) || isArrayVar) {
-      if (isArrayVar) { logger.trace("Forcing MR on histogram over array variable") }
-
+    if (isArrayVar) {
+      logger.trace("Forcing MR on histogram over array variable")
       getMRHistogram(token, path, variable, tagTerms, additionalConstraints)
     } else {
       logger.trace("Aggregation for histogram on " + variable + " with tagTerms = " + tagTerms + " and add'l constraints: " + additionalConstraints)
@@ -556,9 +526,8 @@ function(key, values) {
 
   /** Retrieves a count of how many times the specified variable appeared in a path */
   def getVariableCount(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): Future[CountType] = {
-    val fullFilterParts = List(Some(rawEventsBaseFilter(token, path)), 
-                               rawEventsTagsFilter(tagTerms), 
-                               Some(pathRollupFilter(path)),
+    val fullFilterParts = List(Some(baseFilter(token, path)), 
+                               tagsFilter(tagTerms), 
                                eventNameFilter(variable),
                                variableExistsFilter(variable))
 
@@ -818,17 +787,12 @@ function(key, values) {
   // the base filter is using a prefix-based match strategy to catch the path. This has the implication that paths are rolled up 
   // by default, which may not be exactly what we want. Hence, we later have to filter the returned results for only those where 
   // the rollup depth is greater than or equal to the difference in path length.
-  private def rawEventsBaseFilter(token: Token, path: Path): MongoFilter = {
-    JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path").regex("^" + path.path)
+  private def baseFilter(token: Token, path: Path): MongoFilter = {
+    JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path").regex("^" + path.path) & MongoFilterBuilder(JPath(".min_ru")) <= path.length
   }
 
-  private def pathRollupFilter(path: Path): MongoFilter = {
-    MongoFilterBuilder(JPath(".min_ru")) <= path.length
-  }
-
-  // Some tags can be filtered. We can no longer pre-filter for location, since location is free-form in raw events
-  private def rawEventsTagsFilter(tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
-    val tagsFilters: Seq[MongoFilter]  = tagTerms.collect {
+  private def tagsFilter(tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
+    val tagsFilters: List[MongoFilter]  = tagTerms.collect {
       case IntervalTerm(_, _, span) => 
         (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
         (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
@@ -839,9 +803,22 @@ function(key, values) {
 
       case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) =>
         MongoFilterBuilder(JPath(".tags") \ ("#" + tagName) \ name) === path.path
-    }
+    }.toList
 
-    tagsFilters.reduceLeftOption(_ & _)
+    (anonLocationFilter(tagTerms).map(_ :: tagsFilters).getOrElse(tagsFilters)).reduceLeftOption(_ & _)
+  }
+
+  def anonLocationFilter(tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
+    val prefixes : List[String] = tagTerms.collect {
+      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => path.toString
+    }.toList
+
+    if (prefixes.isEmpty) {
+      None
+    } else {
+      val rawJS = """var loc = this['tags']['#location']; for (var prop in loc) { var locv = loc[prop]; if (%s.some(function(p){ return p == locv; })) return true; }; return false;""""".format(prefixes.mkString("[\"", "\",\"", "\"]"))
+      Some(evaluation(rawJS))
+    }
   }
 
   private def eventNameFilter(variable: Variable): Option[MongoFilter] =
@@ -874,8 +851,8 @@ function(key, values) {
     }
 
   private def rawEventsVariableFilter(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): MongoFilter = {
-    List(Some(rawEventsBaseFilter(token, path)),
-         rawEventsTagsFilter(tagTerms),
+    List(Some(baseFilter(token, path)),
+         tagsFilter(tagTerms),
          eventNameFilter(variable),
          variableExistsFilter(variable)).flatten.reduceLeft(_ & _)
   }
@@ -884,10 +861,10 @@ function(key, values) {
     // the base filter is using a prefix-based match strategy to catch the path. This has the implication that paths are rolled up 
     // by default, which may not be exactly what we want. Hence, we later have to filter the returned results for only those where 
     // the rollup depth is greater than or equal to the difference in path length.
-    val baseFilter = rawEventsBaseFilter(token, path)
+    val rawBaseFilter = baseFilter(token, path)
 
     // Some tags can be filtered. We can no longer pre-filter for location, since location is free-form in raw events
-    val tagsFilter = rawEventsTagsFilter(tagTerms).map(baseFilter & _).getOrElse(baseFilter)
+    val rawTagsFilter = tagsFilter(tagTerms).map(rawBaseFilter & _).getOrElse(rawBaseFilter)
 
     val anonLocationPrefixes : Seq[String] = tagTerms.collect {
       case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => path.path
@@ -901,7 +878,7 @@ function(key, values) {
       case _                         => None
     }.distinct.toList
 
-    val (neededFields,filter) = observation.obs.foldLeft((baseFieldsToRetrieve, tagsFilter)) {
+    val (neededFields,filter) = observation.obs.foldLeft((baseFieldsToRetrieve, rawTagsFilter)) {
       case ((vars, acc), HasValue(variable, value)) => 
         val eventName = variable.name.head.flatMap {
           case JPathField(name) => Some(name)
