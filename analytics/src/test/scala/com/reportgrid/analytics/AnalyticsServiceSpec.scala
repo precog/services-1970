@@ -942,6 +942,8 @@ class RollupAnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEven
       (leaf zip root) must whenDelivered {
         beLike {
           case (HttpResponse(leafStatus, _, Some(leafResult), _), HttpResponse(rootStatus, _, Some(rootResult), _)) => 
+            logger.trace("Leaf = " + leafResult)
+            logger.trace("Root = " + rootResult)
             (expectedCounts must_== leafResult) and 
             (leafResult must_== rootResult)
         }

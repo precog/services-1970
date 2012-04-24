@@ -321,17 +321,9 @@ function(key, values) {
 
   // Cannot be used for queries with anon locs
   private def queryAggregation[T](token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], where: Set[HasValue], pipeline: List[JObject])(finalizer: Option[JObject] => Future[T]): Future[T] = {
-    val fullFilterParts = List(Some(baseFilter(token, path)), 
-                               tagsFilter(tagTerms), 
-                               eventNameFilter(variable),
-                               variableExistsFilter(variable),
-                               constraintFilter(where))
-    
-    logger.trace("Aggregation: Filter components = " + fullFilterParts.flatten)
+    val filter = fullFilter(token, path, variable, tagTerms, where)
 
-    val fullFilter = fullFilterParts.flatten.reduceLeft(_ & _)
-
-    val matchStep = JObject(List(JField("$match", fullFilter.filter)))
+    val matchStep = JObject(List(JField("$match", filter.filter)))
 
     // Just in case the value is an array, we try to unwind first and then check to see if the result is an error
     val unwindPipe = JObject(List(JField("$unwind", "$" + (JPath(".event.data") \ variable.name.tail).toString.drop(1))))
@@ -359,15 +351,7 @@ function(key, values) {
   }
 
   private def queryMapReduce[T](token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], where: Set[HasValue], emitter: String, reducer: String)(finalizer: MapReduceOutput => Future[T]): Future[T] = {
-    val fullFilterParts = List(Some(baseFilter(token, path)), 
-                               tagsFilter(tagTerms), 
-                               eventNameFilter(variable),
-                               variableExistsFilter(variable),
-                               constraintFilter(where))
-    
-    logger.trace("MR: Filter components = " + fullFilterParts.flatten)
-
-    val fullFilter = fullFilterParts.flatten.reduceLeft(_ & _)
+    val filter = fullFilter(token, path, variable, tagTerms, where)
 
     // Results go to temp collection. This works around a MongoDB Java driver bug as well as allowing for result sets > 16MB
     val resultCollection = ("mapreduce" + java.util.UUID.randomUUID.toString).replace("-","")
@@ -388,9 +372,9 @@ function() {
 
     logger.trace("MR: MapFunc = " + mapFunc)
     logger.trace("MR: Reducer = " + reducer)
-    logger.trace("MR: Filter " + compact(render(fullFilter.filter)))
+    logger.trace("MR: Filter " + compact(render(filter.filter)))
     
-    eventsdb(mapReduce(mapFunc, reducer).from(events_collection).where(fullFilter).into(resultCollection)).flatMap {
+    eventsdb(mapReduce(mapFunc, reducer).from(events_collection).where(filter).into(resultCollection)).flatMap {
       output => {
         logger.trace("MR complete on " + resultCollection + " with result: " + output.status)
         logger.trace("MR running finalizer for " + resultCollection)
@@ -537,37 +521,44 @@ function(key, values) {
   }
 
   def aggregateVariableSeries(token: Token, path: Path, variable: Variable, encoding: TimeSeriesEncoding, period: Period, otherTerms: Seq[TagTerm], additionalConstraints: Set[HasValue]): Future[ValueStats] = {
-    val emitter = """
-  var v = this%1$s;
-  if (typeof(v) == 'number' || v instanceof NumberLong) {
-    var squared = v * v;
-    emit("%2$d", { c : 1, s : v, q: squared });
-  } else {
-    emit("%2$d", { c : 1, s : NaN, q: NaN });
-  }
-""".format(JPath(".event.data") \ variable.name.tail, period.start.getMillis)
+    logger.trace("Aggregate variable series on " + variable)
+    val variableName = (JPath(".event.data") \ variable.name.tail).toString.drop(1) // Drop leading dot
 
-    val reduceFunc = """
-function(key, values) {
-  var count = 0;
-  var sum = 0;
-  var sumsq = 0;
+    val pipeline = List(JObject(List(JField("$project", JObject(List(JField("val", JString("$" + variableName)),
+                                                                     JField("squared", JObject(List(JField("$multiply", JArray(List(JString("$" + variableName), JString("$" + variableName)))))))))))),
+                        JObject(List(JField("$group", JObject(List(JField("_id", JInt(period.start.getMillis)),
+                                                                   JField("count", JObject(List(JField("$sum", JInt(1))))),
+                                                                   JField("sum", JObject(List(JField("$sum", JString("$val"))))),
+                                                                   JField("sumsq", JObject(List(JField("$sum", JString("$squared")))))))))))
+    
+    val fullTerms = otherTerms ++ Seq(SpanTerm(encoding, period.timeSpan))
+    
+    queryAggregation(token, path, variable, fullTerms, additionalConstraints, pipeline)  {
+      case Some(firstResult) => {
+        val nonNumeric = firstResult match {
+          case obj if (obj("ok") == JInt(0) || obj("ok") == JDouble(0)) && obj("code") == JInt(16005) => true
+          case _         => false
+        }
+        
+        if (nonNumeric) {
+          // If it's non-numeric all we can do is count it
+          logger.trace("Non-numeric varseries. Counting")
+          eventsdb(count.from(events_collection).where(fullFilter(token, path, variable, fullTerms, additionalConstraints))).map { count => ValueStats(count, None, None) }
+        } else {
+          firstResult("result") match {
+            case JArray(objs) => {
+              logger.trace("Aggregation results: " + objs)
+              Future.sync(objs.toList.map {
+                jo => {
+                  val key = jo("_id")
+                  val count: Long = jvalToLong(jo("count"))
+                  val sum = Some(jvalToDouble(jo("sum")))
+                  val sumsq = Some(jvalToDouble(jo("sumsq")))
 
-  for (var i = 0; i < values.length; i++) {
-    count += values[i].c;
-    sum   += values[i].s;
-    sumsq += values[i].q;
-  }
-  return { c : count, s : sum, q : sumsq };
-}
-"""
-
-    queryMapReduce(token, path, variable, otherTerms ++ Seq(SpanTerm(encoding, period.timeSpan)), additionalConstraints, emitter, reduceFunc) {
-      output => {
-        eventsdb(selectOne().from(output.outputCollection)).map {
-          result => {
-            logger.trace("MR: result from " + output.outputCollection + " = " + result)
-            result.map { jo => ValueStats(jvalToLong(jo("value")("c")), Some(jvalToDouble(jo("value")("s"))), Some(jvalToDouble(jo("value")("q")))) }.getOrElse { ValueStats(0,None,None) }
+                  ValueStats(count, sum, sumsq)
+                }
+              }.headOption.getOrElse(ValueStats(0,None,None)))
+            }
           }
         }
       }
@@ -720,13 +711,18 @@ function(key, values) {
       // We'll limit our query to just the fields we need to obtain the intersection, plus the event name
       val observations = JointObservation(constraints.toSeq ++ variableDescriptors.map(vd => HasValue(vd.variable, JNothing)): _*)
 
-      logger.trace("Querying mongo for intersection events with obs = " + observations)
+      val qid = java.util.UUID.randomUUID().toString
+
+      logger.trace(qid + ": Querying mongo for intersection events with obs = " + observations)
       val queryStart = System.currentTimeMillis()
 
       getRawEvents(token, path, observations, tagTerms, Right(List(JPath(".event.name")))) map { events =>
-          val eventsByName = events.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
+          val evs = events.toList
+          logger.trace("Total events = " + evs.size)
 
-          logger.trace("Got %d results for intersection after %d ms".format(eventsByName.map(_._2.size).sum, System.currentTimeMillis() - queryStart))
+          val eventsByName = evs.groupBy(jv => (jv \ "event" \ "name").deserialize[String])
+
+          logger.trace(qid + ": Got %d results for intersection after %d ms".format(eventsByName.map(_._2.size).sum, System.currentTimeMillis() - queryStart))
 
           val resultMap = eventsByName.foldLeft(Map.empty[JArray, Map[JObject, CountType]]) {
             case (result, (eventName, namedEvents)) => 
@@ -782,6 +778,18 @@ function(key, values) {
         case _ => Nil
       }
     }
+  }
+
+  def fullFilter(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], where: Set[HasValue]) = {
+    val fullFilterParts = List(Some(baseFilter(token, path)), 
+                               tagsFilter(tagTerms), 
+                               eventNameFilter(variable),
+                               variableExistsFilter(variable),
+                               constraintFilter(where))
+    
+    logger.trace("Full filter components = " + fullFilterParts.flatten)
+
+    fullFilterParts.flatten.reduceLeft(_ & _)
   }
 
   // the base filter is using a prefix-based match strategy to catch the path. This has the implication that paths are rolled up 
@@ -866,10 +874,6 @@ function(key, values) {
     // Some tags can be filtered. We can no longer pre-filter for location, since location is free-form in raw events
     val rawTagsFilter = tagsFilter(tagTerms).map(rawBaseFilter & _).getOrElse(rawBaseFilter)
 
-    val anonLocationPrefixes : Seq[String] = tagTerms.collect {
-      case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => path.path
-    }
-
     // We always need path and rollup and possibly need timestamp and/or location if we have proper tags
     val baseFieldsToRetrieve : List[JPath] = JPath(".path") :: JPath(".rollup") :: tagTerms.flatMap {
       case i : IntervalTerm          => Some(JPath(".timestamp"))
@@ -906,18 +910,7 @@ function(key, values) {
       case Right(extras) => Some((extras ::: neededFields).distinct)
     }
 
-    retrieveEventsFor(filter, fieldsToRetrieve).map {
-      _.filter { jv => 
-        val eventPath = Path((jv \ "path").deserialize[String])
-        //either the event path was equal to the path, or the difference between the length of the path (which must be longer)
-        //and the queried path must be within range of the specified rollup
-        val rollupOK = eventPath == path || (jv \? "rollup").flatMap(_.validated[Int].toOption).exists(r => (eventPath - path).map(_.length).exists(_ <= r))
-
-        val locationOK = anonLocationPrefixes.size == 0 || locationValueMatch(anonLocationPrefixes, jv \ "tags" \ "#location").isDefined
-
-        rollupOK && locationOK
-      }
-    }
+    retrieveEventsFor(filter, fieldsToRetrieve)
   }
 
   // The location of the event must either match the anonLocationPrefixes, or contain a field whose value matches
