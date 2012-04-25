@@ -336,7 +336,7 @@ function(key, values) {
       firstResult => {
         logger.trace("Aggregation: received unwound result: " + firstResult)
         val unwindInvalid = firstResult match {
-          case Some(obj) => (obj("ok") == JInt(0) || obj("ok") == JDouble(0)) && obj("code") == JInt(15978)
+          case Some(obj) => (obj("ok") == JInt(0) || obj("ok") == JDouble(0)) // && obj("code") == JInt(15978)
           case _         => false
         }
         
