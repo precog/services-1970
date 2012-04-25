@@ -286,6 +286,7 @@ with ChildLocationsService {
 
 class VariableSeriesService[T: Decomposer : AbelianGroup](val aggregationEngine: AggregationEngine, f: ValueStats => T) 
 extends CustomHttpService[Future[JValue], (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
+with Logging
 with ColumnHeaders
 with ChildLocationsService {
   //val service: HttpRequest[Future[JValue]] => Validation[NotServed,(Token, Path, Variable) => Future[HttpResponse[JValue]]] = 

@@ -228,7 +228,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
           ev => ev.eventName == eventName
         }.map(_.data.value.get("num")).distinct
         
-        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".num/values") must whenDelivered {
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".num/values") must whenDelivered[HttpResponse[JValue]] {
           beLike {
               case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
                 val nonTagData = result.deserialize[List[JValue]].map {
@@ -239,7 +239,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
                 (nonTagData must containAllOf(expected).only)
               }
           }
-        }
+        }(FutureTimeouts(5, toDuration(30l).seconds))
 
       }
     }
@@ -508,7 +508,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         JField("location", "usa") :: Nil
       )
 
-      (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/"+granularity.name+"/means")(queryTerms)) must whenDelivered {
+      (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/"+granularity.name+"/means")(queryTerms)) must whenDelivered[HttpResponse[JValue]] {
         beLike {
           case HttpResponse(status, _, Some(contents), _) => 
             val resultData = (contents: @unchecked) match {
@@ -521,7 +521,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             // TODO: Should fix data generation so that we always have "tweeted" events
             resultData.toMap must haveTheSameElementsAs(expected.get("tweeted").getOrElse(Map()))
         }
-      } 
+      }(FutureTimeouts(5, toDuration(30l).seconds)) 
     }
 
     "return variable series means using a where clause" in sampleData { sampleEvents =>
@@ -543,7 +543,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         JField("where", JArray(List(JObject(JField("variable", ".tweeted.twitterClient") :: JField("value", desiredTwitterClient) :: Nil)))) :: Nil
       )
 
-      (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/"+granularity.name+"/means")(queryTerms)) must whenDelivered {
+      (jsonTestService.post[JValue]("/vfs/test/.tweeted.recipientCount/series/"+granularity.name+"/means")(queryTerms)) must whenDelivered[HttpResponse[JValue]] {
         beLike {
           case HttpResponse(status, _, Some(contents), _) => 
             val resultData = (contents: @unchecked) match {
@@ -555,7 +555,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
             resultData.toMap must haveTheSameElementsAs(expected.get("tweeted").getOrElse(Map()))
         }
-      } 
+      }(FutureTimeouts(5, toDuration(30l).seconds)) 
     }
 
     "return variable value series counts" in sampleData { sampleEvents =>
@@ -572,11 +572,11 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         case ((jpath, value), count) if jpath.nodes.last == JPathField("gender") && !jpath.endsInInfiniteValueSpace =>
           val vtext = compact(render(value))
           val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/"+granularity.name
-          (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered {
+          (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(JArray(values)), _) => (values must not be empty) //and (series must_== expected)
             }
-          }
+          }(FutureTimeouts(5, toDuration(30l).seconds))
       }
     }
 
@@ -594,11 +594,11 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         case ((jpath, value), count) if jpath.nodes.last == JPathField("gender") && !jpath.endsInInfiniteValueSpace =>
           val vtext = compact(render(value))
           val servicePath = "/vfs/test/"+jpath+"/values/"+vtext+"/series/"+granularity.name+"?groupBy="+granularity.next.next.name
-          (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered {
+          (jsonTestService.post[JValue](servicePath)(queryTerms)) must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(JArray(values)), _) => (values must not be empty) //and (series must_== expected)
             }
-          }
+          }(FutureTimeouts(5, toDuration(30l).seconds))
       }
     })
 

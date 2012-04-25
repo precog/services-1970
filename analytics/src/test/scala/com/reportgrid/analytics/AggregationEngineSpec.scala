@@ -120,8 +120,13 @@ trait LocalMongo extends Specification with Logging {
     try {
       val conn = new Mongo("localhost")
 
+      logger.info("Dropping events DB: " + eventsName)
       conn.getDB(eventsName).dropDatabase()
+      logger.info("Dropped " + eventsName)
+
+      logger.info("Dropping index DB: " + indexName)
       conn.getDB(indexName).dropDatabase()
+      logger.info("Dropped " + indexName)
       
       conn.close()
     } catch {

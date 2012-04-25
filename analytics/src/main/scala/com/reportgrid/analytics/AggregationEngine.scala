@@ -565,46 +565,99 @@ function(key, values) {
     }
   }
 
-  /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
-  def getVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty): Future[ResultSet[JObject, ValueStats]] = {
-    // Break out terms into timespan, named locations, and anonymous location prefixes (if any) 
-    val (intervalOpt,locations,anonPrefixes) = tagTerms.foldLeft(Tuple3[Option[IntervalTerm], List[HierarchyLocationTerm], List[String]](None,Nil,Nil)) {
-      case ((_,locs,prefixes),interval @ IntervalTerm(encoding, periodicity, TimeSpan(start,end))) => (Some(interval), locs, prefixes)
-      case ((interval,locs,prefixes), loc @ HierarchyLocationTerm(name, Hierarchy.NamedLocation(_,_))) => (interval, loc :: locs, prefixes)
-      case ((interval,locs,prefixes), loc @ HierarchyLocationTerm(name, Hierarchy.AnonLocation(path))) => (interval, locs, path.path :: prefixes)
-      case (acc,_) => acc
+  // This method is only used when we have anonymous location tags
+  def mapReduceVariableSeries(token: Token, path: Path, variable: Variable, encoding: TimeSeriesEncoding, period: Period, additionalConstraints: Set[HasValue], prefixes : Seq[String]): Future[ResultSet[JObject, ValueStats]] = {
+    val emitter = """
+  function anonLocMatch(obj, prefixes) {
+      if (typeof obj == 'string') {
+          for (var i in prefixes) {
+              var prefix = prefixes[i];
+              if (obj.substring(0, prefix.length) == prefix) {
+                  return prefix;
+              }
+          }
+
+          return null;
+      }
+      if (typeof obj == 'object') {
+          for (var prop in obj) {
+              return anonLocMatch(obj[prop], prefixes)
+          }
+      }
+      return null;
+  }
+
+  function emitByType(v, p) {
+      if (typeof(v) == 'number' || v instanceof NumberLong) {
+          var squared = v * v;
+          emit({ "timestamp" : %1$d, "location" : p }, { c : 1, s : v, q: squared });
+      } else {
+          emit({ "timestamp" : %1$d, "location" : p }, { c : 1, s : NaN, q: NaN });
+      }
+  }
+
+  var matchedPrefix = anonLocMatch(this['tags']['#location'], %2$s);
+
+  if (matchedPrefix != null) {
+      var testVal = this%3$s;
+
+      if (Array.isArray(testVal)) {
+          for (var index in testVal) {
+              if (testVal[index] != null) {
+                  emitByType(testVal[index], matchedPrefix);
+              }
+          }
+      } else {
+          if (testVal != null) {
+              emitByType(testVal, matchedPrefix);
+          }
+      }
+  }
+    """.format(period.start.getMillis, prefixes.mkString("[\"", "\",\"", "\"]"), JPath(".event.data") \ variable.name.tail)
+
+    val reducer = """
+function(key, values) {
+    var count = 0;
+    var sum = 0;
+    var sumsq = 0;
+
+    for (var i = 0; i < values.length; i++) {
+        count += values[i].c;
+        sum   += values[i].s;
+        sumsq += values[i].q;
     }
+    return { c : count, s : sum, q : sumsq };
+}
+    """
 
-    val varPath = JPath(".event.data") \ variable.name.tail
+    logger.trace("MR varseries emitter: " + emitter)
+    logger.trace("MR varseries reducer: " + reducer)
 
-    def aggregateEvents(allEvents: Iterator[JObject]) : ValueStats = {
-      val startTime = System.currentTimeMillis
-      var count = 0
-      var sum = 0.0
-      var sumsq = 0.0
-      var numeric = false
-
-      allEvents.foreach {
-        event => {
-          count = count + 1
-          val eventValueStats = varPath.extract(event) match {
-            case JInt(v)    => val vd = v.toDouble; numeric = true; sum = sum + vd; sumsq = sumsq + (vd * vd)
-            case JDouble(d) => numeric = true; sum = sum + d; sumsq = sumsq + (d * d)
-            case _          => // noop
+    queryMapReduce(token, path, variable, Seq(SpanTerm(encoding, period.timeSpan)), additionalConstraints, emitter, reducer) {
+      output => {
+        eventsdb(selectAll.from(output.outputCollection)).map {
+          result => {
+            val resList = result.toList
+            logger.trace("MR varseries results from " + output.outputCollection + ": " + resList)
+            resList.map { jo => (jo("_id").asInstanceOf[JObject], ValueStats(jvalToLong(jo("value")("c")), Some(jvalToDouble(jo("value")("s"))), Some(jvalToDouble(jo("value")("q"))))) }
           }
         }
       }
-
-      val aggregated = if (numeric) ValueStats(count, Some(sum), Some(sumsq)) else ValueStats(count, None, None)
-      logger.trace("Aggregated events to " + aggregated + " in " + (System.currentTimeMillis - startTime) + "ms")
-      aggregated
     }
+  }
+
+  /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
+  def getVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty): Future[ResultSet[JObject, ValueStats]] = {
+    // Break out terms into timespan, named locations, and anonymous location prefixes (if any) 
+    val intervalOpt  = tagTerms.collectFirst { case i : IntervalTerm => i }
+    val locations    = tagTerms.collect { case loc @ HierarchyLocationTerm(name, Hierarchy.NamedLocation(_,_)) => loc }.toList
+    val anonPrefixes = tagTerms.collect { case loc @ HierarchyLocationTerm(name, Hierarchy.AnonLocation(path)) => path.path }
 
     val allObs = JointObservation(additionalConstraints + HasValue(variable, JNothing))
 
     logger.trace("Obtaining variable series on " + allObs)
 
-    // Run the query over the interval given
+    // Run the query over the intervals given
     val results: Option[Future[ResultSet[JObject,ValueStats]]] = intervalOpt.map { interval => Future(interval.periods.map {
       period => {
         // If we have locations or prefixes, do location-based queries
@@ -620,34 +673,9 @@ function(key, values) {
             }
           }
 
-          /* Because we can't filter on anonymous locations (they're free-form in the DB), we have to
-           * just grab all events for the given interval and then group them app-side */
-          val anonLocResults: Future[List[(JObject, ValueStats)]] = if (!anonPrefixes.isEmpty) {
+          val anonLocResults: Future[ResultSet[JObject, ValueStats]] = if (!anonPrefixes.isEmpty) {
             logger.trace("varseries with anon locations")
-            // Make sure we retrieve location as part of the fields
-            getRawEvents(token, path, allObs, Seq(SpanTerm(interval.encoding, period.timeSpan)), Right(List(JPath(".tags.#location")))).map {
-              rawEvents => {
-                // Compute statistics for any of the anon location prefixes that match our given events
-                val prefixResults = rawEvents.foldLeft(Map.empty[String,List[JObject]]) {
-                  case (acc, event) => locationValueMatch(anonPrefixes, event \ "tags" \ "#location") match {
-                    case Some(matchedPrefix) => acc + (matchedPrefix -> acc.get(matchedPrefix).map(event :: _).getOrElse(List(event)))
-                    case None                => acc
-                  }
-                }
-
-                /* Now we determine stats for each of our prefixes based on the map. Non-existent prefixes
-                 * Are set to zero so that we maintain a record for each period whether or not events match
-                 * that period. */
-                anonPrefixes.map {
-                  prefix => {
-                    val events = prefixResults.get(prefix).getOrElse(List())
-                    val result = (JObject(List(JField("timestamp", period.start.serialize), JField("location", JString(prefix)))),
-                                  aggregateEvents(events.iterator))
-                    result
-                  }
-                }
-              }
-            }
+            mapReduceVariableSeries(token, path, variable, interval.encoding, period, additionalConstraints, anonPrefixes)
           } else Future.sync(List[(JObject,ValueStats)]()) 
 
           Future((anonLocResults :: namedLocResults): _*).map(_.flatten)
@@ -659,7 +687,8 @@ function(key, values) {
           }
         }
       }
-    }: _*).map{ _.flatten.sortBy(_._1)(JObjectOrdering) }}
+      // Bogus entry is added since time zone shifting will remove the first element. See AnalyticsService.shiftTimeSeries for details
+    }: _*).map{ r => (List((JObject(JField("bogus", JBool(true)) :: Nil),ValueStats(0, None, None))) :: r).flatten.sortBy(_._1)(JObjectOrdering) }}
 
     results.getOrElse(sys.error("Variable series requires a time span"))
   }
