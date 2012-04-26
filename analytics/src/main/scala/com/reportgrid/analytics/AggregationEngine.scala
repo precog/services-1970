@@ -233,6 +233,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
         (HasChild(variable, jvalue match {
           case JString(str) => JPathField(str.replaceAll("^\\.+", "")) // Handle any legacy data (stores prefixed dot)
           case JInt(index)  => JPathIndex(index.toInt)
+          case invalid      => logger.error("Invalid var child value: " + invalid); sys.error("Invalid variable child result")
         }), count.toLong)
       }.map { 
         // Sum up legacy and new keys with the same name
@@ -415,7 +416,9 @@ function() {
               }
             }.toMap)
           }
+          case invalid => sys.error("Invalid histogram result")
         }
+        case _ => Future.sync(Map())
       }
     }
   }
@@ -559,9 +562,11 @@ function(key, values) {
                 }
               }.headOption.getOrElse(ValueStats(0,None,None)))
             }
+            case invalid => logger.error("Invalid var series result: " + invalid); sys.error("Invalid variable series result")
           }
         }
       }
+      case None => Future.sync(ValueStats(0, None, None))
     }
   }
 
@@ -705,14 +710,71 @@ function(key, values) {
     getRawEvents(token, path, observation, tagTerms).map(countByTerms(_, tagTerms).toSeq)
   }
 
-  def getIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, CountType]] = {
-    getIntersectionSeries(token, path, properties, tagTerms, constraints) map {
-      _.foldLeft(SortedMap.empty[JArray, CountType](JArrayOrdering)) {
-        case (total, (key, timeSeries)) => 
-          total + (key -> total.get(key).map(_ |+| timeSeries.total).getOrElse(timeSeries.total))
-      }.toSeq
-    } 
+  def getAggrIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, CountType]] = {
+    def varSimpleName(v : VariableDescriptor) = v.variable.name.nodes.last.toString.drop(1)
+    def varFullName(v: VariableDescriptor) = (JPath(".event.data") \ v.variable.name.tail).toString.drop(1) // Drop leading dot
+
+    logger.trace("Running aggregate-based intersection count on " + properties.map(varSimpleName).mkString(", "))
+
+    val pipeline = List(JObject(List(JField("$project", JObject(properties.map { v => JField(varFullName(v), JInt(1)) })))),
+                        JObject(List(JField("$group",   JObject(List(JField("_id", JObject(properties.map { v => JField(varSimpleName(v), "$" + varFullName(v)) })),
+                                                                     JField("count", JObject(List(JField("$sum", JInt(1)))))  ))))))
+
+    // We drop the first variable since we'll be using it as the primary var for the queryAggregation call
+    val fullConstraints : Set[HasValue] = (properties.drop(1).map { v => HasValue(v.variable, JNothing) } ++ constraints).toSet
+
+    queryAggregation(token, path, properties.head.variable, tagTerms, fullConstraints, pipeline) {
+      case Some(result) => {
+        result("result") match {
+          case JArray(values) => {
+            logger.trace("compiling aggregate-based results")
+            // In order to handle sorting/top n, we need to know what our values actually are and how many times they appear
+            var varValueBuckets = Map[String, Map[JValue, Long]]()
+            
+            values.foreach {
+              case JObject(List(JField("_id", JObject(props)), JField("count", count))) => props.foreach {
+                case JField(fieldName, fieldValue) => {
+                  val valMap = varValueBuckets.get(fieldName).getOrElse(Map())
+                  varValueBuckets += (fieldName -> (valMap + (fieldValue -> (valMap.get(fieldValue).getOrElse(0l) + jvalToLong(count)))))
+                }
+              }
+              case invalid => logger.error("Invalid result value from intersect count: " + invalid); sys.error("Invalid results for query")
+            }
+
+            // Use the buckets to compute the values we actually want in events
+            val toKeep: Map[String, Set[JValue]] = properties.map {
+              case v => v.sortOrder match {
+                case SortOrder.Ascending  => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(_._2).take(v.maxResults).toMap.keySet)
+                case SortOrder.Descending => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(-_._2).take(v.maxResults).toMap.keySet)
+              }
+            }.toMap
+
+            logger.trace("aggregate-based keepers = " + toKeep)
+
+            // Filter the results to ensure that only results with all properties in the keep set are used
+            val finalResults = values.flatMap {
+              case JObject(List(JField("_id", JObject(props)), JField("count", count))) => {
+                if (props.forall { case JField(name, value) => toKeep(name)(value) }) {
+                  Some((JArray(props.map { case JField(_, value) => value }), jvalToLong(count)))
+                } else {
+                  None
+                }
+              }
+              case _ => None
+            }
+
+            logger.trace("aggregate-based final results = " + finalResults)
+
+            Future.sync(finalResults)
+          }
+          case invalid => logger.error("Invalid result from intersec count: " + invalid); sys.error("Invalid results for query")
+        }
+      }
+      case _ => Future.sync(Nil)
+    }
   }
+
+  def getIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, CountType]] = getAggrIntersectionCount(token, path, properties, tagTerms, constraints)
 
   def getIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
     getRawIntersectionSeries(token, path, variableDescriptors, tagTerms, constraints)

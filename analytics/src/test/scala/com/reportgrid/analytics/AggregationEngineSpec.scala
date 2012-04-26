@@ -42,8 +42,8 @@ import com.weiglewilczek.slf4s.Logging
 import com.mongodb.Mongo
 
 trait LocalMongo extends Specification with Logging {
-  val eventsName = "testev" + scala.util.Random.nextInt(10000)
-  val indexName =  "testix" + scala.util.Random.nextInt(10000)
+  val eventsName = "testev%04d".format(scala.util.Random.nextInt(10000))
+  val indexName =  "testix%04d".format(scala.util.Random.nextInt(10000))
 
   def mongoConfigFileData = """
     eventsdb {
