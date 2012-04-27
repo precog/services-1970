@@ -123,6 +123,28 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     )
   }
 
+  final val anonLocMatchFunc = """
+  function anonLocMatch(obj, prefixes) {
+      if (typeof obj == 'string') {
+          for (var i in prefixes) {
+              var prefix = prefixes[i];
+              if (obj.substring(0, prefix.length) == prefix) {
+                  return prefix;
+              }
+          }
+
+          return null;
+      }
+      if (typeof obj == 'object') {
+          for (var prop in obj) {
+              return anonLocMatch(obj[prop], prefixes)
+          }
+      }
+      return null;
+  }
+
+"""
+
   private def jvalToLong(jv : JValue) = jv match {
     case JInt(bd) => bd.longValue
     case JDouble(d) => d.toLong
@@ -572,26 +594,7 @@ function(key, values) {
 
   // This method is only used when we have anonymous location tags
   def mapReduceVariableSeries(token: Token, path: Path, variable: Variable, encoding: TimeSeriesEncoding, period: Period, additionalConstraints: Set[HasValue], prefixes : Seq[String]): Future[ResultSet[JObject, ValueStats]] = {
-    val emitter = """
-  function anonLocMatch(obj, prefixes) {
-      if (typeof obj == 'string') {
-          for (var i in prefixes) {
-              var prefix = prefixes[i];
-              if (obj.substring(0, prefix.length) == prefix) {
-                  return prefix;
-              }
-          }
-
-          return null;
-      }
-      if (typeof obj == 'object') {
-          for (var prop in obj) {
-              return anonLocMatch(obj[prop], prefixes)
-          }
-      }
-      return null;
-  }
-
+    val emitter = anonLocMatchFunc + """
   function emitByType(v, p) {
       if (typeof(v) == 'number' || v instanceof NumberLong) {
           var squared = v * v;
@@ -710,15 +713,99 @@ function(key, values) {
     getRawEvents(token, path, observation, tagTerms).map(countByTerms(_, tagTerms).toSeq)
   }
 
-  def getAggrIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, CountType]] = {
-    def varSimpleName(v : VariableDescriptor) = v.variable.name.nodes.last.toString.drop(1)
-    def varFullName(v: VariableDescriptor) = (JPath(".event.data") \ v.variable.name.tail).toString.drop(1) // Drop leading dot
+  // Given a list of { "_id" : { ... }, "value" : NumberLong(...) } values, compute the counts
+  // "_id" object may contain more values than properties, in which case extra values are not considered and simply passed through
+  private def computeIntersectionCounts(values: List[JObject], properties: List[VariableDescriptor]): ResultSet[JObject, CountType] = {
+    // In order to handle sorting/top n, we need to know what our values actually are and how many times they appear
+    var varValueBuckets = Map[String, Map[JValue, Long]]()
+    
+    values.foreach {
+      case JObject(List(JField("_id", JObject(props)), JField("value", count))) => props.take(properties.size).foreach {
+        case JField(fieldName, fieldValue) => {
+          val valMap = varValueBuckets.get(fieldName).getOrElse(Map())
+          varValueBuckets += (fieldName -> (valMap + (fieldValue -> (valMap.get(fieldValue).getOrElse(0l) + jvalToLong(count)))))
+        }
+      }
+    }
 
+    // Use the buckets to compute the values we actually want in events
+    val toKeep: Map[String, Set[JValue]] = properties.map {
+      case v => v.sortOrder match {
+        case SortOrder.Ascending  => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(_._2).take(v.maxResults).toMap.keySet)
+          case SortOrder.Descending => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(-_._2).take(v.maxResults).toMap.keySet)
+      }
+    }.toMap
+
+    logger.trace("aggregate-based keepers = " + toKeep)
+
+    // Filter the results to ensure that only results with all properties in the keep set are used
+    values.flatMap {
+      case JObject(List(JField("_id", keys @ JObject(props)), JField("value", count))) => {
+        // Only test the first N ID properties, where N is the number of request properties, but then pass the full array of ID field values
+        if (props.take(properties.size).forall { case JField(name, value) => toKeep(name)(value) }) {
+          Some((keys, jvalToLong(count)))
+        } else {
+          None
+        }
+      }
+      case invalid => logger.trace("Invalid intersection count value = " + invalid); None
+    }
+  }
+
+  private def varSimpleName(v : VariableDescriptor) = v.variable.name.nodes.last.toString.drop(1)
+
+  private def varFullName(v: VariableDescriptor) = (JPath(".event.data") \ v.variable.name.tail).toString.drop(1) // Drop leading dot
+
+  // This method is only used for queries with anon locations
+  def getMRIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, CountType]] = {
+    val anonPrefixes = tagTerms.collect { case loc @ HierarchyLocationTerm(name, Hierarchy.AnonLocation(path)) => path.path }
+
+    val emitter = anonLocMatchFunc + """
+  var matchedPrefix = anonLocMatch(this['tags']['#location'], %1$s);
+
+  if (matchedPrefix != null) {
+    emit({ %2$s, "location" : matchedPrefix }, 1);
+  }
+""".format(anonPrefixes.mkString("[\"", "\",\"", "\"]"), properties.map { p => "\"%s\" : this.%s".format(varSimpleName(p), varFullName(p)) }.mkString(", "))
+
+    val reducer = """
+function (key, vals) {
+  var count = 0;
+  for (var i = 0; i < vals.length; i++) {
+    count += vals[i].count;
+  }
+  return count;
+}
+"""
+
+    // We drop the first variable since we'll be using it as the primary var for the queryAggregation call
+    val fullConstraints : Set[HasValue] = (properties.drop(1).map { v => HasValue(v.variable, JNothing) } ++ constraints).toSet
+
+    queryMapReduce(token, path, properties.head.variable, tagTerms, fullConstraints, emitter, reducer) {
+      output => {
+        eventsdb(selectAll.from(output.outputCollection)).map { _.toList }.map {
+          values => {
+            logger.trace("compiling MR-based count results")
+
+            val finalResults = computeIntersectionCounts(values.map(_.asInstanceOf[JObject]), properties)
+
+            logger.trace("MR-based final count results = " + finalResults)
+            
+            finalResults.map {
+              case (JObject(props), count) => (JArray(props.map{ case JField(_, value) => value }), count)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def getAggrIntersectionCount[T](token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[List[JObject]] = {
     logger.trace("Running aggregate-based intersection count on " + properties.map(varSimpleName).mkString(", "))
 
     val pipeline = List(JObject(List(JField("$project", JObject(properties.map { v => JField(varFullName(v), JInt(1)) })))),
                         JObject(List(JField("$group",   JObject(List(JField("_id", JObject(properties.map { v => JField(varSimpleName(v), "$" + varFullName(v)) })),
-                                                                     JField("count", JObject(List(JField("$sum", JInt(1)))))  ))))))
+                                                                     JField("value", JObject(List(JField("$sum", JInt(1)))))  ))))))
 
     // We drop the first variable since we'll be using it as the primary var for the queryAggregation call
     val fullConstraints : Set[HasValue] = (properties.drop(1).map { v => HasValue(v.variable, JNothing) } ++ constraints).toSet
@@ -726,72 +813,95 @@ function(key, values) {
     queryAggregation(token, path, properties.head.variable, tagTerms, fullConstraints, pipeline) {
       case Some(result) => {
         result("result") match {
-          case JArray(values) => {
-            logger.trace("compiling aggregate-based results")
-            // In order to handle sorting/top n, we need to know what our values actually are and how many times they appear
-            var varValueBuckets = Map[String, Map[JValue, Long]]()
-            
-            values.foreach {
-              case JObject(List(JField("_id", JObject(props)), JField("count", count))) => props.foreach {
-                case JField(fieldName, fieldValue) => {
-                  val valMap = varValueBuckets.get(fieldName).getOrElse(Map())
-                  varValueBuckets += (fieldName -> (valMap + (fieldValue -> (valMap.get(fieldValue).getOrElse(0l) + jvalToLong(count)))))
-                }
-              }
-              case invalid => logger.error("Invalid result value from intersect count: " + invalid); sys.error("Invalid results for query")
-            }
-
-            // Use the buckets to compute the values we actually want in events
-            val toKeep: Map[String, Set[JValue]] = properties.map {
-              case v => v.sortOrder match {
-                case SortOrder.Ascending  => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(_._2).take(v.maxResults).toMap.keySet)
-                case SortOrder.Descending => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(-_._2).take(v.maxResults).toMap.keySet)
-              }
-            }.toMap
-
-            logger.trace("aggregate-based keepers = " + toKeep)
-
-            // Filter the results to ensure that only results with all properties in the keep set are used
-            val finalResults = values.flatMap {
-              case JObject(List(JField("_id", JObject(props)), JField("count", count))) => {
-                if (props.forall { case JField(name, value) => toKeep(name)(value) }) {
-                  Some((JArray(props.map { case JField(_, value) => value }), jvalToLong(count)))
-                } else {
-                  None
-                }
-              }
-              case _ => None
-            }
-
-            logger.trace("aggregate-based final results = " + finalResults)
-
-            Future.sync(finalResults)
-          }
-          case invalid => logger.error("Invalid result from intersec count: " + invalid); sys.error("Invalid results for query")
+          case JArray(values) => logger.trace("Intersection count result = " + values); Future.sync(values.collect { case jo : JObject => jo })
         }
       }
       case _ => Future.sync(Nil)
     }
   }
 
-  def getIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, CountType]] = getAggrIntersectionCount(token, path, properties, tagTerms, constraints)
+  def getIntersectionCount(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, CountType]] = {
+    logger.trace("getIntersectionCount")
 
-  def getIntersectionSeries(token: Token, path: Path, variableDescriptors: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
-    getRawIntersectionSeries(token, path, variableDescriptors, tagTerms, constraints)
+    if (hasAnonLocs(tagTerms)) {
+      getMRIntersectionCount(token, path, properties, tagTerms, constraints)
+    } else {
+      getAggrIntersectionCount(token, path, properties, tagTerms, constraints).map {
+        values => {
+          logger.trace("compiling aggregate-based results")
+          
+          val finalResults = computeIntersectionCounts(values, properties)
+
+          logger.trace("aggregate-based final results = " + finalResults)
+            
+          finalResults.map {
+            case (JObject(props), count) => (JArray(props.map{ case JField(_, value) => value }), count)
+          }
+        }
+      }
+    }
   }
 
-  private def getHistograms(token: Token, path: Path, variableDescriptors: List[VariableDescriptor]): Future[Map[VariableDescriptor, Map[JValue, CountType]]] = {
-    Future {
-      variableDescriptors map { descriptor =>
-        val histogram = descriptor.sortOrder match {
-          case SortOrder.Ascending  => getHistogramBottom _
-          case SortOrder.Descending => getHistogramTop _
-        }
+  def getIntersectionSeries(token: Token, path: Path, properties: List[VariableDescriptor], tagTerms: Seq[TagTerm], constraints: Set[HasValue]): Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = {
+    if (hasAnonLocs(tagTerms)) {
+      getRawIntersectionSeries(token, path, properties, tagTerms, constraints)
+    } else {
+      val emptyResult : ResultSet[JArray, ResultSet[JObject, CountType]] = List()
 
-        histogram(token, path, descriptor.variable, descriptor.maxResults, Nil, Set.empty[HasValue]).map(h => (descriptor, h.toMap))
-      }: _*
-    } map {
-      _.toMap
+      tagTerms.collectFirst { case i : IntervalTerm => (i, i.periods.toList) }.map {
+        case (interval,periods) => {
+          // Run the query over the intervals given and combine all of the periods together. We don't do any top/bottom limits at this point
+          val results: Future[List[JObject]] = Future(periods.map {
+            period => {
+              val fullTerms = tagTerms ++ Seq(SpanTerm(interval.encoding, period.timeSpan))
+              
+              getAggrIntersectionCount(token, path, properties, fullTerms, constraints).map { _.map {
+                case JObject(List(JField("_id", JObject(fields)), JField("value", count))) => {
+                  JObject(List(JField("_id", fields ::: List(JField("timestamp", JInt(period.start.getMillis)))), JField("value", count))) 
+                }
+                case _ => sys.error("Invalid intersect series result")
+              }}
+            }
+          }: _*).map(_.flatten)
+
+          val output: Future[ResultSet[JArray, ResultSet[JObject, CountType]]] = results.map {
+            values => {
+              logger.trace("Intersection series raw results = " + values)
+
+              val keptValues: ResultSet[JObject,CountType] = computeIntersectionCounts(values, properties)
+
+              logger.trace("Intersection series kept = " + keptValues)
+
+              val locationKeys: List[JField] = 
+                tagTerms.collect {
+                  case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
+                }.toList
+
+              val groups: Map[JObject, Map[JObject,CountType]] = keptValues.groupBy { case (JObject(ids), count) => JObject(ids.take(properties.length)) }.map {
+                case (key, series) => (key, series.map { case (JObject(seriesKeys), count) => (JObject(seriesKeys.drop(properties.length) ::: locationKeys), count) }.toMap) // The series keys shouldn't contain the intersection keys and vice-versa
+              }
+
+              // Compute the full set of series keys based on periods and possibly locations
+              val allSeriesKeys: List[JObject] = periods.map { p => JObject(JField("timestamp", JInt(p.start.getMillis)) :: locationKeys) }
+
+              logger.trace("Intersection series processing " + groups + " over " + allSeriesKeys)
+
+              groups.toList.map {
+                case (keys, series) => {
+                  val keyArray = JArray(keys.fields.map { case JField(_, value) => value })
+                  
+                  val fullSeries: ResultSet[JObject, CountType] = allSeriesKeys.map {
+                    k => (k, series.getOrElse(k, 0l))
+                  }
+                  
+                  (keyArray, fullSeries)
+                }
+              }
+            }
+          }
+          output
+        }
+      }.getOrElse(Future.sync(emptyResult))
     }
   }
 
@@ -942,12 +1052,10 @@ function(key, values) {
   }
 
   private def hasAnonLocs(tagTerms: Seq[TagTerm]): Boolean = 
-    tagTerms.contains { 
-      v : Any => v match {
-        case loc @ HierarchyLocationTerm(_, Hierarchy.AnonLocation(_)) => true
-        case _ => false
-      } 
-    }
+    tagTerms.collectFirst { case loc @ HierarchyLocationTerm(_, Hierarchy.AnonLocation(_)) => true }.isDefined
+
+  private def hasNamedLocs(tagTerms: Seq[TagTerm]): Boolean = 
+    tagTerms.collectFirst { case loc @ HierarchyLocationTerm(_, Hierarchy.NamedLocation(_,_)) => true }.isDefined
 
   private def rawEventsVariableFilter(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm]): MongoFilter = {
     List(Some(baseFilter(token, path)),
