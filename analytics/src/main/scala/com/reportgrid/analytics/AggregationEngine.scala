@@ -94,7 +94,7 @@ case class AggregationStage(collection: MongoCollection, stage: MongoStage) {
   }
 }
 
-class AggregationEngine private (config: ConfigMap, val logger: Logger, val eventsdb: Database, val indexdb: Database, clock: Clock, val healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) {
+class AggregationEngine private (config: ConfigMap, val logger: Logger, val insertEventsdb: Database, val queryEventsdb: Database, val queryIndexdb: Database, clock: Clock, val healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) {
   import AggregationEngine._
   val maxIndexedOrder = 0
 
@@ -109,7 +109,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
     new AggregationStage(
       collection = collection,
       stage = MongoStage(
-        database   = indexdb,
+        database   = queryIndexdb,
         mongoStageSettings = MongoStageSettings(
           expirationPolicy = ExpirationPolicy(
             timeToIdle = Some(timeToIdle),
@@ -192,7 +192,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
           (if (reprocess) JField("reprocess", true.serialize) :: Nil else Nil)
         )
 
-        eventsdb(MongoInsertQuery(events_collection, List(record))) 
+        insertEventsdb(MongoInsertQuery(events_collection, List(record))) 
       } 
     } else {
       Future.sync(())
@@ -202,8 +202,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val even
   def retrieveEventsFor(filter : MongoFilter, fields : Option[List[JPath]] = None) : Future[scala.collection.IterableView[JObject, Iterator[JObject]]] = {
     logger.trace("Fetching events for filter " + compact(render(filter.filter)) + ", with fields: " + fields.map(_.mkString(",")).getOrElse("all"))
     fields.map {
-      fieldsToGet => eventsdb(select(fieldsToGet : _*).from(events_collection).where(filter))
-    }.getOrElse(eventsdb(selectAll.from(events_collection).where(filter))).map {
+      fieldsToGet => queryEventsdb(select(fieldsToGet : _*).from(events_collection).where(filter))
+    }.getOrElse(queryEventsdb(selectAll.from(events_collection).where(filter))).map {
       events => {
         events.map(unescapeEventBody).view.asInstanceOf[scala.collection.IterableView[JObject, Iterator[JObject]]]
       }
@@ -295,7 +295,7 @@ function(key, values) {
 """
 
     queryMapReduce(token, path, variable, tagTerms, Set(), emitter, reducer) { output =>
-      eventsdb(selectAll.from(output.outputCollection)).map { 
+      queryEventsdb(selectAll.from(output.outputCollection)).map { 
         objs => {
           val results = objs.toList.map {
             jo => jo("value")("children") match {
@@ -322,7 +322,7 @@ function(key, values) {
   }
 
   def getPathTags(token: Token, path: Path): Future[List[String]] = {
-    indexdb(selectAll.from(path_tags.collection).where(forTokenAndPath(token, path))) map { results =>
+    queryIndexdb(selectAll.from(path_tags.collection).where(forTokenAndPath(token, path))) map { results =>
       val res = results.map(_ \ "tags") flatMap {
         case r @ JObject(fields) => fields.map(_.name)
         case _ => Nil
@@ -334,7 +334,7 @@ function(key, values) {
 
   def getHierarchyChildren(token: Token, path: Path, tagName: String, jpath: JPath) = {
     val dataPath = JPath(".values") \ jpath
-    indexdb(select(dataPath).from(hierarchy_children.collection).where(forHierarchyTag(token, path, tagName))) map { results =>
+    queryIndexdb(select(dataPath).from(hierarchy_children.collection).where(forHierarchyTag(token, path, tagName))) map { results =>
       results.map(_(dataPath)).flatMap {
         case JObject(fields) => fields.map(_.name).filter(_ != "#count")
         case _ => Nil
@@ -355,7 +355,7 @@ function(key, values) {
 
     logger.trace("Aggregation: Final pipe = " + pretty(render(finalPipe)))
 
-    eventsdb(aggregation(finalPipe).from(events_collection)).flatMap {
+    queryEventsdb(aggregation(finalPipe).from(events_collection)).flatMap {
       firstResult => {
         logger.trace("Aggregation: received unwound result: " + firstResult)
         val unwindInvalid = firstResult match {
@@ -365,7 +365,7 @@ function(key, values) {
         
         if (unwindInvalid) {
           logger.trace("Unwind invalid, re-running without unwind")
-          eventsdb(aggregation(JArray(matchStep :: pipeline)).from(events_collection)).flatMap(finalizer)
+          queryEventsdb(aggregation(JArray(matchStep :: pipeline)).from(events_collection)).flatMap(finalizer)
         } else {
           finalizer(firstResult)
         }
@@ -397,7 +397,7 @@ function() {
     logger.trace("MR: Reducer = " + reducer)
     logger.trace("MR: Filter " + compact(render(filter.filter)))
     
-    eventsdb(mapReduce(mapFunc, reducer).from(events_collection).where(filter).into(resultCollection)).flatMap {
+    queryEventsdb(mapReduce(mapFunc, reducer).from(events_collection).where(filter).into(resultCollection)).flatMap {
       output => {
         logger.trace("MR complete on " + resultCollection + " with result: " + output.status)
         logger.trace("MR running finalizer for " + resultCollection)
@@ -474,7 +474,7 @@ function(key, values) {
 
     queryMapReduce(token, path, variable, tagTerms, additionalConstraints, emitter, reduceFunc) { output =>
       logger.trace("Fetching from " + output.outputCollection)
-      eventsdb(selectAll.from(output.outputCollection)).map { 
+      queryEventsdb(selectAll.from(output.outputCollection)).map { 
         objs => {
           val resultMap = objs.toList.map {
             jo => {
@@ -544,7 +544,7 @@ function(key, values) {
 
     logger.trace("Variable count on " + fullFilter.filter)
 
-    eventsdb(count.from(events_collection).where(fullFilter))
+    queryEventsdb(count.from(events_collection).where(fullFilter))
   }
 
   def aggregateVariableSeries(token: Token, path: Path, variable: Variable, encoding: TimeSeriesEncoding, period: Period, otherTerms: Seq[TagTerm], additionalConstraints: Set[HasValue]): Future[ValueStats] = {
@@ -570,7 +570,7 @@ function(key, values) {
         if (nonNumeric) {
           // If it's non-numeric all we can do is count it
           logger.trace("Non-numeric varseries. Counting")
-          eventsdb(count.from(events_collection).where(fullFilter(token, path, variable, fullTerms, additionalConstraints))).map { count => ValueStats(count, None, None) }
+          queryEventsdb(count.from(events_collection).where(fullFilter(token, path, variable, fullTerms, additionalConstraints))).map { count => ValueStats(count, None, None) }
         } else {
           firstResult("result") match {
             case JArray(objs) => {
@@ -645,7 +645,7 @@ function(key, values) {
 
     queryMapReduce(token, path, variable, Seq(SpanTerm(encoding, period.timeSpan)), additionalConstraints, emitter, reducer) {
       output => {
-        eventsdb(selectAll.from(output.outputCollection)).map {
+        queryEventsdb(selectAll.from(output.outputCollection)).map {
           result => {
             val resList = result.toList
             logger.trace("MR varseries results from " + output.outputCollection + ": " + resList)
@@ -789,7 +789,7 @@ function (key, vals) {
 
     queryMapReduce(token, path, properties.head.variable, tagTerms, fullConstraints, emitter, reducer) {
       output => {
-        eventsdb(selectAll.from(output.outputCollection)).map { _.toList }.map {
+        queryEventsdb(selectAll.from(output.outputCollection)).map { _.toList }.map {
           values => {
             logger.trace("compiling MR-based count results")
 
@@ -1151,7 +1151,7 @@ function (key, vals) {
 
     Future (
       toQuery.map {
-        case (docKey, dataKeys) => indexdb(selectOne(dataPath).from(collection).where(filter(docKey))).map {
+        case (docKey, dataKeys) => queryIndexdb(selectOne(dataPath).from(collection).where(filter(docKey))).map {
           result => dataKeys.map {
             case (keySig, keyData) => 
                // since the data keys are a stream of all possible keys in the document that data might
@@ -1167,7 +1167,7 @@ function (key, vals) {
   }
 
   private def extractChildren[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
-    indexdb {
+    queryIndexdb {
       select(".child", ".count").from(collection).where(filter)
     } map {
       _.foldLeft(List.empty[T]) { 
@@ -1180,7 +1180,7 @@ function (key, vals) {
   }
 
   private def extractValues[T](filter: MongoFilter, collection: MongoCollection)(extractor: (JValue, CountType) => T): Future[List[T]] = {
-    indexdb {
+    queryIndexdb {
       selectOne(".values", ".indices").from(collection).where(filter)
     } map { 
       case None => logger.trace("extractValues got nothing"); Nil
@@ -1390,17 +1390,17 @@ object AggregationEngine {
     Future(futures.toSeq: _*)
   }
 
-  def apply(config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database, healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
+  def apply(config: ConfigMap, logger: Logger, insertEventsdb: Database, queryEventsdb: Database, queryIndexdb: Database, healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction): Future[AggregationEngine] = {
     for {
-      _ <- createIndices(eventsdb, EventsdbIndices)
-      _ <- createIndices(indexdb,  IndexdbIndices)
+      _ <- createIndices(queryEventsdb, EventsdbIndices)
+      _ <- createIndices(queryIndexdb,  IndexdbIndices)
     } yield {
-      new AggregationEngine(config, logger, eventsdb, indexdb, ClockSystem.realtimeClock, healthMonitor)
+      new AggregationEngine(config, logger, insertEventsdb, queryEventsdb, queryIndexdb, ClockSystem.realtimeClock, healthMonitor)
     }
   }
 
-  def forConsole(config: ConfigMap, logger: Logger, eventsdb: Database, indexdb: Database, healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) = {
-    new AggregationEngine(config, logger, eventsdb, indexdb, ClockSystem.realtimeClock, healthMonitor)
+  def forConsole(config: ConfigMap, logger: Logger, insertEventsdb: Database, queryEventsdb: Database, queryIndexdb: Database, healthMonitor: HealthMonitor)(implicit hashFunction: HashFunction = Sha1HashFunction) = {
+    new AggregationEngine(config, logger, insertEventsdb, queryEventsdb, queryIndexdb, ClockSystem.realtimeClock, healthMonitor)
   }
 
   def intersectionOrder[T <% Ordered[T]](histograms: List[(SortOrder, Map[JValue, T])]): scala.math.Ordering[JArray] = {

@@ -170,14 +170,18 @@ trait AggregationEngineFixtures extends LocalMongo with Logging {
   val config = (new Config()) ->- (_.load(mongoConfigFileData))
 
   val eventsConfig = config.configMap("eventsdb")
-  val eventsMongo = new RealMongo(eventsConfig) 
-  val eventsdb = eventsMongo.database(eventsConfig("database"))
+
+  val insertEventsMongo = new RealMongo(eventsConfig) 
+  val insertEventsdb = insertEventsMongo.database(eventsConfig("database"))
+  
+  val queryEventsMongo = new RealMongo(eventsConfig) 
+  val queryEventsdb = queryEventsMongo.database(eventsConfig("database"))
   
   val indexConfig = config.configMap("indexdb")
   val indexMongo = new RealMongo(indexConfig)
   val indexdb = indexMongo.database(indexConfig("database"))
 
-  val engine = AggregationEngine.forConsole(config, logger, eventsdb, indexdb, HealthMonitor.Noop)
+  val engine = AggregationEngine.forConsole(config, logger, insertEventsdb, queryEventsdb, indexdb, HealthMonitor.Noop)
 
   implicit val timeout = akka.actor.Actor.Timeout(120000) 
 
@@ -187,7 +191,8 @@ trait AggregationEngineFixtures extends LocalMongo with Logging {
     val shutdown = Future.sync(
       Stoppable(engine,
         Stoppable(indexdb, Stoppable(indexMongo) :: Nil) ::
-        Stoppable(eventsdb, Stoppable(eventsMongo) :: Nil) :: Nil
+        Stoppable(insertEventsdb, Stoppable(insertEventsMongo) :: Nil) ::
+        Stoppable(queryEventsdb, Stoppable(queryEventsMongo) :: Nil) :: Nil
       )
     )
     shutdown.flatMap { stoppable => (Stoppable.stop(stoppable)).toBlueEyes }.toAkka.get
@@ -845,19 +850,20 @@ class ReaggregationSpec extends AggregationEngineTests with AggregationEngineFix
   object sampleData extends Outside[List[Event]] with Scope {
     def outside = containerOfN[List, Event](10, fullEventGen).sample.get ->- {
       _ foreach { event => 
-        engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 0, true)
+        val fut = engine.store(TestToken, "/test", event.eventName, event.messageData, Tag.Tags(Future.sync(event.tags)), 1, 0, true)
+        while(!fut.isDone) { }
       }
     }
   }
 
   "Re-storing aggregated events" should {
     "retrieve and re-aggregate data" in sampleData { sampleEvents =>
-      eventsdb(selectAll.from("events").where("reprocess" === true)) map { _.size } must whenDelivered {
+      queryEventsdb(selectAll.from("events").where("reprocess" === true)) map { _.size } must whenDelivered {
         beLike {
           case outstanding if outstanding == sampleEvents.size =>
             ReaggregationTool.reprocess(engine, tokenManager, 0, outstanding, outstanding)
 
-            eventsdb(selectAll.from("events").where("reprocess" === true)) map { _.size } must whenDelivered {
+            queryEventsdb(selectAll.from("events").where("reprocess" === true)) map { _.size } must whenDelivered {
               be_== (0)
             }
 

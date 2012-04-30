@@ -31,9 +31,13 @@ object AggregationEnvironment {
 
   def apply(config: ConfigMap): Future[AggregationEnvironment] = {
     val eventsdbConfig = config.configMap("services.analytics.v1.eventsdb")
-    val eventsMongo = new RealMongo(eventsdbConfig)
-    val eventsdb = eventsMongo.database(eventsdbConfig("database"))
 
+    val insertEventsMongo = new RealMongo(eventsdbConfig)
+    val insertEventsdb = insertEventsMongo.database(eventsdbConfig("database"))
+
+    val queryEventsMongo = new RealMongo(eventsdbConfig)
+    val queryEventsdb = queryEventsMongo.database(eventsdbConfig("database"))
+   
     val indexdbConfig = config.configMap("services.analytics.v1.indexdb")
     val indexMongo = new RealMongo(indexdbConfig)
     val indexdb = indexMongo.database(indexdbConfig("database"))
@@ -44,8 +48,11 @@ object AggregationEnvironment {
     implicit val shutdownTimeout = akka.actor.Actor.Timeout(indexdbConfig.getLong("shutdownTimeout", Long.MaxValue))
 
     val tokenManager = new TokenManager(indexdb, tokensCollection, deletedTokensCollection) 
-    val engine = AggregationEngine.forConsole(config, Logger("reaggregator"), eventsdb, indexdb, HealthMonitor.Noop)
-    val stoppable = Stoppable(engine, Stoppable(eventsdb, Stoppable(eventsMongo) :: Nil) :: Stoppable(indexdb, Stoppable(indexMongo) :: Nil) :: Nil)
+    val engine = AggregationEngine.forConsole(config, Logger("reaggregator"), insertEventsdb, queryEventsdb, indexdb, HealthMonitor.Noop)
+    val stoppable = Stoppable(engine, 
+      Stoppable(insertEventsdb, Stoppable(insertEventsMongo) :: Nil) :: 
+      Stoppable(queryEventsdb, Stoppable(queryEventsMongo) :: Nil) :: 
+      Stoppable(indexdb, Stoppable(indexMongo) :: Nil) :: Nil)
 
     Future.sync(new AggregationEnvironment(engine, tokenManager, stoppable, shutdownTimeout))
   }
@@ -119,7 +126,7 @@ object ReaggregationTool extends Logging {
 
     logger.info("Beginning processing " + maxRecords + " events.")
     val ingestBatch: Function0[Future[Int]] = () => {
-      eventsdb(selectAll.from(events_collection).where("reprocess" === true).sortBy(".timestamp".<<).limit(batchSize)) flatMap { results => 
+      queryEventsdb(selectAll.from(events_collection).where("reprocess" === true).sortBy(".timestamp".<<).limit(batchSize)) flatMap { results => 
         logger.info("Reaggregating...")
         val reaggregated = results.toList.zipWithIndex.map { case (jv, i) => restore(engine, tokenManager, jv --> classOf[JObject], i) }
 
@@ -153,7 +160,7 @@ object ReaggregationTool extends Logging {
 
   def restore(engine: AggregationEngine, tokenManager: TokenStorage, obj: JObject, i: Int): Future[ValidationNEL[String, Long]] = {
     print("*")
-    import engine.{aggregate, eventsdb, events_collection, withTagResults}
+    import engine.{aggregate, insertEventsdb, events_collection, withTagResults}
     tokenManager.lookup(obj \ "token") flatMap { 
       _ map { token => 
         logger.trace("obtained token " + i)
@@ -191,7 +198,7 @@ object ReaggregationTool extends Logging {
       } flatMap {
         case (complexity, mongoUpdate) => 
           print("%")
-          eventsdb(update(events_collection).set(mongoUpdate).where("accountTokenId" === (obj \ "accountTokenId") & "path" === (obj \ "path") & "timestamp" === (obj \ "timestamp") & "_id" === (obj \ "_id"))) map { _ =>
+          insertEventsdb(update(events_collection).set(mongoUpdate).where("accountTokenId" === (obj \ "accountTokenId") & "path" === (obj \ "path") & "timestamp" === (obj \ "timestamp") & "_id" === (obj \ "_id"))) map { _ =>
             print(".")
             //healthMonitor.sample("aggregation.complexity") { (complexity | 0L).toDouble }
             complexity

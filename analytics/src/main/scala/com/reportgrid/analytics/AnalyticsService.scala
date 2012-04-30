@@ -53,7 +53,7 @@ import com.reportgrid.ct.Mult.MDouble._
 import com.reportgrid.instrumentation.blueeyes.ReportGridInstrumentation
 import com.reportgrid.api.ReportGridTrackingClient
 
-case class AnalyticsState(eventsMongo: Mongo, indexMongo: Mongo, aggregationEngine: AggregationEngine, tokenManager: TokenManager, storageReporting: StorageReporting, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup, defaultRawLimit: Int)
+case class AnalyticsState(insertEventsMongo: Mongo, queryEventsMongo: Mongo, indexMongo: Mongo, aggregationEngine: AggregationEngine, tokenManager: TokenManager, storageReporting: StorageReporting, auditClient: ReportGridTrackingClient[JValue], jessup: Jessup, defaultRawLimit: Int)
 
 trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombinators with ReportGridInstrumentation {
   import AggregationEngine._
@@ -86,11 +86,13 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
       healthMonitor { monitor => context =>
         startup {
           import context._
-
+          
           val eventsdbConfig = config.configMap("eventsdb")
-          val eventsMongo = mongoFactory(eventsdbConfig)
-          val eventsdb = eventsMongo.database(eventsdbConfig.getString("database", "events-v" + serviceVersion))
 
+          val insertEventsMongo = mongoFactory(eventsdbConfig)
+          val insertEventsdb = insertEventsMongo.database(eventsdbConfig.getString("database", "events-v" + serviceVersion))
+          val queryEventsMongo = mongoFactory(eventsdbConfig)
+          val queryEventsdb = queryEventsMongo.database(eventsdbConfig.getString("database", "events-v" + serviceVersion))
           val indexdbConfig = config.configMap("indexdb")
           val indexMongo = mongoFactory(indexdbConfig)
           val indexdb  = indexMongo.database(indexdbConfig.getString("database", "analytics-v" + serviceVersion))
@@ -99,9 +101,10 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           val deletedTokensCollection = config.getString("tokens.deleted", "deleted_tokens")
           val tokenMgr = tokenManager(indexdb, tokensCollection, deletedTokensCollection)
 
-          for (aggregationEngine <- AggregationEngine(config, logger, eventsdb, indexdb, monitor)) yield {
+          for (aggregationEngine <- AggregationEngine(config, logger, insertEventsdb, queryEventsdb, indexdb, monitor)) yield {
             AnalyticsState(
-              eventsMongo,
+              insertEventsMongo,
+              queryEventsMongo,
               indexMongo,
               aggregationEngine, 
               tokenMgr, 
@@ -125,7 +128,7 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
           val formatters = Map("jsonp" -> jsonpFormatter,
                                "csv"   -> jsonToCSV[ByteChunk])
 
-          (new SaveQueryService(state.eventsMongo.database("querycache1"))) {
+          (new SaveQueryService(state.queryEventsMongo.database("querycache1"))) {
           formatService[ByteChunk](formatters, jsonpFormatter) {
             token(state.tokenManager) {
               /* The virtual file system, which is used for storing data,
@@ -338,8 +341,9 @@ trait AnalyticsService extends BlueEyesServiceBuilder with AnalyticsServiceCombi
             Option(
               Stoppable(
                 state.aggregationEngine, 
-                Stoppable(state.aggregationEngine.indexdb, Stoppable(state.indexMongo)(impStop[Mongo], st) :: Nil)(impStop[Database], st) ::
-                Stoppable(state.aggregationEngine.eventsdb, Stoppable(state.eventsMongo)(impStop[Mongo], st) :: Nil)(impStop[Database], st) :: Nil
+                Stoppable(state.aggregationEngine.queryIndexdb, Stoppable(state.indexMongo)(impStop[Mongo], st) :: Nil)(impStop[Database], st) ::
+                Stoppable(state.aggregationEngine.insertEventsdb, Stoppable(state.insertEventsMongo)(impStop[Mongo], st) :: Nil)(impStop[Database], st) ::
+                Stoppable(state.aggregationEngine.queryEventsdb, Stoppable(state.queryEventsMongo)(impStop[Mongo], st) :: Nil)(impStop[Database], st) :: Nil
               )(impStop[AggregationEngine], st)
             )
           )
