@@ -525,6 +525,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
     "retrieve a time series for occurrences of an event" in sampleData { sampleEvents =>
       //skip("disabled")
+      logger.trace("Retrieve time series for event")
       val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
 
       val queryTerms = List[TagTerm](

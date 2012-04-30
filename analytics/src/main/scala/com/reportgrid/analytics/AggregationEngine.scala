@@ -438,7 +438,7 @@ function() {
               }
             }.toMap)
           }
-          case invalid => sys.error("Invalid histogram result")
+          case invalid => logger.trace("Invalid histogram result: " + result); sys.error("Invalid histogram result")
         }
         case _ => Future.sync(Map())
       }
@@ -542,6 +542,8 @@ function(key, values) {
 
     val fullFilter = fullFilterParts.flatten.reduceLeft(_ & _)
 
+    logger.trace("Variable count on " + fullFilter.filter)
+
     eventsdb(count.from(events_collection).where(fullFilter))
   }
 
@@ -561,7 +563,7 @@ function(key, values) {
     queryAggregation(token, path, variable, fullTerms, additionalConstraints, pipeline)  {
       case Some(firstResult) => {
         val nonNumeric = firstResult match {
-          case obj if (obj("ok") == JInt(0) || obj("ok") == JDouble(0)) && obj("code") == JInt(16005) => true
+          case obj if (obj("ok") == JInt(0) || obj("ok") == JDouble(0)) => true // && obj("code") == JInt(16005) => true
           case _         => false
         }
         
@@ -716,6 +718,10 @@ function(key, values) {
   // Given a list of { "_id" : { ... }, "value" : NumberLong(...) } values, compute the counts
   // "_id" object may contain more values than properties, in which case extra values are not considered and simply passed through
   private def computeIntersectionCounts(values: List[JObject], properties: List[VariableDescriptor]): ResultSet[JObject, CountType] = {
+    if (values.isEmpty) {
+      return List[(JObject,CountType)]()
+    }
+
     // In order to handle sorting/top n, we need to know what our values actually are and how many times they appear
     var varValueBuckets = Map[String, Map[JValue, Long]]()
     
@@ -732,7 +738,7 @@ function(key, values) {
     val toKeep: Map[String, Set[JValue]] = properties.map {
       case v => v.sortOrder match {
         case SortOrder.Ascending  => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(_._2).take(v.maxResults).toMap.keySet)
-          case SortOrder.Descending => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(-_._2).take(v.maxResults).toMap.keySet)
+        case SortOrder.Descending => (varSimpleName(v) -> varValueBuckets(varSimpleName(v)).toList.sortBy(-_._2).take(v.maxResults).toMap.keySet)
       }
     }.toMap
 
@@ -814,6 +820,7 @@ function (key, vals) {
       case Some(result) => {
         result("result") match {
           case JArray(values) => logger.trace("Intersection count result = " + values); Future.sync(values.collect { case jo : JObject => jo })
+          case invalid => logger.trace("Unexpected result: " + result); sys.error("Invalid intersection count result")
         }
       }
       case _ => Future.sync(Nil)
