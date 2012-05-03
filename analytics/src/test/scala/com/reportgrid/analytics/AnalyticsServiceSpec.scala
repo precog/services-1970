@@ -519,7 +519,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             }
 
             // TODO: Should fix data generation so that we always have "tweeted" events
-            resultData.toMap must haveTheSameElementsAs(expected.get("tweeted").getOrElse(Map()))
+            resultData must containAllOf(expected.get("tweeted").map(_.toSeq).getOrElse(Seq()))
         }
       }(FutureTimeouts(5, toDuration(30l).seconds)) 
     }
