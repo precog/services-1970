@@ -1033,7 +1033,7 @@ function (key, vals) {
       None
     } else {
       val rawJS = """var loc = this['tags']['#location']; for (var prop in loc) { var locv = loc[prop]; if (%s.some(function(p){ return p == locv; })) return true; }; return false;""""".format(prefixes.mkString("[\"", "\",\"", "\"]"))
-      Some(evaluation(rawJS))
+      Some(evaluation(rawJS) & JPath(".tags.#location").isDefined)
     }
   }
 
