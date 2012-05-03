@@ -49,7 +49,7 @@ services {
 
       jessup {
         host = "localhost"
-        path = "/services/jessup/v1"
+        path = "/services/jessup/v1/"
       }
 
       variable_series {
