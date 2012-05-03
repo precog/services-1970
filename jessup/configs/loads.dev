@@ -2,5 +2,6 @@ conf=dev/jessup-v1.conf
 default=dev/jessup-v1.default
 init=dev/jessup-v1.init.conf
 /etc/monit/conf.d/jessup-v1.monit=dev/jessup-v1.monit
+/etc/reportgrid/jessup-v1.logging.xml=dev/jessup-v1.logging.xml
 /opt/reportgrid/GeoLiteCity.dat=dev/GeoLiteCity.dat
 postinstall=dev/postinstall.sh
