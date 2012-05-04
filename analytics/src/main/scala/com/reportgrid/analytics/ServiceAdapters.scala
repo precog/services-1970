@@ -34,23 +34,40 @@ object Jessup {
   }
 }
 
-class JessupServiceProxy(host: String, port: Option[Int], path: String) extends Jessup with BijectionsChunkJson {
+class JessupServiceProxy(host: String, port: Option[Int], path: String) extends Jessup with BijectionsChunkJson with Logging {
   val client = new HttpClientXLightWeb().translate[JValue].host(host).port(port getOrElse 80).path(path)
 
   override def apply(host: Option[InetAddress]): Future[Option[Hierarchy]] = {
+    logger.debug("Querying Jessup for " + host)
     host map { host =>
       client.get[JValue](host.getHostAddress) map { response =>
         response.content flatMap { jvalue =>
-          val JString(countryName) = jvalue \ "country-name"
-          val JString(region) = jvalue \ "region"
-          val JString(city) = jvalue \ "city"
-          val JString(postalCode) = jvalue \ "postal-code"
-          
-          val back = Hierarchy of (
-            Hierarchy.AnonLocation(Path("/%s".format(countryName))) ::
-            Hierarchy.AnonLocation(Path("/%s/%s".format(countryName, region))) ::
-            Hierarchy.AnonLocation(Path("/%s/%s/%s".format(countryName, region, city))) ::
-            Hierarchy.AnonLocation(Path("/%s/%s/%s/%s".format(countryName, region, city, postalCode))) :: Nil)
+          val locations = (jvalue \ "country-name") match {
+            case JString(countryName) => {
+              Hierarchy.AnonLocation(Path("/%s".format(countryName))) :: {
+                (jvalue \ "region") match {
+                  case JString(region) => {
+                    Hierarchy.AnonLocation(Path("/%s/%s".format(countryName, region))) :: {
+                      (jvalue \ "city") match {
+                        case JString(city) => {
+                          Hierarchy.AnonLocation(Path("/%s/%s/%s".format(countryName, region, city))) :: {
+                            (jvalue \ "postal-code") match {
+                              case JString(postalCode) => Hierarchy.AnonLocation(Path("/%s/%s/%s/%s".format(countryName, region, city, postalCode))) :: Nil
+                              case _ => Nil
+                            }
+                          }
+                        }
+                        case _ => Nil
+                      }
+                    }
+                  }
+                  case _ => Nil
+                }
+              }
+            }
+            case _ => Nil
+          }
+          val back = Hierarchy of (locations)
             
           back.toOption
         }
