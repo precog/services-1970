@@ -18,11 +18,14 @@ fi
 sleep 5
 
 if ! RESULT=`start jessup-v1 2>&1` > /dev/null ; then
+	echo "Jessup didn't start: $RESULT"
         if echo "$RESULT" | grep -v "already running" > /dev/null ; then
 		echo "Failure: $RESULT"
 		exit 1
         fi
 fi
+
+echo "Jessup started, starting mongo"
 
 
 # Restart monit to pick up changes
