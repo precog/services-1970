@@ -315,9 +315,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
 
       forall(EventTypes.map(eventName => (eventName, countEvents(eventName)))) {
         case (name, count) => 
-          engine.getVariableCount(TestToken, "/test", Variable("." + name), queryTerms) must whenDelivered {
+          engine.getVariableCount(TestToken, "/test", Variable("." + name), queryTerms) must whenDelivered[Long] {
             be_==(count)
-          }
+          }(FutureTimeouts(5, Duration(60, TimeUnit.SECONDS)))
       }
     }
  

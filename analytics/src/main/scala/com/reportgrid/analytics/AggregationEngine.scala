@@ -168,7 +168,10 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
 
   val events_collection: MongoCollection = config.getString("events.collection", "events")
 
+  val count_cache_collection: MongoCollection = config.getString("count_cache.collection", "count_cache")
+
   def store(token: Token, path: Path, eventName: String, eventBody: JValue, tagResults: Tag.ExtractionResult, count: Int, rollup: Int, reprocess: Boolean) = {
+    logger.trace("Storing event: " + eventBody + " at " + path + " token " + token)
     if (token.limits.lossless) {
       def withTagResults[A](f: Seq[Tag] => Future[A]): Future[A] = tagResults match {
         case Tag.Tags(tf) => tf.flatMap(f)
@@ -176,6 +179,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
       }
 
       withTagResults { (tags: Seq[Tag]) =>
+        logger.trace("  with tags:" + tags)
         val instant = tags.collect{ case Tag("timestamp", TimeReference(_, instant)) => instant }.headOption.getOrElse(clock.instant)
 
         val min_rollup = path.length - rollup
@@ -415,7 +419,7 @@ function() {
       case _ => false
     }
 
-    if (isArrayVar) {
+    if (isArrayVar || hasAnonLocs(tagTerms)) {
       logger.trace("Forcing MR on histogram over array variable")
       getMRHistogram(token, path, variable, tagTerms, additionalConstraints)
     } else {
@@ -542,9 +546,126 @@ function(key, values) {
 
     val fullFilter = fullFilterParts.flatten.reduceLeft(_ & _)
 
-    logger.trace("Variable count on " + fullFilter.filter)
+    logger.debug("Variable count on " + fullFilter.filter)
 
-    queryEventsdb(count.from(events_collection).where(fullFilter))
+    // First, determine the time range in question so that we can check the cache for pre-computed values
+    // We either have been given a time span or we need to query to determine the min/max for the token/path
+    val range: Future[Option[(Instant,Instant)]] = tagTerms.collectFirst[Future[Option[(Instant,Instant)]]] {
+      case SpanTerm(encoding, TimeSpan(start, end)) => Future.sync(Some((start,end)))
+    }.getOrElse {
+      logger.warn("Resorting to full DB query to determine min/max timestamps")
+      queryEventsdb(selectOne(".timestamp").from(events_collection).where(fullFilter).sortBy(".timestamp" >>)).flatMap {
+        case Some(start) => {
+          queryEventsdb(selectOne(".timestamp").from(events_collection).where(fullFilter).sortBy(".timestamp" <<)).flatMap {
+            case Some(end) => Future.sync(Some((new Instant(jvalToLong(start("timestamp"))), new Instant(jvalToLong(end("timestamp")) + 1)))) // make our end inclusive
+            case None      => logger.warn("Found start timestamp without end during range query"); Future.sync(None) // Technically this shouldn't be possible if we found a start event
+          }
+        }
+        case None => Future.sync(None) // Easy, there aren't any 
+      }
+    }
+
+    // For convenience we define this here for reuse
+    val timestamp = MongoFilterBuilder(JPath(".timestamp"))
+
+    val untimedFilter = List(Some(baseFilter(token, path)), 
+                             tagsFilter(tagTerms.filterNot {
+                               case s : SpanTerm     => true
+                               case i : IntervalTerm => true
+                               case _                => false
+                             }), 
+                             eventNameFilter(variable),
+                             variableExistsFilter(variable)).flatten.reduceLeft(_ & _) 
+
+    range.flatMap {
+      case Some((start,end)) => {
+        // determine the period start and end from the given range. These may not be the same if start/end is within a period
+        val periodStart = Periodicity.Hour.increment(Periodicity.Hour.floor(start))
+        val periodEnd   = Periodicity.Hour.floor(end)
+
+        logger.trace("Computed range start = %s, period start = %s, range end = %s, period end = %s".format(start, periodStart, end, periodEnd))
+        logger.trace("Start timestamp = %d, end = %d".format(start.getMillis, end.getMillis))
+
+        // A list of the start times of all periods we'll sum over
+        val neededTimes = Period(Periodicity.Hour, periodStart).until(periodEnd).map(_.start.getMillis).toSet
+
+        // Query the cache for existing entries within the specified range and matching our constraints
+        val whereClause: JValue = List(tagsFilter(tagTerms.filterNot {
+                                         case s : SpanTerm     => true
+                                         case i : IntervalTerm => true
+                                         case _                => false
+                                       }), 
+                                       eventNameFilter(variable),
+                                       variableExistsFilter(variable)).flatten.reduceLeft(_ & _).filter.mapUp {
+                                         case JField(name, value) => JField(name.replace(".", "_"), value)
+                                         case other => other
+                                       }
+
+        logger.trace("Where clause on var count = " + whereClause)
+        
+        val cacheFilter : MongoFilter = JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp >= periodStart.getMillis) & (timestamp < periodEnd.getMillis) & JPath(".where") === whereClause
+
+        queryIndexdb(select(JPath(".timestamp"), JPath(".count")).from(count_cache_collection).where(cacheFilter)).flatMap { cached => {
+          val found = cached.toList
+
+          logger.trace("Found %d results".format(found.size))
+
+          val (foundSum, foundTimes) = found.foldLeft((0l, Set[Long]())) { 
+            case ((count,times),f) => (count + jvalToLong(f("count")), times + jvalToLong(f("timestamp")))
+          }
+
+          val needToQuery = neededTimes -- foundTimes
+
+          logger.trace("Need %d periods".format(needToQuery.size))
+          
+          val queried : List[Future[Long]] = needToQuery.toList.map {
+            timeStart => {
+              val timespanFilter : MongoFilter = (timestamp >= timeStart) & (timestamp < Period(Periodicity.Hour,new Instant(timeStart)).end.getMillis)
+
+              queryEventsdb(count.from(events_collection).where(untimedFilter & timespanFilter)).map {
+                count => {
+                  logger.trace("Counted %d for %d".format(count, timeStart))
+
+                  // Save the result for later
+                  val toCache = JObject(JField("accountTokenId", token.tokenId.serialize) ::
+                                        JField("path", path.serialize) ::
+                                        JField("timestamp", timeStart.serialize) ::
+                                        JField("where", whereClause) ::
+                                        JField("count", JInt(count)) :: Nil)
+
+                  logger.trace("Saving count cache: " + toCache)
+
+                  queryIndexdb(upsert(count_cache_collection).set(toCache).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp === timeStart) & (MongoFilterBuilder(JPath(".where")) === whereClause)))
+
+                  count
+                }
+              }
+            }
+          }
+
+          // We also need to cover any non-integral periods at the beginning and end of our ranges
+          val startPortionCount = if (start isBefore periodStart) {
+            logger.trace("Querying for pre-period portion")
+            queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= start.getMillis) & (timestamp < periodStart.getMillis)))
+          } else {
+            Future.sync(0l)
+          }
+
+          val endPortionCount = if (end isAfter periodEnd) {
+            logger.trace("Querying for post-period portion")
+            queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= periodEnd.getMillis) & (timestamp < end.getMillis)))
+          } else {
+            Future.sync(0l) 
+          }
+
+          Future((startPortionCount :: endPortionCount :: queried): _*).map {
+            counts => val finalSum = (counts.sum + foundSum); logger.debug("Final count = " + finalSum); finalSum
+          }
+        }}
+      }
+       
+      case None => logger.debug("Empty range on variable count, returning zero"); Future.sync(0l) // If we couldn't find a range it's because nothing exists
+    }
   }
 
   def aggregateVariableSeries(token: Token, path: Path, variable: Variable, encoding: TimeSeriesEncoding, period: Period, otherTerms: Seq[TagTerm], additionalConstraints: Set[HasValue]): Future[ValueStats] = {
@@ -649,7 +770,10 @@ function(key, values) {
           result => {
             val resList = result.toList
             logger.trace("MR varseries results from " + output.outputCollection + ": " + resList)
-            resList.map { jo => (jo("_id").asInstanceOf[JObject], ValueStats(jvalToLong(jo("value")("c")), Some(jvalToDouble(jo("value")("s"))), Some(jvalToDouble(jo("value")("q"))))) }
+            resList.map { jo => (jo("_id").asInstanceOf[JObject], ValueStats(jvalToLong(jo("value")("c")), Some(jvalToDouble(jo("value")("s"))), Some(jvalToDouble(jo("value")("q"))))) } match {
+              case Nil => List((JObject(JField("timestamp", JInt(period.start.getMillis)) :: Nil), ValueStats(0, None, None)))
+              case r   => r
+            }
           }
         }
       }
@@ -1032,7 +1156,7 @@ function (key, vals) {
     if (prefixes.isEmpty) {
       None
     } else {
-      val rawJS = """var loc = this['tags']['#location']; for (var prop in loc) { var locv = loc[prop]; if (%s.some(function(p){ return p == locv; })) return true; }; return false;""""".format(prefixes.mkString("[\"", "\",\"", "\"]"))
+      val rawJS = """var loc = this['tags']['#location']; for (var prop in loc) { var locv = loc[prop]; if (%s.some(function(p){ return p == locv; })) return true; }; return false;""".format(prefixes.mkString("[\"", "\",\"", "\"]"))
       Some(evaluation(rawJS) & JPath(".tags.#location").isDefined)
     }
   }
@@ -1375,6 +1499,9 @@ object AggregationEngine {
     ),
     "variable_children" -> Map(
       "variable_query"    -> (List("accountTokenId", "path", "variable"), false)
+    ),
+    "count_cache" -> Map(
+      "count_cache_query" -> (List("accountTokenId", "path", "where"), false)
     )
   )
 
