@@ -577,15 +577,16 @@ function(key, values) {
                              eventNameFilter(variable),
                              variableExistsFilter(variable)).flatten.reduceLeft(_ & _) 
 
+    val now = new Instant
+
     range.flatMap {
-      case Some((start,requestedEnd)) => {
-        // For now we can't query into the future (pending Flux Capacitor research)
-        val now = new Instant
-        val end = if (requestedEnd isBefore now) requestedEnd else now
+      case Some((start,end)) if start isBefore now => {
+        // For now we can't cache into the future (pending Flux Capacitor research)
+        val maxCacheTime = if (end isBefore now) end else now
 
         // determine the period start and end from the given range. These may not be the same if start/end is within a period
+        val periodEnd   = Periodicity.Hour.floor(maxCacheTime)
         val periodStart = Periodicity.Hour.increment(Periodicity.Hour.floor(start))
-        val periodEnd   = Periodicity.Hour.floor(end)
 
         logger.trace("Computed range start = %s, period start = %s, range end = %s, period end = %s".format(start, periodStart, end, periodEnd))
         logger.trace("Start timestamp = %d, end = %d".format(start.getMillis, end.getMillis))
@@ -594,14 +595,13 @@ function(key, values) {
         val neededTimes = Period(Periodicity.Hour, periodStart).until(periodEnd).map(_.start.getMillis).toSet
 
         // Query the cache for existing entries within the specified range and matching our constraints
-        val whereClause: JValue = List(tagsFilter(tagTerms.filterNot {
-                                         case s : SpanTerm     => true
-                                         case i : IntervalTerm => true
-                                         case _                => false
-                                       }), 
+        val whereClause: JValue = List(tagTerms.collectFirst {
+                                         case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => MongoFilterBuilder(JPath(".tags") \ ("#" + tagName) \ name) === path.path
+                                         case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => (JPath(".tags") \ ("#" + tagName) === path.path)
+                                       }, 
                                        eventNameFilter(variable),
                                        variableExistsFilter(variable)).flatten.reduceLeft(_ & _).filter.mapUp {
-                                         case JField(name, value) => JField(name.replace(".", "_"), value)
+                                         case JField(name, value) => JField(name.replace(".", "_").replace("$",""), value)
                                          case other => other
                                        }
 
@@ -652,24 +652,29 @@ function(key, values) {
           // We also need to cover any non-integral periods at the beginning and end of our ranges
           val startPortionCount = if (start isBefore periodStart) {
             logger.trace("Querying for pre-period portion")
-            queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= start.getMillis) & (timestamp < periodStart.getMillis)))
+            queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= start.getMillis) & (timestamp < periodStart.getMillis))).map {
+              v => logger.trace("Pre-period = " + v); v
+            }
           } else {
             Future.sync(0l)
           }
 
           val endPortionCount = if (end isAfter periodEnd) {
             logger.trace("Querying for post-period portion")
-            queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= periodEnd.getMillis) & (timestamp < end.getMillis)))
+            queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= periodEnd.getMillis) & (timestamp < end.getMillis))).map {
+              v => logger.trace("Post-period = " + v); v
+            }
           } else {
             Future.sync(0l) 
           }
 
           Future((startPortionCount :: endPortionCount :: queried): _*).map {
-            counts => val finalSum = (counts.sum + foundSum); logger.debug("Final count = " + finalSum); finalSum
+            counts => val finalSum = (counts.sum + foundSum); logger.debug("Final count = " + finalSum + " for " + compact(render(fullFilter.filter))); finalSum
           }
         }}
       }
-       
+
+      case Some((start,end)) => logger.trace("Simple count query for future range"); queryEventsdb(count.from(events_collection).where(fullFilter))
       case None => logger.debug("Empty range on variable count, returning zero"); Future.sync(0l) // If we couldn't find a range it's because nothing exists
     }
   }
