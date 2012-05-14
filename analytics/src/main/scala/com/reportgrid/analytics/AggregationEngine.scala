@@ -578,7 +578,11 @@ function(key, values) {
                              variableExistsFilter(variable)).flatten.reduceLeft(_ & _) 
 
     range.flatMap {
-      case Some((start,end)) => {
+      case Some((start,requestedEnd)) => {
+        // For now we can't query into the future (pending Flux Capacitor research)
+        val now = new Instant
+        val end = if (requestedEnd isBefore now) requestedEnd else now
+
         // determine the period start and end from the given range. These may not be the same if start/end is within a period
         val periodStart = Periodicity.Hour.increment(Periodicity.Hour.floor(start))
         val periodEnd   = Periodicity.Hour.floor(end)
@@ -605,6 +609,8 @@ function(key, values) {
         
         val cacheFilter : MongoFilter = JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp >= periodStart.getMillis) & (timestamp < periodEnd.getMillis) & JPath(".where") === whereClause
 
+        logger.trace("Searching for cache entries with " + compact(render(cacheFilter.filter)))
+
         queryIndexdb(select(JPath(".timestamp"), JPath(".count")).from(count_cache_collection).where(cacheFilter)).flatMap { cached => {
           val found = cached.toList
 
@@ -627,7 +633,7 @@ function(key, values) {
                   logger.trace("Counted %d for %d".format(count, timeStart))
 
                   // Save the result for later
-                  val toCache = JObject(JField("accountTokenId", token.tokenId.serialize) ::
+                  val toCache = JObject(JField("accountTokenId", token.accountTokenId.serialize) ::
                                         JField("path", path.serialize) ::
                                         JField("timestamp", timeStart.serialize) ::
                                         JField("where", whereClause) ::
