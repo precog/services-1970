@@ -35,16 +35,15 @@ services {
       eventsdb {
         database = "events1"
         servers = ["localhost"]
-      }
-
-      mongo {
-        database = "analytics1"
-        servers = ["localhost"]
+        operationTimeout = 600000
+        insertTimeout = 300000
       }
 
       indexdb {
         database = "analytics1"
         servers = ["localhost"]
+        operationTimeout = 600000
+        insertTimeout = 300000
       }
 
       jessup {
