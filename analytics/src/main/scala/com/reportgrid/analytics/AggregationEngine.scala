@@ -168,7 +168,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
 
   val events_collection: MongoCollection = config.getString("events.collection", "events")
 
-  val count_cache_collection: MongoCollection = config.getString("count_cache.collection", "count_cache")
+  val stats_cache_collection: MongoCollection = config.getString("stats_cache.collection", "stats_cache")
 
   def store(token: Token, path: Path, eventName: String, eventBody: JValue, tagResults: Tag.ExtractionResult, count: Int, rollup: Int, reprocess: Boolean) = {
     logger.trace("Storing event: " + eventBody + " at " + path + " token " + token)
@@ -580,101 +580,46 @@ function(key, values) {
     val now = new Instant
 
     range.flatMap {
-      case Some((start,end)) if start isBefore now => {
-        // For now we can't cache into the future (pending Flux Capacitor research)
-        val maxCacheTime = if (end isBefore now) end else now
+      case Some((start,end)) if (start isBefore now) && ((end.getMillis - start.getMillis) < (1000 * 3600 * 24 * 7)) => {
+        logger.trace("Series count for %s -> %s".format(start, end))
 
-        // determine the period start and end from the given range. These may not be the same if start/end is within a period
-        val periodEnd   = Periodicity.Hour.floor(maxCacheTime)
-        val periodStart = Periodicity.Hour.increment(Periodicity.Hour.floor(start))
+        // determine the period boundary start and end from the given range. These may not be the same if start/end is within a period
+        val hourStart = Periodicity.Hour.increment(Periodicity.Hour.floor(start))
+        val hourEnd   = Periodicity.Hour.floor(end)
 
-        logger.trace("Computed range start = %s, period start = %s, range end = %s, period end = %s".format(start, periodStart, end, periodEnd))
-        logger.trace("Start timestamp = %d, end = %d".format(start.getMillis, end.getMillis))
-
-        // A list of the start times of all periods we'll sum over
-        val neededTimes = Period(Periodicity.Hour, periodStart).until(periodEnd).map(_.start.getMillis).toSet
-
-        // Query the cache for existing entries within the specified range and matching our constraints
-        val whereClause: JValue = List(tagTerms.collectFirst {
-                                         case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => MongoFilterBuilder(JPath(".tags") \ ("#" + tagName) \ name) === path.path
-                                         case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => (JPath(".tags") \ ("#" + tagName) === path.path)
-                                       }, 
-                                       eventNameFilter(variable),
-                                       variableExistsFilter(variable)).flatten.reduceLeft(_ & _).filter.mapUp {
-                                         case JField(name, value) => JField(name.replace(".", "_").replace("$",""), value)
-                                         case other => other
-                                       }
-
-        logger.trace("Where clause on var count = " + whereClause)
+        // Delegate to a series query to handle caching, etc
+        val newTerms = IntervalTerm(timeSeriesEncoding, Periodicity.Single, TimeSpan(hourStart, hourEnd)) :: tagTerms.filter {
+          case i : IntervalTerm => false
+          case s : SpanTerm     => false
+          case _                => true
+        }.toList
         
-        val cacheFilter : MongoFilter = JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp >= periodStart.getMillis) & (timestamp < periodEnd.getMillis) & JPath(".where") === whereClause
+        val mainCounts = List(getVariableSeries(token, path, variable, newTerms).map { _.toList.drop(1).map { _._2.count }.sum })
 
-        logger.trace("Searching for cache entries with " + compact(render(cacheFilter.filter)))
-
-        queryIndexdb(select(JPath(".timestamp"), JPath(".count")).from(count_cache_collection).where(cacheFilter)).flatMap { cached => {
-          val found = cached.toList
-
-          logger.trace("Found %d results".format(found.size))
-
-          val (foundSum, foundTimes) = found.foldLeft((0l, Set[Long]())) { 
-            case ((count,times),f) => (count + jvalToLong(f("count")), times + jvalToLong(f("timestamp")))
+        // We also need to cover any non-integral periods at the beginning and end of our ranges
+        val startPortionCount = if (start isBefore hourStart) {
+          logger.trace("Querying for pre-period portion")
+          queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= start.getMillis) & (timestamp < hourStart.getMillis))).map {
+            v => logger.trace("Pre-period = " + v); v
           }
+        } else {
+          Future.sync(0l)
+        }
 
-          val needToQuery = neededTimes -- foundTimes
-
-          logger.trace("Need %d periods".format(needToQuery.size))
-          
-          val queried : List[Future[Long]] = needToQuery.toList.map {
-            timeStart => {
-              val timespanFilter : MongoFilter = (timestamp >= timeStart) & (timestamp < Period(Periodicity.Hour,new Instant(timeStart)).end.getMillis)
-
-              queryEventsdb(count.from(events_collection).where(untimedFilter & timespanFilter)).map {
-                count => {
-                  logger.trace("Counted %d for %d".format(count, timeStart))
-
-                  // Save the result for later
-                  val toCache = JObject(JField("accountTokenId", token.accountTokenId.serialize) ::
-                                        JField("path", path.serialize) ::
-                                        JField("timestamp", timeStart.serialize) ::
-                                        JField("where", whereClause) ::
-                                        JField("count", JInt(count)) :: Nil)
-
-                  logger.trace("Saving count cache: " + toCache)
-
-                  queryIndexdb(upsert(count_cache_collection).set(toCache).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp === timeStart) & (MongoFilterBuilder(JPath(".where")) === whereClause)))
-
-                  count
-                }
-              }
-            }
+        val endPortionCount = if (end isAfter hourEnd) {
+          logger.trace("Querying for post-period portion")
+          queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= hourEnd.getMillis) & (timestamp < end.getMillis))).map {
+            v => logger.trace("Post-period = " + v); v
           }
+        } else {
+          Future.sync(0l) 
+        }
 
-          // We also need to cover any non-integral periods at the beginning and end of our ranges
-          val startPortionCount = if (start isBefore periodStart) {
-            logger.trace("Querying for pre-period portion")
-            queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= start.getMillis) & (timestamp < periodStart.getMillis))).map {
-              v => logger.trace("Pre-period = " + v); v
-            }
-          } else {
-            Future.sync(0l)
-          }
-
-          val endPortionCount = if (end isAfter periodEnd) {
-            logger.trace("Querying for post-period portion")
-            queryEventsdb(count.from(events_collection).where(untimedFilter & (timestamp >= periodEnd.getMillis) & (timestamp < end.getMillis))).map {
-              v => logger.trace("Post-period = " + v); v
-            }
-          } else {
-            Future.sync(0l) 
-          }
-
-          Future((startPortionCount :: endPortionCount :: queried): _*).map {
-            counts => val finalSum = (counts.sum + foundSum); logger.debug("Final count = " + finalSum + " for " + compact(render(fullFilter.filter))); finalSum
-          }
-        }}
+        Future((startPortionCount :: endPortionCount :: mainCounts): _*).map {
+          counts => val finalSum = counts.sum; logger.debug("Final count = " + finalSum + " for " + compact(render(fullFilter.filter))); finalSum
+        }
       }
-
-      case Some((start,end)) => logger.trace("Simple count query for future range"); queryEventsdb(count.from(events_collection).where(fullFilter))
+      case Some(_) => logger.debug("Simple count on future/large results"); queryEventsdb(count.from(events_collection).where(fullFilter))
       case None => logger.debug("Empty range on variable count, returning zero"); Future.sync(0l) // If we couldn't find a range it's because nothing exists
     }
   }
@@ -800,35 +745,135 @@ function(key, values) {
 
     val allObs = JointObservation(additionalConstraints + HasValue(variable, JNothing))
 
-    logger.trace("Obtaining variable series on " + allObs)
+    logger.debug("Obtaining variable series on " + allObs + " by " + intervalOpt)
+
+    /* This is where things get really ugly. While not technically limited, it makes no sense to have more than one location term,
+     * so we'll just mash everything together and assume the end user isn't an idiot.*/
+    val locationClause: Option[MongoFilter] = 
+      if (! locations.isEmpty) {
+        Some(locations.map { case HierarchyLocationTerm(name, loc) => JPath(".location") === loc.path.path }.reduceLeft[MongoFilter](_ & _))
+      } else if (! anonPrefixes.isEmpty) {
+        Some(anonPrefixes.map { path => JPath(".location").regex("^" + path) }.reduceLeft[MongoFilter](_ | _))
+      } else {
+        None
+      }
+
+    val now = new Instant
 
     // Run the query over the intervals given
     val results: Option[Future[ResultSet[JObject,ValueStats]]] = intervalOpt.map { interval => Future(interval.periods.map {
-      period => {
-        // If we have locations or prefixes, do location-based queries
-        if (! (locations.isEmpty && anonPrefixes.isEmpty)) {
-          // Named locations can be queried directly
-          val namedLocResults: List[Future[List[(JObject,ValueStats)]]] = locations.map {
-            case loc => {
-              logger.trace("varseries with named location")
-              aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(loc), additionalConstraints).map {
-                vs => List((JObject(List(JField("timestamp", period.start.serialize), JField("location", loc.location.path))),
-                            vs))
+      outerPeriod => {
+        logger.trace("Querying for period: " + outerPeriod)
+
+        val timestamp = MongoFilterBuilder(JPath(".timestamp"))
+
+        // For this period, find any cached counts (hourly) within the period, query for any missing, then sum and return the final count
+        val whereClause = cacheWhereClauseFor(tagTerms, allObs)
+        val cacheFilter : MongoFilter = JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp >= outerPeriod.start.getMillis) & (timestamp < outerPeriod.end.getMillis) & JPath(".where") === whereClause & locationClause
+
+        queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq")).from(stats_cache_collection).where(cacheFilter)).flatMap {
+          found => {
+            val (outOfRange,neededPeriods) = if (interval.resultGranularity == Periodicity.Hour || interval.resultGranularity == Periodicity.Day || interval.resultGranularity == Periodicity.Single) {
+              logger.trace(interval.resultGranularity.name + " series in range")
+              (false,Period(Periodicity.Hour, outerPeriod.start).until(outerPeriod.end).toSet)
+            } else {
+              logger.trace(interval.resultGranularity.name + " series out of range")
+              (true,Set(outerPeriod))
+            }
+
+            val (foundStats, foundPeriods) = found.foldLeft((List[(Option[String],ValueStats)](), Set[Period]())) {
+              case ((stats,periods), cacheEntry) => {
+                val entryStats = 
+                  ValueStats((cacheEntry \ "count").deserialize[Long],
+                             (cacheEntry \? "sum").map(_.deserialize[Double]),
+                             (cacheEntry \? "sumsq").map(_.deserialize[Double]))
+
+                (((cacheEntry \? "location").map(_.deserialize[String]), entryStats) :: stats, periods + Period(Periodicity.Hour, (cacheEntry \ "timestamp").deserialize[Instant]))
               }
             }
-          }
 
-          val anonLocResults: Future[ResultSet[JObject, ValueStats]] = if (!anonPrefixes.isEmpty) {
-            logger.trace("varseries with anon locations")
-            mapReduceVariableSeries(token, path, variable, interval.encoding, period, additionalConstraints, anonPrefixes)
-          } else Future.sync(List[(JObject,ValueStats)]()) 
+            val (disableCaching, periodsToQuery) = {
+              val uncached = neededPeriods -- foundPeriods
+              if (uncached.size > 1000 || outOfRange) {
+                logger.info("Disabling caching for series needing %d queries over %s".format(uncached.size, interval.resultGranularity.name))
+                (true, Set(outerPeriod)) 
+              } else (false, uncached)
+            }
+            
+            logger.trace("Found %d periods, need to query %d: %s".format(foundPeriods.size, periodsToQuery.size, periodsToQuery))
 
-          Future((anonLocResults :: namedLocResults): _*).map(_.flatten)
-        } else {
-          // No location tags, so we'll just aggregate all events for this period
-          logger.trace("varseries has no location, just timespan")
-          aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(), additionalConstraints).map {
-            vs => List((JObject(List(JField("timestamp", period.start.serialize))),vs))
+            // A list of futures of lists of location/stats pairs...phew
+            val queried : List[Future[List[(Option[String],ValueStats)]]] = periodsToQuery.toList.map {
+              period => {
+                def saveResult(vs: ValueStats, location: Option[String]) {
+                  if (disableCaching || (outerPeriod.start isAfter now)) {
+                    return
+                  }
+
+                  val toSave = JObject(List(Some(JField("accountTokenId", token.accountTokenId.serialize)),
+                                            Some(JField("path", path.serialize)),
+                                            Some(JField("timestamp", period.start.serialize)),
+                                            Some(JField("where", whereClause.serialize)),
+                                            Some(JField("location", location.serialize)),
+                                            Some(JField("count", vs.count.serialize)),
+                                            vs.sum.map { s => JField("sum", s.serialize) },
+                                            vs.sumsq.map { ss => JField("sumsq", ss.serialize) }).flatten)
+
+                  logger.trace("Caching: " + toSave)
+
+                  queryIndexdb(upsert(stats_cache_collection).set(toSave).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp === period.start.getMillis) & JPath(".where") === whereClause & locationClause))
+                }
+                
+                // If we have locations or prefixes, do location-based queries
+                if (! (locations.isEmpty && anonPrefixes.isEmpty)) {
+                  // Named locations can be queried directly
+                  val namedLocResults: List[Future[List[(Option[String],ValueStats)]]] = locations.map {
+                    case loc => {
+                      logger.trace("varseries with named location")
+                      val start = System.currentTimeMillis
+                      aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(loc), additionalConstraints).map {
+                        vs => {
+                          logger.trace("aggr varseries for %s in %d ms".format(period, System.currentTimeMillis - start))
+                          saveResult(vs, Some(loc.location.path.toString))
+                          val result: List[(Option[String],ValueStats)] = List((Some(loc.location.path.toString),vs))
+                          result
+                        }
+                      }
+                    }
+                  }
+
+                  val anonLocResults: Future[List[(Option[String],ValueStats)]] = if (!anonPrefixes.isEmpty) {
+                    logger.trace("varseries with anon locations")
+                    mapReduceVariableSeries(token, path, variable, interval.encoding, period, additionalConstraints, anonPrefixes).map {
+                      _.toList.map {
+                        case (label, stats) => {
+                          saveResult(stats, (label \? "location").map(_.deserialize[String]))
+                          ((label \? "location").map(_.deserialize[String]),stats)
+                        }
+                      }
+                    }
+                  } else Future.sync(List[(Option[String],ValueStats)]()) 
+
+                  Future((anonLocResults :: namedLocResults): _*).map(_.flatten)
+                } else {
+                  // No location tags, so we'll just aggregate all events for this period
+                  logger.trace("varseries has no location, just timespan")
+                  aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(), additionalConstraints).map {
+                    vs => saveResult(vs, None); List((Option.empty[String],vs))
+                  }
+                }
+              }
+            }
+
+            Future(queried: _*).map {
+              queriedCounts => {
+                val allCounts = if (disableCaching) queriedCounts else foundStats :: queriedCounts
+                allCounts.flatten.groupBy { _._1 }.map { case (loc, stats) => {
+                  (JObject(List(Some(JField("timestamp", outerPeriod.start.serialize)), loc.map(JField("location", _))).flatten),
+                   stats.map{_._2}.reduceLeft(ValueStats.Ops.append(_,_)))
+                }}.toList
+              }
+            }
           }
         }
       }
@@ -867,6 +912,7 @@ function(key, values) {
           varValueBuckets += (fieldName -> (valMap + (fieldValue -> (valMap.get(fieldValue).getOrElse(0l) + jvalToLong(count)))))
         }
       }
+      case _ => // Nothing to do for this case
     }
 
     // Use the buckets to compute the values we actually want in events
@@ -1123,6 +1169,23 @@ function (key, vals) {
     }
   }
 
+  def cacheWhereClauseFor(tagTerms: Seq[TagTerm], constraints: JointObservation[HasValue]) = {
+    val filters = List(tagTerms.collectFirst {
+           case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => MongoFilterBuilder(JPath(".tags") \ ("#" + tagName) \ name) === path.path
+           case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => (JPath(".tags") \ ("#" + tagName) === path.path)
+         }, 
+         constraintFilter(constraints.obs)).flatten
+
+    if (filters.isEmpty) {
+      JObject(Nil)
+    } else {
+      filters.reduceLeft(_ & _).filter.mapUp {
+        case JField(name, value) => JField(name.replace(".", "_").replace("$",""), value)
+        case other => other
+      }
+    }
+  }
+
   def fullFilter(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], where: Set[HasValue]) = {
     val fullFilterParts = List(Some(baseFilter(token, path)), 
                                tagsFilter(tagTerms), 
@@ -1185,9 +1248,9 @@ function (key, vals) {
     }
 
   private def constraintFilter(constraints : Set[HasValue]): Option[MongoFilter] = {
-    val filters : Set[MongoFilter] = constraints.map {
-      case HasValue(Variable(name), JNothing) => (JPath(".event.data") \ name.tail).isDefined
-      case HasValue(Variable(name), value)    => (JPath(".event.data") \ name.tail) === value
+    val filters : Set[MongoFilter] = constraints.flatMap {
+      case HasValue(variable, JNothing)    => variableExistsFilter(variable)
+      case HasValue(Variable(name), value) => Some((JPath(".event.data") \ name.tail) === value)
     }
 
     filters.reduceLeftOption(_ & _)
@@ -1511,8 +1574,8 @@ object AggregationEngine {
     "variable_children" -> Map(
       "variable_query"    -> (List("accountTokenId", "path", "variable"), false)
     ),
-    "count_cache" -> Map(
-      "count_cache_query" -> (List("accountTokenId", "path", "where"), false)
+    "stats_cache" -> Map(
+      "stats_cache_query" -> (List("accountTokenId", "path", "where"), false)
     )
   )
 

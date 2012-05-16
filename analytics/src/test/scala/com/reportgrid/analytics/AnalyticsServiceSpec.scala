@@ -239,7 +239,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
                 (nonTagData must containAllOf(expected).only)
               }
           }
-        }(FutureTimeouts(5, toDuration(30l).seconds))
+        }(FutureTimeouts(1, toDuration(30l).seconds))
 
       }
     }
@@ -521,7 +521,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             // TODO: Should fix data generation so that we always have "tweeted" events
             resultData must containAllOf(expected.get("tweeted").map(_.toSeq).getOrElse(Seq()))
         }
-      }(FutureTimeouts(5, toDuration(30l).seconds)) 
+      }(FutureTimeouts(1, toDuration(120l).seconds)) 
     }
 
     "return variable series means using a where clause" in sampleData { sampleEvents =>
@@ -555,7 +555,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
             resultData.toMap must haveTheSameElementsAs(expected.get("tweeted").getOrElse(Map()))
         }
-      }(FutureTimeouts(5, toDuration(30l).seconds)) 
+      }(FutureTimeouts(1, toDuration(120l).seconds)) 
     }
 
     "return variable value series counts" in sampleData { sampleEvents =>
@@ -576,7 +576,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             beLike {
               case HttpResponse(status, _, Some(JArray(values)), _) => (values must not be empty) //and (series must_== expected)
             }
-          }(FutureTimeouts(5, toDuration(30l).seconds))
+          }(FutureTimeouts(1, toDuration(120l).seconds))
       }
     }
 
@@ -598,7 +598,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             beLike {
               case HttpResponse(status, _, Some(JArray(values)), _) => (values must not be empty) //and (series must_== expected)
             }
-          }(FutureTimeouts(5, toDuration(30l).seconds))
+          }(FutureTimeouts(1, toDuration(120l).seconds))
       }
     })
 
@@ -1086,98 +1086,98 @@ class StorageReportingAnalyticsServiceSpec extends TestAnalyticsService with Arb
     }}
   }
 
-  "Storage report" should {
-    "a single track should produce a single count" in simpleSampleData { sampleEvent =>
-      (jsonTestService.get[JValue]("/vfs/test/.track/count") must whenDelivered {
-        beLike {
-          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== 1
-        }
-      }) and {
-        trackingTestService.get[JValue]("/vfs/unittest/.stored/count") must whenDelivered {
-          beLike {
-            case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== 1
-          }
-        }
-      } and {
-        trackingTestService.get[JValue]("/vfs/unittest/.stored.count/histogram") must whenDelivered {
-          beLike {
-            case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
-              histogramTotal(result) must_== 1
-            }
-          }
-        }
-      }
-    }.pendingUntilFixed("!!! Need a refactor on storage reporting")
-
-    "multiple tracks should create a matching number of counts" in sampleData { sampleEvents =>
-      (jsonTestService.get[JValue]("/vfs/test/.track/count") must whenDelivered {
-        beLike {
-          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== testData.length
-        }
-      }) and {
-        trackingTestService.get[JValue]("/vfs/unittest/.stored/count") must whenDelivered {
-          beLike {
-            case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
-              result.deserialize[Int] must be_>(0) and be_<=(testData.length)
-            }
-          }
-        }
-      } and {
-        trackingTestService.get[JValue]("/vfs/unittest/.stored.count/histogram") must whenDelivered {
-          beLike {
-            case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
-              histogramTotal(result) must_== testData.length 
-            }
-          }
-        }
-      }
-    }.pendingUntilFixed("!!! Need a refactor on storage reporting")
-
-    def timeBoundedUsageSums(tokenId: String, path: String, start: DateMidnight, end: DateMidnight): Future[HttpResponse[JValue]] = {
-      val client = service.contentType[JValue](application/(MimeTypes.json))
-                                     .query("tokenId", tokenId)
-                                     .query("start", start.getMillis.toString)
-                                     .query("end", end.getMillis.toString)
-   
-      client.get[JValue]("/vfs/" + path + "/series/day/sums")
-    }
-
-    def reduceUsageSums(jval: JValue): Long = {
-      jval match {
-        case JArray(Nil) => 0l
-        case JArray(l)   => l.map {
-          case JArray(ts :: JDouble(c) :: Nil ) => c.toLong
-          case JArray(ts :: v :: Nil)         => 0l
-          case _                              => sys.error("Unexpected series result format")
-        }.reduce(_ + _)
-        case _           => sys.error("Error parsing usage count.")
-      }
-    }
-
-    "time bounded histogram includes expected counts" in { 
-      val today = new DateTime(DateTimeZone.UTC).toDateMidnight
-
-      timeBoundedUsageSums(TrackingToken.tokenId, "unittest/.stored.count", 
-                           today, today.plusDays(1)) must whenDelivered {
-        beLike {
-          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
-            reduceUsageSums(result) must_== 8
-          }
-        }
-      }
-    }.pendingUntilFixed("!!! Need a refactor on storage reporting")
-    "time bounded histogram excludes expected counts" in { 
-      skipped("This test fails to fail on missing data")
-      val today = new DateTime(DateTimeZone.UTC).toDateMidnight
-
-      timeBoundedUsageSums(TrackingToken.tokenId, "unittest/.stored.count", 
-                           today.minusDays(1), today) must whenDelivered {
-        beLike {
-          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
-            reduceUsageSums(result) must_== 0
-          }
-        }
-      }
-    }
-  }
+  //"Storage report" should {
+  //  "a single track should produce a single count" in simpleSampleData { sampleEvent =>
+  //    (jsonTestService.get[JValue]("/vfs/test/.track/count") must whenDelivered {
+  //      beLike {
+  //        case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== 1
+  //      }
+  //    }) and {
+  //      trackingTestService.get[JValue]("/vfs/unittest/.stored/count") must whenDelivered {
+  //        beLike {
+  //          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== 1
+  //        }
+  //      }
+  //    } and {
+  //      trackingTestService.get[JValue]("/vfs/unittest/.stored.count/histogram") must whenDelivered {
+  //        beLike {
+  //          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+  //            histogramTotal(result) must_== 1
+  //          }
+  //        }
+  //      }
+  //    }
+  //  }.pendingUntilFixed("!!! Need a refactor on storage reporting")
+  //
+  //  "multiple tracks should create a matching number of counts" in sampleData { sampleEvents =>
+  //    (jsonTestService.get[JValue]("/vfs/test/.track/count") must whenDelivered {
+  //      beLike {
+  //        case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => result.deserialize[Long] must_== testData.length
+  //      }
+  //    }) and {
+  //      trackingTestService.get[JValue]("/vfs/unittest/.stored/count") must whenDelivered {
+  //        beLike {
+  //          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+  //            result.deserialize[Int] must be_>(0) and be_<=(testData.length)
+  //          }
+  //        }
+  //      }
+  //    } and {
+  //      trackingTestService.get[JValue]("/vfs/unittest/.stored.count/histogram") must whenDelivered {
+  //        beLike {
+  //          case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+  //            histogramTotal(result) must_== testData.length 
+  //          }
+  //        }
+  //      }
+  //    }
+  //  }.pendingUntilFixed("!!! Need a refactor on storage reporting")
+  //
+  //  def timeBoundedUsageSums(tokenId: String, path: String, start: DateMidnight, end: DateMidnight): Future[HttpResponse[JValue]] = {
+  //    val client = service.contentType[JValue](application/(MimeTypes.json))
+  //                                   .query("tokenId", tokenId)
+  //                                   .query("start", start.getMillis.toString)
+  //                                   .query("end", end.getMillis.toString)
+  // 
+  //    client.get[JValue]("/vfs/" + path + "/series/day/sums")
+  //  }
+  //
+  //  def reduceUsageSums(jval: JValue): Long = {
+  //    jval match {
+  //      case JArray(Nil) => 0l
+  //      case JArray(l)   => l.map {
+  //        case JArray(ts :: JDouble(c) :: Nil ) => c.toLong
+  //        case JArray(ts :: v :: Nil)         => 0l
+  //        case _                              => sys.error("Unexpected series result format")
+  //      }.reduce(_ + _)
+  //      case _           => sys.error("Error parsing usage count.")
+  //    }
+  //  }
+  //
+  //  "time bounded histogram includes expected counts" in { 
+  //    val today = new DateTime(DateTimeZone.UTC).toDateMidnight
+  //
+  //    timeBoundedUsageSums(TrackingToken.tokenId, "unittest/.stored.count", 
+  //                         today, today.plusDays(1)) must whenDelivered {
+  //      beLike {
+  //        case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+  //          reduceUsageSums(result) must_== 8
+  //        }
+  //      }
+  //    }
+  //  }.pendingUntilFixed("!!! Need a refactor on storage reporting")
+  //  "time bounded histogram excludes expected counts" in { 
+  //    skipped("This test fails to fail on missing data")
+  //    val today = new DateTime(DateTimeZone.UTC).toDateMidnight
+  //
+  //    timeBoundedUsageSums(TrackingToken.tokenId, "unittest/.stored.count", 
+  //                         today.minusDays(1), today) must whenDelivered {
+  //      beLike {
+  //        case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(result), _) => {
+  //          reduceUsageSums(result) must_== 0
+  //        }
+  //      }
+  //    }
+  //  }
+  //}
 }
