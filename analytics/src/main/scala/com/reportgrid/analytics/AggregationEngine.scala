@@ -580,7 +580,7 @@ function(key, values) {
     val now = new Instant
 
     range.flatMap {
-      case Some((start,end)) if (start isBefore now) && ((end.getMillis - start.getMillis) < (1000 * 3600 * 24 * 7)) => {
+      case Some((start,end)) if start isBefore now => {
         logger.trace("Series count for %s -> %s".format(start, end))
 
         // determine the period boundary start and end from the given range. These may not be the same if start/end is within a period
@@ -768,8 +768,9 @@ function(key, values) {
         val timestamp = MongoFilterBuilder(JPath(".timestamp"))
 
         // For this period, find any cached counts (hourly) within the period, query for any missing, then sum and return the final count
-        val whereClause = cacheWhereClauseFor(tagTerms, allObs)
-        val cacheFilter : MongoFilter = JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp >= outerPeriod.start.getMillis) & (timestamp < outerPeriod.end.getMillis) & JPath(".where") === whereClause & locationClause
+        val whereClause = cacheWhereClauseFor(tagTerms, variable, allObs)
+        val baseCacheFilter : MongoFilter = JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestamp >= outerPeriod.start.getMillis) & (timestamp < outerPeriod.end.getMillis) & JPath(".where") === whereClause
+        val cacheFilter = locationClause.map(baseCacheFilter & _).getOrElse(baseCacheFilter)
 
         queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq")).from(stats_cache_collection).where(cacheFilter)).flatMap {
           found => {
@@ -814,8 +815,8 @@ function(key, values) {
                                             Some(JField("path", path.serialize)),
                                             Some(JField("timestamp", period.start.serialize)),
                                             Some(JField("where", whereClause.serialize)),
-                                            Some(JField("location", location.serialize)),
                                             Some(JField("count", vs.count.serialize)),
+                                            location.map { l => JField("location", l.serialize) },
                                             vs.sum.map { s => JField("sum", s.serialize) },
                                             vs.sumsq.map { ss => JField("sumsq", ss.serialize) }).flatten)
 
@@ -1169,11 +1170,12 @@ function (key, vals) {
     }
   }
 
-  def cacheWhereClauseFor(tagTerms: Seq[TagTerm], constraints: JointObservation[HasValue]) = {
+  def cacheWhereClauseFor(tagTerms: Seq[TagTerm], variable: Variable, constraints: JointObservation[HasValue]) = {
     val filters = List(tagTerms.collectFirst {
            case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => MongoFilterBuilder(JPath(".tags") \ ("#" + tagName) \ name) === path.path
            case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => (JPath(".tags") \ ("#" + tagName) === path.path)
          }, 
+         eventNameFilter(variable),
          constraintFilter(constraints.obs)).flatten
 
     if (filters.isEmpty) {
