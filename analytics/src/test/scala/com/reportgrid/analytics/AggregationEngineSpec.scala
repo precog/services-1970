@@ -373,9 +373,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (map, _) => map
       }
     
-      engine.getHistogramTop(TestToken, "/test", Variable(".tweeted.retweet"), 10, Nil) must whenDelivered {
+      engine.getHistogramTop(TestToken, "/test", Variable(".tweeted.retweet"), 10, Nil) must whenDelivered[ResultSet[JValue,CountType]] {
         haveTheSameElementsAs(retweetCounts)
-      }
+      }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
     }
     
     "retrieve the results of a histogram limited with a where clause" in sampleData { sampleEvents => 
@@ -392,9 +392,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (map, _) => map
       }
     
-      engine.getHistogramTop(TestToken, "/test", Variable(".tweeted.retweet"), 10, Nil, Set(HasValue(Variable(".tweeted.gender"), JString("female")))) must whenDelivered {
+      engine.getHistogramTop(TestToken, "/test", Variable(".tweeted.retweet"), 10, Nil, Set(HasValue(Variable(".tweeted.gender"), JString("female")))) must whenDelivered[ResultSet[JValue,CountType]] {
         haveTheSameElementsAs(femaleRetweetCounts)
-      }
+      }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
     }
     
     "retrieve histograms limited by time ranges" in sampleData { 
@@ -420,9 +420,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
           IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(rangeStart, rangeEnd))
         )
     
-        engine.getHistogram(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered {
+        engine.getHistogram(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered[Map[JValue,CountType]] {
           haveTheSameElementsAs(retweetCounts)
-        }
+        }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }                                       
     }
     
@@ -450,9 +450,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
           HierarchyLocationTerm("location", Hierarchy.NamedLocation("state", com.reportgrid.analytics.Path("usa/colorado")))
         )
     
-        engine.getHistogram(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered {
+        engine.getHistogram(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered[Map[JValue,CountType]] {
           haveTheSameElementsAs(retweetCounts)
-        }
+        }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -477,9 +477,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
           IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(rangeStart, rangeEnd))
         )
     
-        engine.getValues(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered {
+        engine.getValues(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered[Seq[JValue]] {
           haveTheSameElementsAs(retweetValues)
-        }
+        }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -504,9 +504,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
           HierarchyLocationTerm("location", Hierarchy.NamedLocation("state", com.reportgrid.analytics.Path("usa/colorado")))
         )
     
-        engine.getValues(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered {
+        engine.getValues(TestToken, "/test", Variable(".tweeted.retweet"), queryTerms) must whenDelivered[Seq[JValue]] {
           haveTheSameElementsAs(retweetValues)
-        }
+        }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -548,7 +548,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (jpath, count) =>
           engine.getVariableSeries(TestToken, "/test", Variable(jpath), queryTerms).map(_.total.count) must whenDelivered[Long] {
             be_==(count.toLong)
-          }(FutureTimeouts(5, Duration(120, TimeUnit.SECONDS)))
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -777,7 +777,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
               (forall(sizes.zip(sizes.tail)) { case (a, b) => a must_== b }) and
               (results.map(((_: ResultSet[JObject, CountType]).total).second).collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts)
           }
-        })(FutureTimeouts(10, toDuration(6000).milliseconds))
+        })(FutureTimeouts(1, toDuration(600000).milliseconds))
       }
     }
     
