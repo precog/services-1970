@@ -526,7 +526,7 @@ function() {
               }
             }.toMap)
           }
-          case invalid => logger.trace("Invalid histogram result: " + result); sys.error("Invalid histogram result")
+          case invalid => logger.error("Invalid histogram result: " + result); sys.error("Invalid histogram result")
         }
         case _ => Future.sync(Map())
       }
@@ -979,7 +979,7 @@ function(key, values) {
           None
         }
       }
-      case invalid => logger.trace("Invalid intersection count value = " + invalid); None
+      case invalid => logger.error("Invalid intersection count value = " + invalid); None
     }
   }
 
@@ -1045,7 +1045,7 @@ function (key, vals) {
       case Some(result) => {
         result("result") match {
           case JArray(values) => logger.trace("Intersection count result = " + values); Future.sync(values.collect { case jo : JObject => jo })
-          case invalid => logger.trace("Unexpected result: " + result); sys.error("Invalid intersection count result")
+          case invalid => logger.error("Unexpected intersection count result: " + result); sys.error("Invalid intersection count result")
         }
       }
       case _ => Future.sync(Nil)
@@ -1091,7 +1091,7 @@ function (key, vals) {
                 case JObject(List(JField("_id", JObject(fields)), JField("value", count))) => {
                   JObject(List(JField("_id", fields ::: List(JField("timestamp", JInt(period.start.getMillis)))), JField("value", count))) 
                 }
-                case _ => sys.error("Invalid intersect series result")
+                case invalid => logger.error("Invalid intersect series result: " + invalid); sys.error("Invalid intersect series result")
               }}
             }
           }: _*).map(_.flatten)
