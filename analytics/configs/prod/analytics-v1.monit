@@ -10,7 +10,8 @@ check process analytics-v1 with pidfile /var/run/reportgrid/analytics-v1.pid
 
 # Watch server log for issues
 check file analytics-v1.server.log with path /var/log/reportgrid/analytics-v1.server.log
-  if match "Exception" for 3 cycles then alert
+  if match "Exception" for 2 cycles then alert
+  if match "nvalid" for 1 cycles then alert
   depends on analytics-v1
   group analytics-v1
 
