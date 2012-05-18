@@ -159,6 +159,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
 
   val histo_cache_collection: MongoCollection = config.getString("histo_cache.collection", "histo_cache")
 
+  val varchild_cache_collection: MongoCollection = config.getString("varchild_cache.collection", "varchild_cache")
+
   def store(token: Token, path: Path, eventName: String, eventBody: JValue, tagResults: Tag.ExtractionResult, count: Int, rollup: Int, reprocess: Boolean) = {
     logger.trace("Storing event: " + eventBody + " at " + path + " token " + token)
     if (token.limits.lossless) {
@@ -240,6 +242,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
   }
 
   /** Retrieves children of the specified path &amp; variable.  */
+  // TODO: Allow for additionalConstraints
   def getVariableChildren(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm] = Nil): Future[List[(HasChild, Long)]] = {
     logger.debug("Retrieving variable children for " + path + " : " + variable)
 
@@ -256,7 +259,84 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
       }
     } else {
       logger.debug("Using raw events for variable children")
-      getMRVariableChildren(token, path, variable, tagTerms)
+
+      val nonTimeTags = tagTerms.filterNot {
+        case s : SpanTerm     => true
+        case i : IntervalTerm => true
+        case _                => false
+      }.toList
+
+      val filter = fullFilter(token, path, variable, tagTerms, Set())
+
+      val whereClause = cacheWhereClauseFor(nonTimeTags, variable, Set())
+
+      rangeFor(tagTerms, filter).flatMap {
+        case Some((start,end)) => {
+          logger.trace("Variable children over %s -> %s for ".format(start, end))
+
+          // determine the period boundary start and end from the given range. These may not be the same if start/end is within a period
+          val hourStart = Periodicity.Hour.increment(Periodicity.Hour.floor(start))
+          val hourEnd   = Periodicity.Hour.floor(end)
+
+          // First find any cached entries that we can use
+          queryIndexdb(select(JPath(".timestamp"), JPath(".children")).from(varchild_cache_collection).where(cacheFilterFor(token, path, whereClause, tagTerms, start.getMillis, end.getMillis, false))) flatMap {
+            found => {
+              val (foundBuckets: List[(HasChild,Long)], foundPeriods) = found.foldLeft((List[(HasChild,Long)](), Set[Period]())) {
+                case ((buckets,periods), entry) => {
+                  val entryBuckets = (entry \ "children") match {
+                    case JArray(childEntries) => childEntries.map {
+                      obj => (HasChild(variable, (obj \ "child").deserialize[JPathNode]), (obj \ "count").deserialize[Long])
+                    }
+                    case invalid => logger.error("Invalid varchild result: " + invalid); sys.error("Invalid varchild result")
+                  }
+                  (entryBuckets ::: buckets, periods + Period(Periodicity.Hour, (entry \ "timestamp").deserialize[Instant]))
+                }
+              }
+
+              val allPeriods = Period(Periodicity.Hour, hourStart).until(hourEnd).toSet
+              
+              val queryPeriods = allPeriods -- foundPeriods
+
+              if (queryPeriods.size < 1200) {
+                logger.trace("Found %d cached periods, querying for %d".format(foundPeriods.size, queryPeriods.size))
+                val queryResults: List[Future[List[(HasChild,Long)]]] = queryPeriods.toList.map {
+                  period => getMRVariableChildren(token, path, variable, SpanTerm(timeSeriesEncoding, period.timeSpan) :: nonTimeTags).map {
+                    resultList => {
+                      val toSave = JObject(List(JField("accountTokenId", token.accountTokenId.serialize),
+                                                JField("path", path.serialize),
+                                                JField("timestamp", period.start.serialize),
+                                                JField("where", whereClause.serialize),
+                                                JField("children", JArray(resultList.map {
+                                                  case (label,count) => JObject(JField("child", label.child.serialize) :: JField("count", count.serialize) :: Nil)
+                                                }))))
+
+                      queryIndexdb(upsert(varchild_cache_collection).set(toSave).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestampField === period.start.getMillis) & JPath(".where") === whereClause))
+                      resultList
+                    }
+                  }
+                }
+                
+                val prePeriodResults: Future[List[(HasChild,Long)]] = getMRVariableChildren(token, path, variable, SpanTerm(timeSeriesEncoding, TimeSpan(start, hourStart)) :: nonTimeTags)
+
+                val postPeriodResults: Future[List[(HasChild,Long)]] = getMRVariableChildren(token, path, variable, SpanTerm(timeSeriesEncoding, TimeSpan(hourEnd, end)) :: nonTimeTags)
+                
+                Future((prePeriodResults :: postPeriodResults :: queryResults): _*).map {
+                  periodLists: List[List[(HasChild,Long)]] => {
+                    val allResults: List[(HasChild,Long)] = (foundBuckets :: periodLists).flatten
+                    allResults.groupBy(_._1).map {
+                      case (bucket, counts) => (bucket, counts.map(_._2).sum)
+                    }.toList
+                  }
+                }
+              } else {
+                logger.warn("Running uncached varchildren on oversized query (%d periods needed)".format(queryPeriods.size))
+                getMRVariableChildren(token, path, variable, tagTerms)
+              }
+            }
+          }
+        }.map { results => logger.debug("Final varchild result for %s = %s".format(compact(render(filter.filter)), results)); results }
+        case _ => Future.sync(Nil) // No range means no entries
+      }
     }
   }
 
@@ -1665,6 +1745,9 @@ object AggregationEngine {
     ),
     "histo_cache" -> Map(
       "histo_cache_query" -> (List("accountTokenId", "path", "where"), false)
+    ),
+    "varchild_cache" -> Map(
+      "varchild_cache_query" -> (List("accountTokenId", "path", "where"), false)
     )
   )
 
