@@ -145,19 +145,6 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
 
 """
 
-  private def jvalToLong(jv : JValue) = jv match {
-    case JInt(bd) => bd.longValue
-    case JDouble(d) => d.toLong
-    case invalid => sys.error("Can't convert " + invalid + " to Long")
-  }
-
-  private def jvalToDouble(jv : JValue) = jv match {
-    case JInt(bd) => bd.doubleValue
-    case JDouble(d) => d
-    case invalid => sys.error("Can't convert " + invalid + " to Double")
-  }
-
-
   private val variable_children         = AggregationStage("variable_children")
   private val path_children             = AggregationStage("path_children")
 
@@ -521,7 +508,7 @@ function() {
             Future.sync(objs.toList.flatMap {
               jo => {
                 val key = jo("_id")
-                val count: Long = jvalToLong(jo("count"))
+                val count: Long = jo("count").deserialize[Long]
                 if (key == JNull) None else Some((key,count)) // We don't report Null values
               }
             }.toMap)
@@ -568,7 +555,7 @@ function(key, values) {
           val resultMap = objs.toList.map {
             jo => {
               val key = jo("_id")
-              val count: Long = jvalToLong(jo("value"))
+              val count: Long = jo("value").deserialize[Long]
               (key,count)
             }
           }.toMap
@@ -710,9 +697,9 @@ function(key, values) {
               Future.sync(objs.toList.map {
                 jo => {
                   val key = jo("_id")
-                  val count: Long = jvalToLong(jo("count"))
-                  val sum = Some(jvalToDouble(jo("sum")))
-                  val sumsq = Some(jvalToDouble(jo("sumsq")))
+                  val count: Long = jo("count").deserialize[Long]
+                  val sum = Some(jo("sum").deserialize[Double])
+                  val sumsq = Some(jo("sumsq").deserialize[Double])
 
                   ValueStats(count, sum, sumsq)
                 }
@@ -781,7 +768,7 @@ function(key, values) {
           result => {
             val resList = result.toList
             logger.trace("MR varseries results from " + output.outputCollection + ": " + resList)
-            resList.map { jo => (jo("_id").asInstanceOf[JObject], ValueStats(jvalToLong(jo("value")("c")), Some(jvalToDouble(jo("value")("s"))), Some(jvalToDouble(jo("value")("q"))))) } match {
+            resList.map { jo => (jo("_id").asInstanceOf[JObject], ValueStats((jo \ "value" \  "c").deserialize[Long], Some((jo \ "value" \ "s").deserialize[Double]), Some((jo \ "value" \ "q").deserialize[Double]))) } match {
               case Nil => List((JObject(JField("timestamp", JInt(period.start.getMillis)) :: Nil), ValueStats(0, None, None)))
               case r   => r
             }
@@ -953,7 +940,7 @@ function(key, values) {
       case JObject(List(JField("_id", JObject(props)), JField("value", count))) => props.take(properties.size).foreach {
         case JField(fieldName, fieldValue) => {
           val valMap = varValueBuckets.get(fieldName).getOrElse(Map())
-          varValueBuckets += (fieldName -> (valMap + (fieldValue -> (valMap.get(fieldValue).getOrElse(0l) + jvalToLong(count)))))
+          varValueBuckets += (fieldName -> (valMap + (fieldValue -> (valMap.get(fieldValue).getOrElse(0l) + count.deserialize[Long]))))
         }
       }
       case _ => // Nothing to do for this case
@@ -974,7 +961,7 @@ function(key, values) {
       case JObject(List(JField("_id", keys @ JObject(props)), JField("value", count))) => {
         // Only test the first N ID properties, where N is the number of request properties, but then pass the full array of ID field values
         if (props.take(properties.size).forall { case JField(name, value) => toKeep(name)(value) }) {
-          Some((keys, jvalToLong(count)))
+          Some((keys, count.deserialize[Long]))
         } else {
           None
         }
@@ -1226,7 +1213,7 @@ function (key, vals) {
       queryEventsdb(selectOne(".timestamp").from(events_collection).where(filter).sortBy(".timestamp" >>)).flatMap {
         case Some(start) => {
           queryEventsdb(selectOne(".timestamp").from(events_collection).where(filter).sortBy(".timestamp" <<)).flatMap {
-            case Some(end) => Future.sync(Some((new Instant(jvalToLong(start("timestamp"))), new Instant(jvalToLong(end("timestamp")) + 1)))) // make our end inclusive
+            case Some(end) => Future.sync(Some((start("timestamp").deserialize[Instant]), new Instant(end("timestamp").deserialize[Long] + 1))) // make our end inclusive
             case None      => logger.warn("Found start timestamp without end during range query"); Future.sync(None) // Technically this shouldn't be possible if we found a start event
           }
         }
