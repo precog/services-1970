@@ -270,6 +270,8 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
 
       val whereClause = cacheWhereClauseFor(nonTimeTags, variable, Set())
 
+      val now = new Instant
+      
       rangeFor(tagTerms, filter).flatMap {
         case Some((start,end)) => {
           logger.trace("Variable children over %s -> %s for ".format(start, end))
@@ -300,17 +302,20 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
               if (queryPeriods.size < 1200) {
                 logger.trace("Found %d cached periods, querying for %d".format(foundPeriods.size, queryPeriods.size))
                 val queryResults: List[Future[List[(HasChild,Long)]]] = queryPeriods.toList.map {
-                  period => getMRVariableChildren(token, path, variable, SpanTerm(timeSeriesEncoding, period.timeSpan) :: nonTimeTags).map {
+                  // Add some delay so that we don't overrun mongo :(
+                  period => Thread.sleep(100); getMRVariableChildren(token, path, variable, SpanTerm(timeSeriesEncoding, period.timeSpan) :: nonTimeTags).map {
                     resultList => {
-                      val toSave = JObject(List(JField("accountTokenId", token.accountTokenId.serialize),
-                                                JField("path", path.serialize),
-                                                JField("timestamp", period.start.serialize),
-                                                JField("where", whereClause.serialize),
-                                                JField("children", JArray(resultList.map {
-                                                  case (label,count) => JObject(JField("child", label.child.serialize) :: JField("count", count.serialize) :: Nil)
-                                                }))))
+                      if (period.end isBefore now) {
+                        val toSave = JObject(List(JField("accountTokenId", token.accountTokenId.serialize),
+                                                  JField("path", path.serialize),
+                                                  JField("timestamp", period.start.serialize),
+                                                  JField("where", whereClause.serialize),
+                                                  JField("children", JArray(resultList.map {
+                                                    case (label,count) => JObject(JField("child", label.child.serialize) :: JField("count", count.serialize) :: Nil)
+                                                  }))))
 
-                      queryIndexdb(upsert(varchild_cache_collection).set(toSave).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestampField === period.start.getMillis) & JPath(".where") === whereClause))
+                        queryIndexdb(upsert(varchild_cache_collection).set(toSave).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestampField === period.start.getMillis) & JPath(".where") === whereClause))
+                      }
                       resultList
                     }
                   }
@@ -500,6 +505,8 @@ function() {
 
     val whereClause = cacheWhereClauseFor(nonTimeTags, variable, additionalConstraints)
 
+    val now = new Instant
+
     rangeFor(tagTerms, filter).flatMap {
       case Some((start,end)) => {
         logger.trace("Histogram over %s -> %s for ".format(start, end))
@@ -533,15 +540,20 @@ function() {
                 period => runHistogramQuery(token, path, variable, SpanTerm(timeSeriesEncoding, period.timeSpan) :: nonTimeTags, additionalConstraints, isArrayVar || isAnonLoc).map {
                   resultMap => {
                     val resultList = resultMap.toList
-                    val toSave = JObject(List(JField("accountTokenId", token.accountTokenId.serialize),
-                                              JField("path", path.serialize),
-                                              JField("timestamp", period.start.serialize),
-                                              JField("where", whereClause.serialize),
-                                              JField("histogram", JArray(resultList.map {
-                                                case (label,count) => JObject(JField("label", label) :: JField("count", count.serialize) :: Nil)
-                                              }))))
 
-                    queryIndexdb(upsert(histo_cache_collection).set(toSave).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestampField === period.start.getMillis) & JPath(".where") === whereClause))
+                    // We can only cache if the period is entirely in the past
+                    if (period.end isBefore now) {
+                      val toSave = JObject(List(JField("accountTokenId", token.accountTokenId.serialize),
+                                                JField("path", path.serialize),
+                                                JField("timestamp", period.start.serialize),
+                                                JField("where", whereClause.serialize),
+                                                JField("histogram", JArray(resultList.map {
+                                                  case (label,count) => JObject(JField("label", label) :: JField("count", count.serialize) :: Nil)
+                                                }))))
+
+                      queryIndexdb(upsert(histo_cache_collection).set(toSave).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestampField === period.start.getMillis) & JPath(".where") === whereClause))
+                    }
+
                     resultList
                   }
                 }
@@ -873,6 +885,8 @@ function(key, values) {
 
     val now = new Instant
 
+    logger.debug("Cutoff for caching (now) is " + now)
+
     // Run the query over the intervals given
     val results: Option[Future[ResultSet[JObject,ValueStats]]] = intervalOpt.map { interval => Future(interval.periods.map {
       outerPeriod => {
@@ -917,7 +931,9 @@ function(key, values) {
             val queried : List[Future[List[(Option[String],ValueStats)]]] = periodsToQuery.toList.map {
               period => {
                 def saveResult(vs: ValueStats, location: Option[String]) {
-                  if (disableCaching || (outerPeriod.start isAfter now)) {
+                  // Can't cache if we're disabled or the period isn't completely in the past
+                  if (disableCaching || (period.end isAfter now)) {
+                    logger.trace("Skipping cache of results from %s -> %s".format(period.start, period.end))
                     return
                   }
 
