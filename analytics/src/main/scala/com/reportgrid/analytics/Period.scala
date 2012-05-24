@@ -76,5 +76,9 @@ object Period {
     new Period(periodicity, periodicity.floor(start))
   }
 
+  def unadjusted(periodicity: Periodicity, start: Instant): Period = {
+    new Period(periodicity, start)
+  }
+
   def unapply(p: Period): Option[(Periodicity, Instant, Instant)] = Some((p.periodicity, p.start, p.end))
 }

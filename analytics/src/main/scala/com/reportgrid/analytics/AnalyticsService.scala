@@ -27,10 +27,11 @@ import net.lag.configgy.{Configgy, ConfigMap}
 
 import com.weiglewilczek.slf4s.Logging
 
-import org.joda.time.base.AbstractInstant
-import org.joda.time.Instant
 import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
+import org.joda.time.Duration
+import org.joda.time.Instant
+import org.joda.time.base.AbstractInstant
 
 import java.net.URL
 import java.util.concurrent.TimeUnit
@@ -530,7 +531,9 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   }
 
   def intervalTerm(periodicity: Periodicity): TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
-    validated(timeSpan(parameters, content)).map(IntervalTerm(timeSeriesEncoding, periodicity, _).extendForInterpolation)
+    val offset = parameters.get('tzoffset).map { o => new Duration(o.toLong) } getOrElse(Duration.ZERO)
+    logger.trace("Interval offset = " + offset)
+    validated(timeSpan(parameters, content)).map(IntervalTerm(timeSeriesEncoding, periodicity, _, offset).extendForInterpolation)
   }
 
   val locationTerm: TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {

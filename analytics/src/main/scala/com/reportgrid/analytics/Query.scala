@@ -8,6 +8,8 @@ import blueeyes.json.xschema.JodaSerializationImplicits._
 import org.joda.time.{Duration,Instant}
 import scalaz.Scalaz._
 
+import com.weiglewilczek.slf4s.Logging
+
 import SignatureGen._
 import AnalyticsServiceSerialization._
 
@@ -30,7 +32,7 @@ sealed trait TagTerm {
   def infiniteValueKeys: Seq[Sig] 
 }
 
-case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodicity, span: TimeSpan, offset: Duration = Duration.ZERO) extends TagTerm {
+case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodicity, span: TimeSpan, offset: Duration = Duration.ZERO) extends TagTerm  with Logging {
   type StorageKeysType = TimeRefKeys
 
   private def docStoragePeriods = {
@@ -52,7 +54,11 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
     case Periodicity.Eternity => Stream(Period.Eternity)
     case Periodicity.Single   => Stream(Period.Single(span.start, span.end))
     case _                    => resultGranularity.period(span.start).datesUntil(span.end).map {
-                                   instant => Period(resultGranularity, instant.plus(offset))
+                                   instant => {
+                                     val newInstant = instant.minus(offset)
+                                     logger.trace("Shifted period start from %s to %s".format(instant, newInstant))
+                                     Period.unadjusted(resultGranularity, newInstant)
+                                   }
                                  }
   }
 
