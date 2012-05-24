@@ -1400,7 +1400,7 @@ function (key, vals) {
 
   private def tagsFilter(tagTerms: Seq[TagTerm]): Option[MongoFilter] = {
     val tagsFilters: List[MongoFilter]  = tagTerms.collect {
-      case IntervalTerm(_, _, span) => 
+      case IntervalTerm(_, _, span, _) => 
         (MongoFilterBuilder(JPath(".timestamp")) >= span.start.getMillis) & 
         (MongoFilterBuilder(JPath(".timestamp")) <  span.end.getMillis)
 
@@ -1827,7 +1827,7 @@ object AggregationEngine {
     val retrieved = results.foldLeft(SortedMap.empty[JObject, CountType](JObjectOrdering)) { (acc, event) =>
       val key = JObject(
         tagTerms.collect {
-          case IntervalTerm(_, periodicity, _) => JField("timestamp", periodicity.period(event \ "timestamp").start)
+          case IntervalTerm(_, periodicity, _, _) => JField("timestamp", periodicity.period(event \ "timestamp").start)
           case HierarchyLocationTerm(tagName, Hierarchy.AnonLocation(path)) => JField(tagName, path.path)
           case HierarchyLocationTerm(tagName, Hierarchy.NamedLocation(name, path)) => JField(tagName, path.path)
         }.toList
@@ -1837,7 +1837,7 @@ object AggregationEngine {
     }
 
     val intervalPeriods = tagTerms.collect {
-      case IntervalTerm(_, periodicity, span) => periodicity.period(span.start).until(span.end)
+      case IntervalTerm(_, periodicity, span, _) => periodicity.period(span.start).until(span.end)
       case _ => Stream.empty[Period]
     }
 

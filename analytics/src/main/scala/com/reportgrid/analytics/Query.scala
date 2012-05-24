@@ -5,7 +5,7 @@ import blueeyes.json.JsonAST._
 import blueeyes.json.xschema.DefaultSerialization._
 import blueeyes.json.xschema.JodaSerializationImplicits._
 
-import org.joda.time.Instant
+import org.joda.time.{Duration,Instant}
 import scalaz.Scalaz._
 
 import SignatureGen._
@@ -30,7 +30,7 @@ sealed trait TagTerm {
   def infiniteValueKeys: Seq[Sig] 
 }
 
-case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodicity, span: TimeSpan) extends TagTerm {
+case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodicity, span: TimeSpan, offset: Duration = Duration.ZERO) extends TagTerm {
   type StorageKeysType = TimeRefKeys
 
   private def docStoragePeriods = {
@@ -51,7 +51,9 @@ case class IntervalTerm(encoding: TimeSeriesEncoding, resultGranularity: Periodi
   def periods : Stream[Period] = resultGranularity match {
     case Periodicity.Eternity => Stream(Period.Eternity)
     case Periodicity.Single   => Stream(Period.Single(span.start, span.end))
-    case _                    => resultGranularity.period(span.start).datesUntil(span.end).map(Period(resultGranularity, _))
+    case _                    => resultGranularity.period(span.start).datesUntil(span.end).map {
+                                   instant => Period(resultGranularity, instant.plus(offset))
+                                 }
   }
 
   // see AggregationEngine.dataKeySigs._1

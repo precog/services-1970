@@ -551,6 +551,38 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
           }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
+
+    "retrieve a time series for occurrences of an event with an offset in ms" in sampleData { sampleEvents =>
+      val (events, minDate, maxDate, granularity) = timeSlice(sampleEvents)
+      logger.trace("Retrieve time series for event from %s → %s".format(minDate, maxDate))
+    
+      // Skip the event(s) at our max boundary
+      val upperBound = granularity.floor(maxDate).getMillis
+      val offset = new org.joda.time.Duration(maxDate.getMillis - upperBound)
+      val offsetTimestamp = maxDate.minus(offset)
+
+      val queryTerms = List[TagTerm](
+        IntervalTerm(AggregationEngine.timeSeriesEncoding, granularity, TimeSpan(minDate, maxDate), offset),
+        HierarchyLocationTerm("location", Hierarchy.NamedLocation("country", com.reportgrid.analytics.Path("usa")))
+      )
+    
+      val expectedTotals = events.foldLeft(Map.empty[JPath, Int]) {
+        case (map, e @ Event(eventName, obj, _)) =>
+          val key = JPath(eventName) 
+          if (e.timestamp.map(_.isBefore(offsetTimestamp)).getOrElse(false)) {
+            map + (key -> (map.getOrElse(key, 0) + 1))
+          } else {
+            map
+          }
+      }
+    
+      forall(expectedTotals) {
+        case (jpath, count) =>
+          engine.getVariableSeries(TestToken, "/test", Variable(jpath), queryTerms).map(_.total.count) must whenDelivered[Long] {
+            be_==(count.toLong)
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
+      }
+    }
     
     "retrieve a time series of means of values of a variable over eternity" in sampleData { sampleEvents =>
       logger.trace("Retrieving time series means")
