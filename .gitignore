@@ -2,6 +2,7 @@
 /blueeyes
 /client-libraries
 
+.ensime
 .idea
 tags
 lib_managed
