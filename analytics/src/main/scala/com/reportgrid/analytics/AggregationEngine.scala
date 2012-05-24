@@ -860,7 +860,10 @@ function(key, values) {
           result => {
             val resList = result.toList
             logger.trace("MR varseries results from " + output.outputCollection + ": " + resList)
-            resList.map { jo => (jo("_id").asInstanceOf[JObject], ValueStats((jo \ "value" \  "c").deserialize[Long], Some((jo \ "value" \ "s").deserialize[Double]), Some((jo \ "value" \ "q").deserialize[Double]))) } match {
+            resList.map { jo => (jo("_id").asInstanceOf[JObject], 
+                                 ValueStats((jo \ "value" \  "c").deserialize[Long], 
+                                            Some((jo \ "value" \ "s").deserialize[Double]), 
+                                            Some((jo \ "value" \ "q").deserialize[Double]))) } match {
               case Nil => List((JObject(JField("timestamp", JInt(period.start.getMillis)) :: Nil), ValueStats(0, None, None)))
               case r   => r
             }
@@ -871,7 +874,11 @@ function(key, values) {
   }
 
   /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
-  def getVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty): Future[ResultSet[JObject, ValueStats]] = {
+  def getVariableSeries(token: Token, 
+                        path: Path, 
+                        variable: Variable, 
+                        tagTerms: Seq[TagTerm], 
+                        additionalConstraints: Set[HasValue] = Set.empty): Future[ResultSet[JObject, ValueStats]] = {
     // Break out terms into timespan, named locations, and anonymous location prefixes (if any) 
     val intervalOpt  = tagTerms.collectFirst { case i : IntervalTerm => i }
     val locations    = tagTerms.collect { case loc @ HierarchyLocationTerm(name, Hierarchy.NamedLocation(_,_)) => loc }.toList
@@ -896,9 +903,13 @@ function(key, values) {
         val whereClause = cacheWhereClauseFor(tagTerms, variable, additionalConstraints)
         val cacheFilter = cacheFilterFor(token, path, whereClause, tagTerms, outerPeriod.start.getMillis, outerPeriod.end.getMillis, true)
 
-        queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq")).from(stats_cache_collection).where(cacheFilter)).flatMap {
+        queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq"))
+                     .from(stats_cache_collection)
+                     .where(cacheFilter)).flatMap {
           found => {
-            val (outOfRange,neededPeriods) = if (interval.resultGranularity == Periodicity.Hour || interval.resultGranularity == Periodicity.Day || interval.resultGranularity == Periodicity.Single) {
+            val (outOfRange,neededPeriods) = if (interval.resultGranularity == Periodicity.Hour || 
+                                                 interval.resultGranularity == Periodicity.Day || 
+                                                 interval.resultGranularity == Periodicity.Single) {
               logger.trace(interval.resultGranularity.name + " series in range")
               (false,Period(Periodicity.Hour, outerPeriod.start).until(outerPeriod.end).toSet)
             } else {

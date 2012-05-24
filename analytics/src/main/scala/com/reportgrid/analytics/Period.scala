@@ -13,8 +13,7 @@ sealed class Period private (val periodicity: Periodicity, val start: Instant) e
    */
   def compare(that: Period) = (this.periodicity.compare(that.periodicity) :: this.start.getMillis.compare(that.start.getMillis) :: Nil).dropWhile(_ == 0).headOption.getOrElse(0)
 
-  /** The size of the period.
-   */
+  /** The size of the period. */
   def size: Duration = new Duration(start, end)
 
   def contains(time: Instant): Boolean = time.getMillis >= start.getMillis && time.getMillis < end.getMillis
