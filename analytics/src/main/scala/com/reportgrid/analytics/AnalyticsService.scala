@@ -531,7 +531,11 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   }
 
   def intervalTerm(periodicity: Periodicity): TermF = (parameters: Map[Symbol, String], content: Option[JValue]) => {
-    val offset = parameters.get('tzoffset).map { o => new Duration(o.toLong) } getOrElse(Duration.ZERO)
+    val offset = parameters.get('tzoffset).flatMap { 
+      case "" => logger.warn("Empty tzoffset sent"); None
+      case o  => try { Some(new Duration(o.toLong)) } catch { case e => logger.warn("Error parsing tzoffset:" + e.getMessage); None }
+    } getOrElse(Duration.ZERO)
+
     logger.trace("Interval offset = " + offset)
     validated(timeSpan(parameters, content)).map(IntervalTerm(timeSeriesEncoding, periodicity, _, offset).extendForInterpolation)
   }

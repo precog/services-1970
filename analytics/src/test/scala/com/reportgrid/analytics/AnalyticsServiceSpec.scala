@@ -425,6 +425,29 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
           } 
       }
     }
+
+    "ignore missing/invalid tzoffset field" in sampleData { sampleEvents =>
+      val queryTerms = JObject(JField("location", "usa") :: Nil)
+    
+      val counts = sampleEvents.foldLeft(Map.empty[String, Int]) { case (m, Event(name, _, _)) => m + (name -> (m.getOrElse(name, 0) + 1)) }
+      counts forall {
+        case (name, count) => 
+          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count?tzoffset=")(queryTerms)) must whenDelivered {
+            beLike {
+              case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== count
+            }
+          } 
+      }
+
+      counts forall {
+        case (name, count) => 
+          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count?tzoffset=foo")(queryTerms)) must whenDelivered {
+            beLike {
+              case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== count
+            }
+          } 
+      }
+    }
     
     "count events by get" in sampleData { sampleEvents =>
       val counts = sampleEvents.foldLeft(Map.empty[String, Int]) { case (m, Event(name, _, _)) => m + (name -> (m.getOrElse(name, 0) + 1)) }
