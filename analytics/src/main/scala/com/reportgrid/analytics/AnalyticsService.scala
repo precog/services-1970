@@ -395,7 +395,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
     import SAct._
 
     (resultSet: ResultSet[JObject, V]) => {
-      val shifted = zone filter (_ != DateTimeZone.UTC) map { zone => 
+      val shifted : ResultSet[JObject, V] = zone filter (_ != DateTimeZone.UTC) map { zone => 
         // check whether the offset from UTC with respect to the periodicity is fractional - if so, we will need
         // to interpolate.
 
@@ -431,7 +431,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
         resultSet
       }
       
-      if (shifted.isEmpty) shifted else shifted.tail //since intervalTerm extends the query interval back in time
+      if (shifted.isEmpty) shifted else shifted.tail.filterNot { case (key: JObject, _) => (key \ "bogus") == JBool(true) } //since intervalTerm extends the query interval back in time, but remove bogus entry
     }
   }
 
