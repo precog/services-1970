@@ -51,6 +51,6 @@ sleep 30
 
 echo "Checking health"
 curl -f -G "http://localhost:30030/blueeyes/services/jessup/v1/health"
-echo "Complete health check"
+echo -e "\nComplete health check"
 
 exit 0
