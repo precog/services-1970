@@ -12,17 +12,30 @@ fi
 
 # Stop and start the service
 if status jessup-v1 | grep running; then
-    stop jessup-v1
+    echo "Stopping jessup"
+    if ! stop jessup-v1; then
+        echo "Jessup stopped"
+    else
+        echo "Jessup stop failed"
+    fi
+else
+    echo "Jessup already stopped"
 fi
 
-sleep 5
+sleep 15
 
-if ! RESULT=`start jessup-v1 2>&1` > /dev/null ; then
+echo "Starting jessup"
+
+RESULT=`start jessup-v1 2>&1`
+
+if ! status jessup-v1 | grep running; then
 	echo "Jessup didn't start: $RESULT"
-        if echo "$RESULT" | grep -v "already running" > /dev/null ; then
+        if ! status jessup-v1 | grep running; then
 		echo "Failure: $RESULT"
 		exit 1
         fi
+else
+	echo "Start complete on jessup"
 fi
 
 echo "Jessup started, starting mongo"
