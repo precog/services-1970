@@ -728,7 +728,7 @@ function(key, values) {
         // Delegate to a series query to handle caching, etc
         val newTerms = IntervalTerm(timeSeriesEncoding, Periodicity.Single, TimeSpan(hourStart, hourEnd)) :: nonTimeTags
         
-        val mainCounts = List(getVariableSeries(token, path, variable, newTerms).map { _.toList.drop(1).map { _._2.count }.sum })
+        val mainCounts = List(getVariableSeries(token, path, variable, newTerms).map { _.toList.map { _._2.count }.sum })
 
         // We also need to cover any non-integral periods at the beginning and end of our ranges
         val startPortionCount = if (start isBefore hourStart) {
@@ -897,7 +897,7 @@ function(key, values) {
     // Run the query over the intervals given
     val results: Option[Future[ResultSet[JObject,ValueStats]]] = intervalOpt.map { interval => Future(interval.periods.map {
       outerPeriod => {
-        logger.trace("Querying for period: " + outerPeriod)
+        logger.debug("Querying for period: " + outerPeriod)
 
         // For this period, find any cached counts (hourly) within the period, query for any missing, then sum and return the final count
         val whereClause = cacheWhereClauseFor(tagTerms, variable, additionalConstraints)
@@ -931,12 +931,12 @@ function(key, values) {
             val (disableCaching, periodsToQuery) = {
               val uncached = neededPeriods -- foundPeriods
               if (uncached.size > 1000 || outOfRange) {
-                logger.info("Disabling caching for series: neede %d queries over \"%s\" periodicity".format(uncached.size, interval.resultGranularity.name))
+                logger.info("Disabling caching for series: need %d queries over \"%s\" periodicity".format(uncached.size, interval.resultGranularity.name))
                 (true, Set(outerPeriod)) 
               } else (false, uncached)
             }
             
-            logger.trace("Found %d periods, need to query %d: %s".format(foundPeriods.size, periodsToQuery.size, periodsToQuery))
+            logger.debug("Found %d periods, need to query %d".format(foundPeriods.size, periodsToQuery.size))
 
             // A list of futures of lists of location/stats pairs...phew
             val queried : List[Future[List[(Option[String],ValueStats)]]] = periodsToQuery.toList.map {
@@ -1016,7 +1016,7 @@ function(key, values) {
         }
       }
       // Bogus entry is added since time zone shifting will remove the first element. See AnalyticsService.shiftTimeSeries for details
-    }: _*).map{ r => (List((JObject(JField("bogus", JBool(true)) :: Nil),ValueStats(0, None, None))) :: r).flatten.sortBy(_._1)(JObjectOrdering) }}
+    }: _*).map{ r => r.flatten.sortBy(_._1)(JObjectOrdering) }}
 
     results.getOrElse(sys.error("Variable series requires a time span"))
   }
@@ -1030,7 +1030,26 @@ function(key, values) {
    *  over the given time period.
    */
   def getObservationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
-    getRawEvents(token, path, observation, tagTerms).map(countByTerms(_, tagTerms).toSeq)
+    // Delegate to getVariableSeries, using the first observation as the variable.
+
+    // We require an interval for the series, so we'll generate Eternity if one wasn't provided.
+    // If a SpanTerm is provided, promote it to a Single IntervalTerm
+    val transformedTerms = tagTerms.map {
+      case SpanTerm(encoding, span) => IntervalTerm(encoding, Periodicity.Single, span)
+      case other                    => other
+    }
+
+    val fullTagTerms = if (transformedTerms.exists { case i : IntervalTerm => true; case _ => false }) {
+      transformedTerms
+    } else {
+      transformedTerms :+ IntervalTerm(timeSeriesEncoding, Periodicity.Eternity, TimeSpan(new Instant, new Instant))
+    }
+
+    observation.obs.headOption map {
+      firstObs => getVariableSeries(token, path, firstObs.variable, fullTagTerms, observation.obs).map(_.map { case (k,v) => (k, v.count) })
+    } getOrElse {
+      throw new IllegalArgumentException("Cannot compute an observation series without any observations")
+    }
   }
 
   // Given a list of { "_id" : { ... }, "value" : NumberLong(...) } values, compute the counts

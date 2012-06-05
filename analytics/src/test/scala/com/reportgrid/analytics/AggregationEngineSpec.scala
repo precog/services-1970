@@ -317,7 +317,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (name, count) => 
           engine.getVariableCount(TestToken, "/test", Variable("." + name), queryTerms) must whenDelivered[Long] {
             be_==(count)
-          }(FutureTimeouts(5, Duration(60, TimeUnit.SECONDS)))
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -339,9 +339,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     
       forall(values) {
         case ((eventName, path), values) => 
-          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path), Nil) must whenDelivered {
+          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path), Nil) must whenDelivered[Seq[JValue]] {
             haveTheSameElementsAs(values)
-          }
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -357,9 +357,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       forall(arrayValues) {
         case ((eventName, path), values) =>
           logger.debug("Querying values for " + Variable(JPath(eventName) \ path))
-          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path), Nil) must whenDelivered {
+          engine.getValues(TestToken, "/test", Variable(JPath(eventName) \ path), Nil) must whenDelivered[Seq[JValue]] {
             haveTheSameElementsAs(values)
-          }
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -623,7 +623,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
                 val remapped: Map[String, Double] = result.flatMap{ case (k, v) => v.mean.map((k \ "timestamp").deserialize[Instant].toString -> _) }.toMap 
                 remapped must_== expected
             }
-          }(FutureTimeouts(5, Duration(30, TimeUnit.SECONDS)))
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -640,12 +640,12 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case ((jpath, value), count) if !jpath.endsInInfiniteValueSpace =>
           val observation = JointObservation(HasValue(Variable(jpath), value))
     
-          engine.getObservationSeries(TestToken, "/test", observation, queryTerms) must whenDelivered {
+          engine.getObservationSeries(TestToken, "/test", observation, queryTerms) must whenDelivered[ResultSet[JObject,CountType]] {
             beLike { case results => 
               (results.total must_== count.toLong) and
               (results must haveSize((granularity.period(minDate) until maxDate).size))
             }
-          }
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -663,12 +663,12 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case ((jpath, value), count) if !jpath.endsInInfiniteValueSpace => 
           val observation = JointObservation(HasValue(Variable(jpath), value))
     
-          engine.getRawEvents(TestToken, "/test", observation, queryTerms).map(AggregationEngine.countByTerms(_, queryTerms)) must whenDelivered {
+          engine.getRawEvents(TestToken, "/test", observation, queryTerms).map(AggregationEngine.countByTerms(_, queryTerms)) must whenDelivered[Map[JObject,CountType]] {
             beLike { case results => 
               (results.toSeq.total must_== count.toLong) and 
               (results must haveSize((granularity.period(minDate) until maxDate).size))
             }
-          }
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -694,11 +694,11 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
           forall(observation.obs) { hasValue => 
             engine.getObservationCount(TestToken, "/test", JointObservation(hasValue), queryTerms) must whenDelivered[CountType] {
               beGreaterThanOrEqualTo(count)
-            }
+            }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
           } and {
             engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered[CountType] {
               be_== (count)
-            }
+            }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
           }
     
       }
@@ -725,7 +725,7 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
       forall(expectedCounts) {
         case (values, count) =>
           val observation = JointObservation((variables zip values).map((HasValue(_, _)).tupled).toSet)
-          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered (beEqualTo(count))
+          engine.getObservationCount(TestToken, "/test", observation, queryTerms) must whenDelivered[CountType] (beEqualTo(count))(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -747,11 +747,11 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
         case (map, _) => map
       }
     
-      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms, Set()) must whenDelivered {
+      engine.getIntersectionCount(TestToken, "/test", descriptors, queryTerms, Set()) must whenDelivered[ResultSet[JArray,CountType]] {
         beLike { case result => 
           result.collect{ case (JArray(keys), v) if v != 0 => (keys, v) }.toMap must_== expectedCounts
         }
-      }
+      }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
     }
     
     "retrieve intersection counts for a slice of time" in sampleData { sampleEvents =>

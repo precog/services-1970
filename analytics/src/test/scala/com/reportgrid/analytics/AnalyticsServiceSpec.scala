@@ -256,7 +256,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
 
         val content = """{"where":[{"variable":".%s.%s","value":"%s"}]}""".format(eventName, constraintField.name, constraintField.value.values.toString)
         
-        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".num/values?content=" + URLEncoder.encode(content, "UTF-8")) must whenDelivered {
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".num/values?content=" + URLEncoder.encode(content, "UTF-8")) must whenDelivered[HttpResponse[JValue]] {
           beLike {
               case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
                 val nonTagData = result.deserialize[List[JValue]].map {
@@ -267,7 +267,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
                 (nonTagData must containAllOf(expected).only)
               }
           }
-        }
+        }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
 
@@ -278,7 +278,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         val expected : List[JValue] = sampleEvents.filter(_.eventName == eventName).map(_.data.value)
     
         // This also tests to make sure that only the event name (and not properties) are used in the underlying query
-        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".dummy/events") must whenDelivered {
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + ".dummy/events") must whenDelivered[HttpResponse[JValue]] {
           beLike {
               case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
                 val nonTagData = result.deserialize[List[JValue]].map {
@@ -289,7 +289,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
                 (nonTagData must haveTheSameElementsAs(expected))
               }
           }
-        }
+        }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
@@ -306,7 +306,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         val content = """{"where":[{"variable":".%s.%s","value":"%s"}]}""".format(eventName, constraintField.name, constraintField.value.values.toString)
     
         // This also tests to make sure that only the event name (and not properties) are used in the underlying query
-        jsonTestService.get[JValue]("/vfs/test/." + eventName + "/events?content=" + URLEncoder.encode(content, "UTF-8")) must whenDelivered {
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + "/events?content=" + URLEncoder.encode(content, "UTF-8")) must whenDelivered[HttpResponse[JValue]] {
           beLike {
               case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
                 val nonTagData = result.deserialize[List[JValue]].map {
@@ -317,7 +317,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
                 (nonTagData must containAllOf(expected).only)
               }
           }
-        }
+        }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
@@ -327,14 +327,14 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     
         val expected : List[JValue] = sampleEvents.filter(_.eventName == eventName).map(_.data.value)
     
-        jsonTestService.get[JValue]("/vfs/test/." + eventName + "/events?limit=1") must whenDelivered {
+        jsonTestService.get[JValue]("/vfs/test/." + eventName + "/events?limit=1") must whenDelivered[HttpResponse[JValue]] {
           beLike {
               case HttpResponse(HttpStatus(status, _), _, Some(result), _) => {
                 (status must_== HttpStatusCodes.OK) and
                 (result.deserialize[List[JValue]].length must_== 1)
               }
           }
-        }
+        }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
@@ -346,13 +346,13 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     
         val expected : List[JValue] = sampleEvents.filter(_.eventName == eventName).map(v => JObject.empty.set(JPath(fieldName), v.data.value \ fieldName))
     
-        jsonTestService.get[JValue]("/vfs/test/.%s/events?properties=.%s".format(eventName, fieldName)) must whenDelivered {
+        jsonTestService.get[JValue]("/vfs/test/.%s/events?properties=.%s".format(eventName, fieldName)) must whenDelivered[HttpResponse[JValue]] {
           beLike {
             case HttpResponse(HttpStatus(status, _), _, Some(result), _) => 
               (status must_== HttpStatusCodes.OK) and
               (result.deserialize[List[JValue]] must haveTheSameElementsAs(expected))
           }
-        }        
+        }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
       
@@ -365,26 +365,26 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     
       expectedChildren forall { 
         case (eventName, children) => 
-          (jsonTestService.get[JValue]("/vfs/test/." + eventName)) must whenDelivered {
+          (jsonTestService.get[JValue]("/vfs/test/." + eventName)) must whenDelivered[HttpResponse[JValue]] {
              beLike {
               case HttpResponse(HttpStatus(status, _), _, Some(result), _) => 
                 (status must_== HttpStatusCodes.OK) and
                 (result.deserialize[List[String]] must haveTheSameElementsAs(children))
             }
-          } 
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
     "explore tags" in sampleData { sampleEvents =>
       val expectedTags: Set[String] = sampleEvents.flatMap({ case Event(_, _, tags) => tags.map(_.name) })(collection.breakOut)
     
-      (jsonTestService.get[JValue]("/tags/test")) must whenDelivered {
+      (jsonTestService.get[JValue]("/tags/test")) must whenDelivered[HttpResponse[JValue]] {
         beLike {
           case HttpResponse(status, _, Some(result), _) => 
             (status.code must_== HttpStatusCodes.OK) and
             (result.deserialize[Set[String]] must_== expectedTags)
         }
-      }
+      }(FutureTimeouts(1, toDuration(30l).seconds))
     }
     
     "explore the tag hierarchy" in sampleData { sampleEvents =>
@@ -397,17 +397,17 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             }
           }
         case (m, _) => m
-      } 
+      }
     
       forall(expectedChildren) {
         case (hpath, children) => 
-          (jsonTestService.get[JValue]("/tags/test/.location." + hpath.elements.mkString("."))) must whenDelivered {
+          (jsonTestService.get[JValue]("/tags/test/.location." + hpath.elements.mkString("."))) must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(result), _) => 
                 (status.code must_== HttpStatusCodes.OK) and
                 (result.deserialize[List[String]] must haveTheSameElementsAs(children))
             }
-          }
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
@@ -418,11 +418,11 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       val counts = sampleEvents.foldLeft(Map.empty[String, Int]) { case (m, Event(name, _, _)) => m + (name -> (m.getOrElse(name, 0) + 1)) }
       counts forall {
         case (name, count) => 
-          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count")(queryTerms)) must whenDelivered {
+          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count")(queryTerms)) must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== count
             }
-          } 
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
 
@@ -432,20 +432,20 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       val counts = sampleEvents.foldLeft(Map.empty[String, Int]) { case (m, Event(name, _, _)) => m + (name -> (m.getOrElse(name, 0) + 1)) }
       counts forall {
         case (name, count) => 
-          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count?tzoffset=")(queryTerms)) must whenDelivered {
+          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count?tzoffset=")(queryTerms)) must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== count
             }
-          } 
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
 
       counts forall {
         case (name, count) => 
-          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count?tzoffset=foo")(queryTerms)) must whenDelivered {
+          (jsonTestService.post[JValue]("/vfs/test/."+name+"/count?tzoffset=foo")(queryTerms)) must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== count
             }
-          } 
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
@@ -453,11 +453,11 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
       val counts = sampleEvents.foldLeft(Map.empty[String, Int]) { case (m, Event(name, _, _)) => m + (name -> (m.getOrElse(name, 0) + 1)) }
       counts forall {
         case (name, count) => 
-          jsonTestService.get[JValue]("/vfs/test/."+name+"/count?location=usa") must whenDelivered {
+          jsonTestService.get[JValue]("/vfs/test/."+name+"/count?location=usa") must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== count
             }
-          } 
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
@@ -471,24 +471,24 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     
       counts forall {
         case (name, count) =>
-          jsonTestService.get[JValue]("/vfs/test/."+name+"/count?start="+startTime+"&end="+(endTime + 1)) must whenDelivered {
+          jsonTestService.get[JValue]("/vfs/test/."+name+"/count?start="+startTime+"&end="+(endTime + 1)) must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(result), _) => {
                 if (result.deserialize[Long] != count) { println("Mismatch on " + name) }
                 result.deserialize[Long] must_== count
               }
             }
-          } 
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }}
       
     
     "not roll up by default" in {
-      jsonTestService.get[JValue]("/vfs/.tweeted/count?location=usa") must whenDelivered {
+      jsonTestService.get[JValue]("/vfs/.tweeted/count?location=usa") must whenDelivered[HttpResponse[JValue]] {
         beLike {
           case HttpResponse(status, _, Some(result), _) => result.deserialize[Long] must_== 0l
         }
-      } 
+      }(FutureTimeouts(1, toDuration(30l).seconds))
     }
     
     "return variable counts keyed by tag children" in sampleData { sampleEvents =>
@@ -509,7 +509,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     
       forall(expectedResults) {
         case (eventName, locationCounts) =>
-          (jsonTestService.post[JValue]("/vfs/test/." + eventName + ".recipientCount/count?use_tag_children=location")(queryTerms)) must whenDelivered {
+          (jsonTestService.post[JValue]("/vfs/test/." + eventName + ".recipientCount/count?use_tag_children=location")(queryTerms)) must whenDelivered[HttpResponse[JValue]] {
             beLike {
               case HttpResponse(status, _, Some(contents), _) => 
                 (status.code must_== HttpStatusCodes.OK) and
@@ -517,7 +517,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
                   case (key, count) => (((contents --> classOf[JObject]) \ key).deserialize[Int] must_== count)
                 }
             }
-          }
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
@@ -544,7 +544,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             // TODO: Should fix data generation so that we always have "tweeted" events
             resultData must containAllOf(expected.get("tweeted").map(_.toSeq).getOrElse(Seq()))
         }
-      }(FutureTimeouts(1, toDuration(120l).seconds)) 
+      }(FutureTimeouts(1, toDuration(30l).seconds)) 
     }
     
     "return variable series means using a where clause" in sampleData { sampleEvents =>
@@ -578,7 +578,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
     
             resultData.toMap must haveTheSameElementsAs(expected.get("tweeted").getOrElse(Map()))
         }
-      }(FutureTimeouts(1, toDuration(120l).seconds)) 
+      }(FutureTimeouts(1, toDuration(30l).seconds)) 
     }
     
     "return variable value series counts" in sampleData { sampleEvents =>
@@ -599,7 +599,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             beLike {
               case HttpResponse(status, _, Some(JArray(values)), _) => (values must not be empty) //and (series must_== expected)
             }
-          }(FutureTimeouts(1, toDuration(120l).seconds))
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
     
@@ -621,7 +621,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             beLike {
               case HttpResponse(status, _, Some(JArray(values)), _) => (values must not be empty) //and (series must_== expected)
             }
-          }(FutureTimeouts(1, toDuration(120l).seconds))
+          }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     })
     
@@ -653,7 +653,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         beLike {
           case (a, b) => (a must_!= 0) and (a must_== b)
         }
-      }(FutureTimeouts(1, toDuration(120l).seconds))
+      }(FutureTimeouts(1, toDuration(30l).seconds))
     }
     
     "intersection series must sum to count over the same period with a where clause" in sampleData { sampleEvents =>
@@ -693,7 +693,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
         beLike {
           case (a, b) => (a must_!= 0) and (a must_== b)
         }
-      }(FutureTimeouts(1, toDuration(10l).seconds))
+      }(FutureTimeouts(1, toDuration(30l).seconds))
     }
     
     "grouping in intersection queries" >> {
@@ -720,7 +720,7 @@ class AnalyticsServiceSpec extends TestAnalyticsService with ArbitraryEvent with
             case (r1, r2) => 
               r2.content must matchShiftedHistogram(r1.content, 1, granularity)
           }
-        }(FutureTimeouts(1, toDuration(10l).seconds))
+        }(FutureTimeouts(1, toDuration(30l).seconds))
       }
     }
   }

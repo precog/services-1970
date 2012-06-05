@@ -371,6 +371,7 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
 
   def transformTimeSeries[V: AbelianGroup : MDouble](request: HttpRequest[_], periodicity: Periodicity): Endo[ResultSet[JObject, V]] = {
     val zone = validated(timezone(request.parameters))
+    logger.debug("Transforming series for " + zone)
     shiftTimeSeries[V](periodicity, zone) andThen groupTimeSeries[V](periodicity, seriesGrouping(request), zone)
   }
 
@@ -392,6 +393,8 @@ object AnalyticsService extends HttpRequestHandlerCombinators with PartialFuncti
   )
     
   def shiftTimeSeries[V: AbelianGroup : MDouble](periodicity: Periodicity, zone: Option[DateTimeZone]): Endo[ResultSet[JObject, V]] = {
+    logger.debug("Shifting time series for " + zone)
+
     import SAct._
 
     (resultSet: ResultSet[JObject, V]) => {
