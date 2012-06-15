@@ -20,7 +20,7 @@ import org.joda.time.{DateTime, DateTimeZone}
  *
  * Tokens have permissions (read/write/share), expiration dates, and limits.
  */
-case class Token(tokenId: String, parentTokenId: Option[String], accountTokenId: String, path: Path, permissions: Permissions, expires: DateTime, limits: Limits) {
+case class Token(tokenId: String, parentTokenId: Option[String], accountTokenId: String, path: Path, permissions: Permissions, createdAt: DateTime, expires: DateTime, limits: Limits) {
   def expired  = expires.getMillis <= new DateTime(DateTimeZone.UTC).getMillis
   def canRead  = permissions.read
   def canWrite = permissions.write
@@ -39,6 +39,7 @@ case class Token(tokenId: String, parentTokenId: Option[String], accountTokenId:
     accountTokenId = this.accountTokenId,
     path           = this.path / relativePath,
     permissions    = permissions.limitTo(this.permissions),
+    createdAt      = new DateTime,
     expires        = new DateTime(expires.getMillis.min(this.expires.getMillis), DateTimeZone.UTC),
     limits         = limits.limitTo(this.limits)
   )
@@ -56,6 +57,7 @@ trait TokenSerialization {
       JField("accountTokenId",  token.accountTokenId.serialize) ::
       JField("path",            token.path.serialize) ::
       JField("permissions",     token.permissions.serialize) ::
+      JField("createdAt",       token.createdAt.serialize) ::
       JField("expires",         token.expires.serialize) ::
       JField("limits",          token.limits.serialize) ::
       Nil
@@ -69,6 +71,7 @@ trait TokenSerialization {
       accountTokenId  = (jvalue \ "accountTokenId").deserialize[String],
       path            = (jvalue \ "path").deserialize[Path],
       permissions     = (jvalue \ "permissions").deserialize[Permissions],
+      createdAt       = (jvalue \ "createdAt").deserialize[DateTime],
       expires         = (jvalue \ "expires").deserialize[DateTime],
       limits          = (jvalue \ "limits").deserialize[Limits]
     )
@@ -76,11 +79,21 @@ trait TokenSerialization {
 }
 
 object Token extends TokenSerialization {
+  final val ReportGridStart = new DateTime(1314853200000l)
+  
   private def newUUID() = java.util.UUID.randomUUID().toString.toUpperCase
 
   val Never = new DateTime(java.lang.Long.MAX_VALUE, DateTimeZone.UTC)
 
-  lazy val Root = Token("8E680858-329C-4F31-BEE3-2AD15FB67EED", None, "8E680858-329C-4F31-BEE3-2AD15FB67EED", "/", Permissions(true, true, true, true), Never, Limits.None)
+  lazy val Root = Token(
+    tokenId        = "8E680858-329C-4F31-BEE3-2AD15FB67EED",
+    parentTokenId  = None,
+    accountTokenId = "8E680858-329C-4F31-BEE3-2AD15FB67EED",
+    path           = "/",
+    permissions    = Permissions(true, true, true, true),
+    createdAt      = ReportGridStart,
+    expires        = Never,
+    limits         = Limits.None)
 
   lazy val Test = Token(
     tokenId        = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D",
@@ -88,6 +101,7 @@ object Token extends TokenSerialization {
     accountTokenId = "A3BC1539-E8A9-4207-BB41-3036EC2C6E6D",
     path           = "test-account-root",
     permissions    = Permissions(true, true, true, true),
+    createdAt      = ReportGridStart,
     expires        = Never,
     limits         = Limits(order = 2, depth = 3, limit = 20, tags = 2, rollup = 5)
   )
@@ -101,6 +115,7 @@ object Token extends TokenSerialization {
       accountTokenId = newTokenId,
       path           = path,
       permissions    = Permissions(true, true, true, true),
+      createdAt      = new DateTime(),
       expires        = Never,
       limits         = limits.limitTo(Token.Root.limits)
     )

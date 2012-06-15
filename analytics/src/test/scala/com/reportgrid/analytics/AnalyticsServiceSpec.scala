@@ -3,22 +3,22 @@ package analytics
 
 import java.net.URLEncoder
 
-import blueeyes._
-import blueeyes.core.data._
-import blueeyes.core.http._
-import blueeyes.core.http.HttpStatusCodes._
-import blueeyes.core.service.test.BlueEyesServiceSpecification
-import blueeyes.concurrent.Future
-import blueeyes.concurrent.test._
-import blueeyes.json._
-import blueeyes.json.JsonAST._
-import blueeyes.json.JsonDSL._
-import blueeyes.json.xschema.JodaSerializationImplicits._
-import blueeyes.json.xschema.DefaultSerialization._
-import blueeyes.json.JPathImplicits._
-import blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo, MongoCollection, Database}
-import blueeyes.util.metrics.Duration._
-import blueeyes.util.Clock
+import _root_.blueeyes._
+import _root_.blueeyes.core.data._
+import _root_.blueeyes.core.http._
+import _root_.blueeyes.core.http.HttpStatusCodes._
+import _root_.blueeyes.core.service.test.BlueEyesServiceSpecification
+import _root_.blueeyes.concurrent.Future
+import _root_.blueeyes.concurrent.test._
+import _root_.blueeyes.json._
+import _root_.blueeyes.json.JsonAST._
+import _root_.blueeyes.json.JsonDSL._
+import _root_.blueeyes.json.xschema.JodaSerializationImplicits._
+import _root_.blueeyes.json.xschema.DefaultSerialization._
+import _root_.blueeyes.json.JPathImplicits._
+import _root_.blueeyes.persistence.mongo.{Mongo, RealMongo, MockMongo, MongoCollection, Database}
+import _root_.blueeyes.util.metrics.Duration._
+import _root_.blueeyes.util.Clock
 import MimeTypes._
 
 import org.joda.time._
@@ -57,12 +57,16 @@ case class PastClock(duration: Duration) extends Clock {
 }
 
 trait TestTokens {
+  // Because test data can go well into the past, we need to make sure token creation times precede them
+  val epochStart = new DateTime(0l)
+  
   val TestToken = Token(
     tokenId        = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
     parentTokenId  = Some(Token.Root.tokenId),
     accountTokenId = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
     path           = "unittest",
     permissions    = Permissions(true, true, true, true),
+    createdAt      = epochStart,
     expires        = Token.Never,
     limits         = Limits(order = 2, depth = 5, limit = 20, tags = 2, rollup = 2)
   )
@@ -73,6 +77,7 @@ trait TestTokens {
     accountTokenId = "DB6DEF4F-678A-4F7D-9897-F920762887F1",
     path           = "__usage_tracking__",
     permissions    = Permissions(true, true, true, true),
+    createdAt      = epochStart,
     expires        = Token.Never,
     limits         = Limits(order = 1, depth = 2, limit = 5, tags = 1, rollup = 2, lossless=false)
  )

@@ -144,6 +144,7 @@ trait AggregationEngineTests extends Specification with FutureMatchers with Arbi
     accountTokenId = "C7A18C95-3619-415B-A89B-4CE47693E4CC",
     path           = "unittest",
     permissions    = Permissions(true, true, true, true),
+    createdAt      = Token.ReportGridStart,
     expires        = Token.Never,
     limits         = Limits(order = 1, depth = 5, limit = 20, tags = 2, rollup = 2)
   )

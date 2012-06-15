@@ -21,10 +21,11 @@ import scalaz.{Validation, Success, Failure}
 object TokenService extends HttpRequestHandlerCombinators {
   def apply(tokenManager: TokenStorage, clock: Clock, logger: Logger): HttpService[Future[JValue], Token => Future[HttpResponse[JValue]]] = {
     path(/?) {
-      get { 
+      get {
         (request: HttpRequest[Future[JValue]]) => (token: Token) => {
+          logger.debug("Finding descendants for " + token)
           tokenManager.listDescendants(token) map { 
-            _.map(_.tokenId).serialize.ok
+            descendants => logger.debug("Found descendants: " + descendants); descendants.map(_.tokenId).serialize.ok
           }
         }
       } ~
@@ -54,14 +55,21 @@ object TokenService extends HttpRequestHandlerCombinators {
       path("children") {
         get { 
           (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-            tokenManager.listChildren(token).map(children => HttpResponse[JValue](content = Some(children.map(_.tokenId).serialize)))
+            tokenManager.listChildren(token).map {
+              children =>
+                val result = children.map(_.tokenId).serialize
+                logger.debug("Sending listChildren result: " + result)
+                HttpResponse[JValue](content = Some(result))
+            }
           }
         }
       } ~ 
       path('descendantTokenId) {
         get { 
           (request: HttpRequest[Future[JValue]]) => (token: Token) => {
+            logger.debug("Finding info for " + token)
             if (token.tokenId == request.parameters('descendantTokenId)) {
+              logger.debug("Finding parent info")
               token.parentTokenId.map { parTokenId =>
                 tokenManager.lookup(parTokenId).map { parent => 
                   val sanitized = parent.map(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
@@ -71,8 +79,14 @@ object TokenService extends HttpRequestHandlerCombinators {
                 Future.sync(HttpResponse[JValue](Forbidden))
               }
             } else {
-              tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { 
-                _.map(_.relativeTo(token).copy(accountTokenId = "").serialize)
+              logger.debug("Finding child info (%s)".format(request.parameters('descendantTokenId)))
+              tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { info =>
+                logger.debug("Found descendant info: " + info)
+                info.map { infoToken => 
+                  val result = infoToken.relativeTo(token).copy(accountTokenId = "")
+                  logger.debug("Final result for descendant info = " + result)
+                  result.serialize
+                }
               } map { descendantToken =>
                 HttpResponse[JValue](content = descendantToken)
               }
@@ -81,6 +95,7 @@ object TokenService extends HttpRequestHandlerCombinators {
         } ~
         delete { 
           (request: HttpRequest[Future[JValue]]) => (token: Token) => {
+            logger.debug("Delete request on token : " + request.parameters('descendantTokenId))
             tokenManager.lookup(request.parameters('descendantTokenId)) flatMap { 
               _ map { descendant =>
                 tokenManager.deleteDescendant(token, descendant.tokenId) map { _ =>

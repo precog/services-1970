@@ -1,7 +1,5 @@
 package com.reportgrid.util;
 
-import java.nio.ByteBuffer;
-
 public final class Bytes {
   public static final byte[] add(Iterable<byte[]> toAdd) {
     int max = 0;

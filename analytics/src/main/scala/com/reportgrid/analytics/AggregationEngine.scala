@@ -272,7 +272,7 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
 
       val now = new Instant
       
-      rangeFor(tagTerms, filter).flatMap {
+      rangeFor(token, tagTerms, filter).flatMap {
         case Some((start,end)) => {
           logger.trace("Variable children over %s -> %s for ".format(start, end))
 
@@ -507,7 +507,7 @@ function() {
 
     val now = new Instant
 
-    rangeFor(tagTerms, filter).flatMap {
+    rangeFor(token, tagTerms, filter).flatMap {
       case Some((start,end)) => {
         logger.trace("Histogram over %s -> %s for ".format(start, end))
 
@@ -717,7 +717,7 @@ function(key, values) {
 
     val now = new Instant
 
-    rangeFor(tagTerms, filter).flatMap {
+    rangeFor(token, tagTerms, filter).flatMap {
       case Some((start,end)) if start isBefore now => {
         logger.trace("Series count for %s -> %s".format(start, end))
 
@@ -1329,11 +1329,20 @@ function (key, vals) {
   // For convenience we define this here for reuse
   val timestampField = MongoFilterBuilder(JPath(".timestamp"))
 
-  def rangeFor(tagTerms: Seq[TagTerm], filter: MongoFilter): Future[Option[(Instant,Instant)]] = {
-    // Determine the time range in question so that we can check the cache for pre-computed values
-    // We either have been given a time span or we need to query to determine the min/max for the token/path
+  def rangeFor(token: Token, tagTerms: Seq[TagTerm], filter: MongoFilter): Future[Option[(Instant,Instant)]] = {
+    /* Determine the time range in question so that we can check the cache for pre-computed values
+     * We either have been given a time span or we use [token creation time,now). In the case where
+     * we've been given a time range, ceiling the lower bound to the token creation time */
+    val minTime: Instant = token.createdAt.toInstant
     tagTerms.collectFirst[Future[Option[(Instant,Instant)]]] {
-      case SpanTerm(encoding, TimeSpan(start, end)) => Future.sync(Some((start,end)))
+      case SpanTerm(encoding, TimeSpan(start, end)) => Future.sync {
+        if (start.isBefore(minTime)) {
+          logger.debug("Adjusting start time to token creation")
+          Some((minTime, end))
+        } else {
+          Some((start,end))
+        }
+      }
     }.getOrElse {
       logger.warn("Resorting to full DB query to determine min/max timestamps")
       queryEventsdb(selectOne(".timestamp").from(events_collection).where(filter).sortBy(".timestamp" >>)).flatMap {
@@ -1343,7 +1352,7 @@ function (key, vals) {
             case None      => logger.warn("Found start timestamp without end during range query"); Future.sync(None) // Technically this shouldn't be possible if we found a start event
           }
         }
-        case None => Future.sync(None) // Easy, there aren't any 
+        case None => Future.sync(None) // Easy, there aren't any
       }
     }
   }

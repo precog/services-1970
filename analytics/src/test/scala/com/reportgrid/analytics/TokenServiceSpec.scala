@@ -52,7 +52,7 @@ class TokenServiceSpec extends Specification with FutureMatchers with TestTokenS
           beLike {
             case HttpResponse(HttpStatus(HttpStatusCodes.OK, _), _, Some(content), _) =>
               content.deserialize[Token] must beLike {
-                case Token(tokenId, None, "", path, permissions, _, limits) =>
+                case Token(tokenId, None, "", path, permissions, _, _, limits) =>
                   (tokenId must_== tok.tokenId) and
                   (path must_== tok.path) and
                   (permissions must_== tok.permissions) and
