@@ -242,9 +242,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     
       forall(expectedChildren) { 
         case (eventName, children) => 
-          engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName))).map(_.map(_._1.child.toString)) must whenDelivered {
+          engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName))).map(_.map(_._1.child.toString)) must whenDelivered[List[String]] {
             haveTheSameElementsAs(children)
-          }
+          }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
       }
     }
     
@@ -269,9 +269,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     
         forall(expectedChildren) { 
           case (eventName, children) => 
-            engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName)), terms).map(_.map(_._1.child.toString)) must whenDelivered {
+            engine.getVariableChildren(TestToken, "/test", Variable(JPath("." + eventName)), terms).map(_.map(_._1.child.toString)) must whenDelivered[List[String]] {
               haveTheSameElementsAs(children)
-            }
+            }(FutureTimeouts(1, Duration(120, TimeUnit.SECONDS)))
         } 
       }
     }
