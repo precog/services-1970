@@ -21,10 +21,7 @@ trait ArbitraryTime {
     Second -> 60,
     Minute -> 60,
     Hour -> 24,
-    Day -> 31,
-    Week -> 52,
-    Month -> 12,
-    Year -> 3
+    Day -> 7
   )
 
   val genTime = {
