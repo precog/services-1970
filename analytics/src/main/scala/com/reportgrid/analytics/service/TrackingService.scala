@@ -135,7 +135,7 @@ extends CustomHttpService[Future[JValue], (Token, Path) => Future[HttpResponse[J
         request.content.map { 
           _.flatMap {
             case obj @ JObject(fields) => 
-              logger.debug(count + "|" + token.tokenId + "|" + path.path + "|" + compact(render(obj)) + "|" + rollup)
+              logger.debug(count + "|" + token.tokenId + "|" + request.uri.path.getOrElse("/") + "|" + path.path + "|" + compact(render(obj)) + "|" + rollup)
 
               Future(
                 fields flatMap { 
