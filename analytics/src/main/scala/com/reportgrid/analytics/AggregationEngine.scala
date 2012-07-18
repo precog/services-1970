@@ -299,10 +299,10 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
               
               val queryPeriods = allPeriods -- foundPeriods
 
-              if (queryPeriods.size < 1200) {
+              if (queryPeriods.size < 700) {
                 logger.trace("Found %d cached periods, querying for %d".format(foundPeriods.size, queryPeriods.size))
                 val queryResults: List[Future[List[(HasChild,Long)]]] = queryPeriods.toList.map {
-                  // Add some delay so that we don't overrun mongo :(
+                  // Add some delay so that we don't overrun mongo
                   period => Thread.sleep(100); getMRVariableChildren(token, path, variable, SpanTerm(timeSeriesEncoding, period.timeSpan) :: nonTimeTags).map {
                     resultList => {
                       if (period.end isBefore now) {
@@ -534,7 +534,7 @@ function() {
             
             val queryPeriods = allPeriods -- foundPeriods
 
-            if (queryPeriods.size < 4000) {
+            if (queryPeriods.size < 700) {
               logger.trace("Found %d cached periods, querying for %d".format(foundPeriods.size, queryPeriods.size))
               val queryResults: List[Future[List[(JValue,Long)]]] = queryPeriods.toList.map {
                 period => runHistogramQuery(token, path, variable, SpanTerm(timeSeriesEncoding, period.timeSpan) :: nonTimeTags, additionalConstraints, isArrayVar || isAnonLoc).map {
@@ -612,7 +612,6 @@ function() {
     }
   }
 
-
   def getMRHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
     logger.trace("Map/reduce for histogram on " + variable + " with tagTerms = " + tagTerms + " and add'l constraints: " + additionalConstraints)
 
@@ -658,7 +657,6 @@ function(key, values) {
     }
   }
   
-
   def getHistogramTop(token: Token, path: Path, variable: Variable, n: Int, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[ResultSet[JValue, CountType]] = 
     getHistogram(token, path, variable, tagTerms, additionalConstraints).map(v => v.toList.sortBy(- _._2).take(n))
 
@@ -894,56 +892,79 @@ function(key, values) {
 
     logger.debug("Cutoff for caching (now) is " + now)
 
+    val whereClause = cacheWhereClauseFor(tagTerms, variable, additionalConstraints)
+
+    // Precompute our time slice info before actually running any MR/Aggr jobs
     // Run the query over the intervals given
-    val results: Option[Future[ResultSet[JObject,ValueStats]]] = intervalOpt.map { interval => Future(interval.periods.map {
-      outerPeriod => {
-        logger.debug("Querying for period: " + outerPeriod)
+    val periodInfo: Option[Future[List[(Period,List[(Option[String],ValueStats)], Set[Period])]]] = intervalOpt.map { 
+      interval => {
+        Future(interval.periods.map {
+          outerPeriod => {
+            logger.debug("Querying for period: " + outerPeriod)
 
-        // For this period, find any cached counts (hourly) within the period, query for any missing, then sum and return the final count
-        val whereClause = cacheWhereClauseFor(tagTerms, variable, additionalConstraints)
-        val cacheFilter = cacheFilterFor(token, path, whereClause, tagTerms, outerPeriod.start.getMillis, outerPeriod.end.getMillis, true)
+            // For this period, find any cached counts (hourly) within the period, query for any missing, then sum and return the final count
+            val cacheFilter = cacheFilterFor(token, path, whereClause, tagTerms, outerPeriod.start.getMillis, outerPeriod.end.getMillis, true)
 
-        queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq"))
-                     .from(stats_cache_collection)
-                     .where(cacheFilter)).flatMap {
-          found => {
-            val (outOfRange,neededPeriods) = if (interval.resultGranularity == Periodicity.Hour || 
-                                                 interval.resultGranularity == Periodicity.Day || 
-                                                 interval.resultGranularity == Periodicity.Single) {
-              logger.trace(interval.resultGranularity.name + " series in range")
-              (false,Period(Periodicity.Hour, outerPeriod.start).until(outerPeriod.end).toSet)
-            } else {
-              logger.trace(interval.resultGranularity.name + " series out of range")
-              (true,Set(outerPeriod))
-            }
+            queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq")).from(stats_cache_collection).where(cacheFilter)).map {
+              found => {
+                val (outOfRange,neededPeriods) = if (interval.resultGranularity == Periodicity.Hour || 
+                                                     interval.resultGranularity == Periodicity.Day || 
+                                                     interval.resultGranularity == Periodicity.Single) {
+                  logger.trace(interval.resultGranularity.name + " series in range")
+                  (false,Period(Periodicity.Hour, outerPeriod.start).until(outerPeriod.end).toSet)
+                } else {
+                  logger.trace(interval.resultGranularity.name + " series out of range")
+                  (true,Set(outerPeriod))
+                }
 
-            val (foundStats, foundPeriods) = found.foldLeft((List[(Option[String],ValueStats)](), Set[Period]())) {
-              case ((stats,periods), cacheEntry) => {
-                val entryStats = 
-                  ValueStats((cacheEntry \ "count").deserialize[Long],
-                             (cacheEntry \? "sum").map(_.deserialize[Double]),
-                             (cacheEntry \? "sumsq").map(_.deserialize[Double]))
+                val (foundStats, foundPeriods) = found.foldLeft((List[(Option[String],ValueStats)](), Set[Period]())) {
+                  case ((stats,periods), cacheEntry) => {
+                    val entryStats = 
+                      ValueStats((cacheEntry \ "count").deserialize[Long],
+                                 (cacheEntry \? "sum").map(_.deserialize[Double]),
+                                 (cacheEntry \? "sumsq").map(_.deserialize[Double]))
 
-                (((cacheEntry \? "location").map(_.deserialize[String]), entryStats) :: stats, periods + Period(Periodicity.Hour, (cacheEntry \ "timestamp").deserialize[Instant]))
+                    (((cacheEntry \? "location").map(_.deserialize[String]), entryStats) :: stats, periods + Period(Periodicity.Hour, (cacheEntry \ "timestamp").deserialize[Instant]))
+                  }
+                }
+
+                val (cachedStats,periodsToQuery) = {
+                  val uncached = neededPeriods -- foundPeriods
+                  if (uncached.size > 1000 || outOfRange) {
+                    logger.info("Disabling caching for series: need %d queries over \"%s\" periodicity".format(uncached.size, interval.resultGranularity.name))
+                    (Nil,Set(outerPeriod))
+                  } else {
+                    (foundStats,uncached)
+                  }
+                }
+            
+                logger.debug("Need to query %d sub-periods for %s".format(periodsToQuery.size, outerPeriod))
+                
+                (outerPeriod,cachedStats,periodsToQuery)
               }
             }
+          }
+        }: _*)
+      }
+    }
 
-            val (disableCaching, periodsToQuery) = {
-              val uncached = neededPeriods -- foundPeriods
-              if (uncached.size > 1000 || outOfRange) {
-                logger.info("Disabling caching for series: need %d queries over \"%s\" periodicity".format(uncached.size, interval.resultGranularity.name))
-                (true, Set(outerPeriod)) 
-              } else (false, uncached)
-            }
-            
-            logger.debug("Found %d periods, need to query %d".format(foundPeriods.size, periodsToQuery.size))
+    periodInfo.map { _.flatMap[ResultSet[JObject,ValueStats]] { periodStats => {
+      val totalUncached = periodStats.map(_._3.size).sum
 
+      logger.trace("Total uncached sub-periods = " + totalUncached)
+
+      if (totalUncached > 700) {
+        // Use raw varSeries
+        getRawVariableSeries(token, path, variable, tagTerms, additionalConstraints)
+      } else {
+        Future(periodStats.map {
+          case (outerPeriod,foundStats, periodsToQuery) => {
             // A list of futures of lists of location/stats pairs...phew
             val queried : List[Future[List[(Option[String],ValueStats)]]] = periodsToQuery.toList.map {
               period => {
                 def saveResult(vs: ValueStats, location: Option[String]) {
-                  // Can't cache if we're disabled or the period isn't completely in the past
-                  if (disableCaching || (period.end isAfter now)) {
+                  // Can't cache if the period isn't completely in the past
+                  if (period.end isAfter now) {
                     logger.trace("Skipping cache of results from %s -> %s".format(period.start, period.end))
                     return
                   }
@@ -961,6 +982,8 @@ function(key, values) {
 
                   queryIndexdb(upsert(stats_cache_collection).set(toSave).where(JPath(".accountTokenId") === token.accountTokenId.serialize & JPath(".path") === path.path & (timestampField === period.start.getMillis) & JPath(".where") === whereClause & locationClause))
                 }
+
+                val encoding = intervalOpt.map(_.encoding).getOrElse(timeSeriesEncoding)
                 
                 // If we have locations or prefixes, do location-based queries
                 if (! (locations.isEmpty && anonPrefixes.isEmpty)) {
@@ -969,7 +992,7 @@ function(key, values) {
                     case loc => {
                       logger.trace("varseries with named location")
                       val start = System.currentTimeMillis
-                      aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(loc), additionalConstraints).map {
+                      aggregateVariableSeries(token, path, variable, encoding, period, Seq(loc), additionalConstraints).map {
                         vs => {
                           logger.trace("aggr varseries for %s in %d ms".format(period, System.currentTimeMillis - start))
                           saveResult(vs, Some(loc.location.path.toString))
@@ -982,7 +1005,7 @@ function(key, values) {
 
                   val anonLocResults: Future[List[(Option[String],ValueStats)]] = if (!anonPrefixes.isEmpty) {
                     logger.trace("varseries with anon locations")
-                    mapReduceVariableSeries(token, path, variable, interval.encoding, period, additionalConstraints, anonPrefixes).map {
+                    mapReduceVariableSeries(token, path, variable, encoding, period, additionalConstraints, anonPrefixes).map {
                       _.toList.map {
                         case (label, stats) => {
                           saveResult(stats, (label \? "location").map(_.deserialize[String]))
@@ -996,7 +1019,7 @@ function(key, values) {
                 } else {
                   // No location tags, so we'll just aggregate all events for this period
                   logger.trace("varseries has no location, just timespan")
-                  aggregateVariableSeries(token, path, variable, interval.encoding, period, Seq(), additionalConstraints).map {
+                  aggregateVariableSeries(token, path, variable, encoding, period, Seq(), additionalConstraints).map {
                     vs => saveResult(vs, None); List((Option.empty[String],vs))
                   }
                 }
@@ -1005,7 +1028,7 @@ function(key, values) {
 
             Future(queried: _*).map {
               queriedCounts => {
-                val allCounts = if (disableCaching) queriedCounts else foundStats :: queriedCounts
+                val allCounts = foundStats :: queriedCounts
                 allCounts.flatten.groupBy { _._1 }.map { case (loc, stats) => {
                   (JObject(List(Some(JField("timestamp", outerPeriod.start.serialize)), loc.map(JField("location", _))).flatten),
                    stats.map{_._2}.reduceLeft(ValueStats.Ops.append(_,_)))
@@ -1013,13 +1036,107 @@ function(key, values) {
               }
             }
           }
+        }: _*).map{ r => r.flatten.sortBy(_._1)(JObjectOrdering) }}
+    }}}.getOrElse(sys.error("Variable series requires a time span"))
+  }
+
+  /** Retrieves a time series of statistics of occurrences of the specified variable in a path */
+  def getRawVariableSeries(token: Token, path: Path, variable: Variable, tagTerms: Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty): Future[ResultSet[JObject, ValueStats]] = {
+    // Break out terms into timespan, named locations, and anonymous location prefixes (if any) 
+    val (intervalOpt,locations,anonPrefixes) = tagTerms.foldLeft(Tuple3[Option[IntervalTerm], List[HierarchyLocationTerm], List[String]](None,Nil,Nil)) {
+      case ((_,locs,prefixes),interval @ IntervalTerm(_,_,_,_)) => (Some(interval), locs, prefixes)
+      case ((interval,locs,prefixes), loc @ HierarchyLocationTerm(name, Hierarchy.NamedLocation(_,_))) => (interval, loc :: locs, prefixes)
+      case ((interval,locs,prefixes), loc @ HierarchyLocationTerm(name, Hierarchy.AnonLocation(path))) => (interval, locs, path.path :: prefixes)
+      case (acc,_) => acc
+    }
+
+    val varPath = JPath(".event.data") \ variable.name.tail
+
+    def aggregateEvents(allEvents: Iterator[JObject]) : ValueStats = {
+      val startTime = System.currentTimeMillis
+      var count = 0
+      var sum = 0.0
+      var sumsq = 0.0
+      var numeric = false
+
+      allEvents.foreach {
+        event => {
+          count = count + 1
+          val eventValueStats = varPath.extract(event) match {
+            case JInt(v)    => val vd = v.toDouble; numeric = true; sum = sum + vd; sumsq = sumsq + (vd * vd)
+            case JDouble(d) => numeric = true; sum = sum + d; sumsq = sumsq + (d * d)
+            case _          => // noop
+          }
         }
       }
-      // Bogus entry is added since time zone shifting will remove the first element. See AnalyticsService.shiftTimeSeries for details
-    }: _*).map{ r => r.flatten.sortBy(_._1)(JObjectOrdering) }}
+
+      val aggregated = if (numeric) ValueStats(count, Some(sum), Some(sumsq)) else ValueStats(count, None, None)
+      logger.trace("Aggregated events to " + aggregated + " in " + (System.currentTimeMillis - startTime) + "ms")
+      aggregated
+    }
+
+    val allObs = JointObservation(additionalConstraints + HasValue(variable, JNothing))
+
+    logger.trace("Obtaining variable series on " + allObs)
+
+    // Run the query over the interval given
+    val results: Option[Future[ResultSet[JObject,ValueStats]]] = intervalOpt.map { interval => Future(interval.periods.map {
+      period => {
+        // If we have locations or prefixes, do location-based queries
+        if (! (locations.isEmpty && anonPrefixes.isEmpty)) {
+          // Named locations can be queried directly
+          val namedLocResults: List[Future[List[(JObject,ValueStats)]]] = locations.map {
+            case loc => {
+              getRawEvents(token, path, allObs, Seq[TagTerm](SpanTerm(interval.encoding, period.timeSpan), loc)).map {
+                events => List((JObject(List(JField("timestamp", period.start.serialize), JField("location", loc.location.path))),
+                                aggregateEvents(events.iterator)))
+              }
+            }
+          }
+
+          /* Because we can't filter on anonymous locations (they're free-form in the DB), we have to
+           * just grab all events for the given interval and then group them app-side */
+          val anonLocResults: Future[List[(JObject, ValueStats)]] = if (!anonPrefixes.isEmpty) {
+            // Make sure we retrieve location as part of the fields
+            getRawEvents(token, path, allObs, Seq(SpanTerm(interval.encoding, period.timeSpan)), Right(List(JPath(".tags.#location")))).map {
+              rawEvents => {
+                // Compute statistics for any of the anon location prefixes that match our given events
+                val prefixResults = rawEvents.foldLeft(Map.empty[String,List[JObject]]) {
+                  case (acc, event) => locationValueMatch(anonPrefixes, event \ "tags" \ "#location") match {
+                    case Some(matchedPrefix) => acc + (matchedPrefix -> acc.get(matchedPrefix).map(event :: _).getOrElse(List(event)))
+                    case None                => acc
+                  }
+                }
+
+                /* Now we determine stats for each of our prefixes based on the map. Non-existent prefixes
+                 * Are set to zero so that we maintain a record for each period whether or not events match
+                 * that period. */
+                anonPrefixes.map {
+                  prefix => {
+                    val events = prefixResults.get(prefix).getOrElse(List())
+                    val result = (JObject(List(JField("timestamp", period.start.serialize), JField("location", JString(prefix)))),
+                                  aggregateEvents(events.iterator))
+                    result
+                  }
+                }
+              }
+            }
+          } else Future.sync(List[(JObject,ValueStats)]()) 
+
+          Future((anonLocResults :: namedLocResults): _*).map(_.flatten)
+        } else {
+          // No location tags, so we'll just aggregate all events for this period
+          logger.trace("varseries has no location, just timespan")
+          getRawEvents(token, path, allObs, Seq(SpanTerm(interval.encoding, period.timeSpan))).map {
+            events =>List((JObject(List(JField("timestamp", period.start.serialize))), aggregateEvents(events.iterator)))
+          }
+        }
+      }
+    }: _*).map{ _.flatten.sortBy(_._1)(JObjectOrdering) }}
 
     results.getOrElse(sys.error("Variable series requires a time span"))
   }
+
 
   /** Retrieves a count of the specified observed state over the given time period */
   def getObservationCount(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[CountType] = {
