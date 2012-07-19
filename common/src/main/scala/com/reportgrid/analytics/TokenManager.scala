@@ -62,15 +62,15 @@ class TokenManager (database: Database, tokensCollection: MongoCollection, delet
   tokenCache.put(Token.Test.tokenId, Token.Test)
 
   private def find(tokenId: String) = database {
-    logger.debug("Finding token in DB: " + tokenId)
+    logger.trace("Finding token in DB: " + tokenId)
     selectOne().from(tokensCollection).where("tokenId" === tokenId)
   }
 
   /** Look up the specified token.
    */
   def lookup(tokenId: String): Future[Option[Token]] = {
-    logger.debug("Looking up token from cache: " + tokenId)
-    tokenCache.get(tokenId).map[Future[Option[Token]]] { v => logger.debug("Found: " + v); Future.sync(Some(v)) } getOrElse {
+    logger.trace("Looking up token from cache: " + tokenId)
+    tokenCache.get(tokenId).map[Future[Option[Token]]] { v => logger.trace("Found: " + v); Future.sync(Some(v)) } getOrElse {
       find(tokenId) map {
         _.map(_.deserialize[Token] ->- (tokenCache.put(tokenId, _)))
       }
@@ -108,7 +108,7 @@ class TokenManager (database: Database, tokensCollection: MongoCollection, delet
       }
 
       val tokenJ = newToken.serialize.asInstanceOf[JObject]
-      logger.debug("Issuing token: " + tokenJ)
+      logger.info("Issuing token: " + tokenJ)
       database(insert(tokenJ).into(tokensCollection)) map { _ =>
         // Go ahead and cache it now
         tokenCache.put(newToken.tokenId, newToken)
@@ -120,7 +120,7 @@ class TokenManager (database: Database, tokensCollection: MongoCollection, delet
   }
 
   protected def deleteToken(token: Token) = {
-    logger.debug("Deleting token: " + token.tokenId)
+    logger.info("Deleting token: " + token.tokenId)
   	for {
   	  count <- database(count.from(tokensCollection).where("tokenId" === token.tokenId))
       _ <- database(insert(token.serialize.asInstanceOf[JObject]).into(deletedTokensCollection))
@@ -129,7 +129,7 @@ class TokenManager (database: Database, tokensCollection: MongoCollection, delet
   	    database(remove.from(tokensCollection).where("tokenId" === token.tokenId))
   	  }
     } yield {
-      logger.debug("Deleted token: " + token)
+      logger.info("Deleted token: " + token)
       tokenCache.remove(token.tokenId).getOrElse(token)
     }
   }
