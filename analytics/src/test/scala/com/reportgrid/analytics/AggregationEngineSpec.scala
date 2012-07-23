@@ -523,9 +523,9 @@ class AggregationEngineSpec extends AggregationEngineTests with AggregationEngin
     
       forall(expectedTotals) {
         case ((jpath, value), count) =>
-          engine.getObservationCount(TestToken, "/test", JointObservation(HasValue(Variable(jpath), value)), queryTerms) must whenDelivered {
+          engine.getObservationCount(TestToken, "/test", JointObservation(HasValue(Variable(jpath), value)), queryTerms) must whenDelivered[Long] {
             be_==(count.toLong)
-          }
+          }(FutureTimeouts(1, Duration(20, TimeUnit.SECONDS)))
       }
     }
     

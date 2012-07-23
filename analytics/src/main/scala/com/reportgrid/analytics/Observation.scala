@@ -15,7 +15,13 @@ import scalaz.Semigroup
 import scalaz.NonEmptyList
 import scalaz.{Validation, Success, Failure}
 
-case class Variable(name: JPath)
+case class Variable(name: JPath) {
+  def isArrayIndex = name.nodes.lastOption match {
+    case Some(JPathIndex(_)) => true
+    case _ => false
+  }
+}
+
 object Variable {
   implicit val orderingVariable: Ordering[Variable] = new Ordering[Variable] {
     override def compare(v1: Variable, v2: Variable) = {

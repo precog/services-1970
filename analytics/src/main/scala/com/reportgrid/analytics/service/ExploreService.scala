@@ -307,8 +307,16 @@ with ChildLocationsService {
             content => (content \ "where").validated[Set[HasValue]].toOption
           }.getOrElse(Set.empty[HasValue])
 
+          val cacheDisabled = if (request.parameters.get('disablecache).isDefined) {
+            logger.debug("Disable cache for varseries")
+            true
+          } else {
+            logger.debug("Permit cache for varseries")
+            false
+          }
+
           val responseContent = withChildLocations(token, path, terms, request.parameters) {
-            aggregationEngine.getVariableSeries(token, path, variable, _, whereClause) 
+            aggregationEngine.getVariableSeries(token, path, variable, _, whereClause, forceRawQuery = cacheDisabled) 
             .map{ r => if (eternalQuery || periodicity == Periodicity.Single) r else transformTimeSeries[ValueStats](request, periodicity).apply(r) } // eternal and single queries don't get shifted/grouped (how could they?)
             .map(_.map(f.second).serialize)
           }
@@ -325,6 +333,7 @@ with ChildLocationsService {
 class ValueCountService(val aggregationEngine: AggregationEngine) 
 extends CustomHttpService[Future[JValue], (JValue) => (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
 with ColumnHeaders
+with Logging
 with ChildLocationsService {
   val service = (request: HttpRequest[Future[JValue]]) => Success(
     (value: JValue) => (token: Token, path: Path, variable: Variable) => {
@@ -332,9 +341,18 @@ with ChildLocationsService {
                                                          .getOrElse(Future.sync[Option[JValue]](None))
 
       futureContent.flatMap { content => 
+        
+        val cacheDisabled = if (request.parameters.get('disablecache).isDefined) {
+          logger.debug("Disable cache for value count")
+          true
+        } else {
+          logger.debug("Permit cache for value count")
+          false
+        }
+
         val terms = List(timeSpanTerm, locationTerm).flatMap(_.apply(request.parameters, content))
         val responseContent = withChildLocations(token, path, terms, request.parameters) {
-          aggregationEngine.getObservationCount(token, path, JointObservation(HasValue(variable, value)), _)
+          aggregationEngine.getObservationCount(token, path, JointObservation(HasValue(variable, value)), _, cacheDisabled)
           .map(_.serialize)
         }
 
@@ -348,6 +366,7 @@ with ChildLocationsService {
 
 class ValueSeriesService(val aggregationEngine: AggregationEngine) 
 extends CustomHttpService[Future[JValue], (JValue) => (Token, Path, Variable) => Future[HttpResponse[JValue]]] 
+with Logging
 with ColumnHeaders
 with ChildLocationsService {
   val service = (request: HttpRequest[Future[JValue]]) => {
@@ -355,11 +374,19 @@ with ChildLocationsService {
     .toSuccess(DispatchError(BadRequest, "A periodicity must be specified in order to query for a time series."))
     .map { periodicity =>
       (value: JValue) => (token: Token, path: Path, variable: Variable) => {
+        val cacheDisabled = if (request.parameters.get('disablecache).isDefined) {
+          logger.debug("Disable cache for variable value series")
+          true
+        } else {
+          logger.debug("Permit cache for variable value series")
+          false
+        }
+
         request.content.map(_.map(Some(_))).getOrElse(Future.sync(None)).flatMap { content => 
           val terms = List(intervalTerm(periodicity), locationTerm).flatMap(_.apply(request.parameters, content))
 
           val responseContent = withChildLocations(token, path, terms, request.parameters) {
-            aggregationEngine.getObservationSeries(token, path, JointObservation(HasValue(variable, value)), _)
+            aggregationEngine.getObservationSeries(token, path, JointObservation(HasValue(variable, value)), _, cacheDisabled)
             .map(transformTimeSeries(request, periodicity))
             .map(_.serialize)
           }

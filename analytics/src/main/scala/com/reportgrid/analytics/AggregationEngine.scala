@@ -485,14 +485,9 @@ function() {
         ret
       }
     }
-  }
+ }
 
   def getHistogram(token: Token, path: Path, variable: Variable, tagTerms : Seq[TagTerm], additionalConstraints: Set[HasValue] = Set.empty[HasValue]): Future[Map[JValue, CountType]] = {
-    val isArrayVar = variable.name.nodes.lastOption match {
-      case Some(JPathIndex(_)) => true
-      case _ => false
-    }
-
     val isAnonLoc = hasAnonLocs(tagTerms)
 
     val nonTimeTags = tagTerms.filterNot {
@@ -537,7 +532,7 @@ function() {
             if (queryPeriods.size < 700) {
               logger.trace("Found %d cached periods, querying for %d".format(foundPeriods.size, queryPeriods.size))
               val queryResults: List[Future[List[(JValue,Long)]]] = queryPeriods.toList.map {
-                period => runHistogramQuery(token, path, variable, SpanTerm(timeSeriesEncoding, period.timeSpan) :: nonTimeTags, additionalConstraints, isArrayVar || isAnonLoc).map {
+                period => runHistogramQuery(token, path, variable, SpanTerm(timeSeriesEncoding, period.timeSpan) :: nonTimeTags, additionalConstraints, variable.isArrayIndex || isAnonLoc).map {
                   resultMap => {
                     val resultList = resultMap.toList
 
@@ -559,9 +554,9 @@ function() {
                 }
               }
 
-              val prePeriodResults: Future[List[(JValue,Long)]] = runHistogramQuery(token, path, variable, SpanTerm(timeSeriesEncoding, TimeSpan(start, hourStart)) :: nonTimeTags, additionalConstraints, isArrayVar || isAnonLoc).map(_.toList)
+              val prePeriodResults: Future[List[(JValue,Long)]] = runHistogramQuery(token, path, variable, SpanTerm(timeSeriesEncoding, TimeSpan(start, hourStart)) :: nonTimeTags, additionalConstraints, variable.isArrayIndex || isAnonLoc).map(_.toList)
 
-              val postPeriodResults: Future[List[(JValue,Long)]] = runHistogramQuery(token, path, variable, SpanTerm(timeSeriesEncoding, TimeSpan(hourEnd, end)) :: nonTimeTags, additionalConstraints, isArrayVar || isAnonLoc).map(_.toList)
+              val postPeriodResults: Future[List[(JValue,Long)]] = runHistogramQuery(token, path, variable, SpanTerm(timeSeriesEncoding, TimeSpan(hourEnd, end)) :: nonTimeTags, additionalConstraints, variable.isArrayIndex || isAnonLoc).map(_.toList)
 
               Future((prePeriodResults :: postPeriodResults :: queryResults): _*).map {
                 periodLists: List[List[(JValue,Long)]] => {
@@ -573,7 +568,7 @@ function() {
               }
             } else {
               logger.warn("Running uncached histogram on oversized query (%d periods needed)".format(queryPeriods.size))
-              runHistogramQuery(token, path, variable, tagTerms, additionalConstraints, isArrayVar || isAnonLoc)
+              runHistogramQuery(token, path, variable, tagTerms, additionalConstraints, variable.isArrayIndex || isAnonLoc)
             }
           }
         }
@@ -876,7 +871,10 @@ function(key, values) {
                         path: Path, 
                         variable: Variable, 
                         tagTerms: Seq[TagTerm], 
-                        additionalConstraints: Set[HasValue] = Set.empty): Future[ResultSet[JObject, ValueStats]] = {
+                        additionalConstraints: Set[HasValue] = Set.empty, forceRawQuery: Boolean = false): Future[ResultSet[JObject, ValueStats]] = if (forceRawQuery) {
+    logger.debug("Disabling cache query for variable series.")
+    getRawVariableSeries(token, path, variable, tagTerms, additionalConstraints)    
+  } else {
     // Break out terms into timespan, named locations, and anonymous location prefixes (if any) 
     val intervalOpt  = tagTerms.collectFirst { case i : IntervalTerm => i }
     val locations    = tagTerms.collect { case loc @ HierarchyLocationTerm(name, Hierarchy.NamedLocation(_,_)) => loc }.toList
@@ -895,18 +893,22 @@ function(key, values) {
     val whereClause = cacheWhereClauseFor(tagTerms, variable, additionalConstraints)
 
     // Precompute our time slice info before actually running any MR/Aggr jobs
-    // Run the query over the intervals given
+    // Run the query over the full interval given first, then break it up into 
+    // periods from the interval
     val periodInfo: Option[Future[List[(Period,List[(Option[String],ValueStats)], Set[Period])]]] = intervalOpt.map { 
       interval => {
-        Future(interval.periods.map {
-          outerPeriod => {
-            logger.debug("Querying for period: " + outerPeriod)
+        // Find *all* cached entries within the interval
+        val cacheFilter = cacheFilterFor(token, path, whereClause, tagTerms, 
+                                         interval.resultGranularity.floor(interval.span.start).getMillis, // Need to include the full start period
+                                         interval.resultGranularity.ceil(interval.span.end).getMillis,    // Need to include the full end period
+                                         true)
 
-            // For this period, find any cached counts (hourly) within the period, query for any missing, then sum and return the final count
-            val cacheFilter = cacheFilterFor(token, path, whereClause, tagTerms, outerPeriod.start.getMillis, outerPeriod.end.getMillis, true)
+        queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq")).from(stats_cache_collection).where(cacheFilter)).map {
+          foundAll => {
+            interval.periods.toList.map {
+              outerPeriod => {
+                logger.debug("Checking found against period: " + outerPeriod)
 
-            queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq")).from(stats_cache_collection).where(cacheFilter)).map {
-              found => {
                 val (outOfRange,neededPeriods) = if (interval.resultGranularity == Periodicity.Hour || 
                                                      interval.resultGranularity == Periodicity.Day || 
                                                      interval.resultGranularity == Periodicity.Single) {
@@ -916,6 +918,9 @@ function(key, values) {
                   logger.trace(interval.resultGranularity.name + " series out of range")
                   (true,Set(outerPeriod))
                 }
+
+                // Isolate just the cache entries within the outer period
+                val found = foundAll.filter { entry => outerPeriod.contains((entry \ "timestamp").deserialize[Instant]) }
 
                 val (foundStats, foundPeriods) = found.foldLeft((List[(Option[String],ValueStats)](), Set[Period]())) {
                   case ((stats,periods), cacheEntry) => {
@@ -944,7 +949,7 @@ function(key, values) {
               }
             }
           }
-        }: _*)
+        }
       }
     }
 
@@ -952,9 +957,9 @@ function(key, values) {
       val totalUncached = periodStats.map(_._3.size).sum
 
       logger.trace("Total uncached sub-periods = " + totalUncached)
-
-      if (totalUncached > 700) {
-        // Use raw varSeries
+      
+      if (totalUncached > 700 || variable.isArrayIndex) {
+        logger.debug("Using raw events for variable series.")
         getRawVariableSeries(token, path, variable, tagTerms, additionalConstraints)
       } else {
         Future(periodStats.map {
@@ -1139,14 +1144,14 @@ function(key, values) {
 
 
   /** Retrieves a count of the specified observed state over the given time period */
-  def getObservationCount(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[CountType] = {
+  def getObservationCount(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm], forceRaw: Boolean = false): Future[CountType] = {
     getObservationSeries(token, path, observation, tagTerms) map (_.total)
   }
 
   /** Retrieves a time series of counts of the specified observed state
    *  over the given time period.
    */
-  def getObservationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm]): Future[ResultSet[JObject, CountType]] = {
+  def getObservationSeries(token: Token, path: Path, observation: JointObservation[HasValue], tagTerms: Seq[TagTerm], forceRaw: Boolean = false): Future[ResultSet[JObject, CountType]] = {
     // Delegate to getVariableSeries, using the first observation as the variable.
 
     // We require an interval for the series, so we'll generate Eternity if one wasn't provided.
@@ -1163,7 +1168,7 @@ function(key, values) {
     }
 
     observation.obs.headOption map {
-      firstObs => getVariableSeries(token, path, firstObs.variable, fullTagTerms, observation.obs).map(_.map { case (k,v) => (k, v.count) })
+      firstObs => getVariableSeries(token, path, firstObs.variable, fullTagTerms, observation.obs, forceRawQuery = forceRaw).map(_.map { case (k,v) => (k, v.count) })
     } getOrElse {
       throw new IllegalArgumentException("Cannot compute an observation series without any observations")
     }
