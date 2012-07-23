@@ -904,7 +904,9 @@ function(key, values) {
                                          true)
 
         queryIndexdb(select(JPath(".timestamp"), JPath(".location"), JPath(".count"), JPath(".sum"), JPath(".sumsq")).from(stats_cache_collection).where(cacheFilter)).map {
-          foundAll => {
+          foundAllRaw => {
+            val foundAll = foundAllRaw.toList
+
             interval.periods.toList.map {
               outerPeriod => {
                 logger.debug("Checking found against period: " + outerPeriod)
