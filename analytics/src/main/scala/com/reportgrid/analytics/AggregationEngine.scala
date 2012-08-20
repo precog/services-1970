@@ -340,7 +340,10 @@ class AggregationEngine private (config: ConfigMap, val logger: Logger, val inse
             }
           }
         }.map { results => logger.debug("Final varchild result for %s = %s".format(compact(render(filter.filter)), results)); results }
-        case _ => Future.sync(Nil) // No range means no entries
+        case _ => {
+          // We have no range, so compute children with a single pass
+          getMRVariableChildren(token, path, variable, tagTerms)
+        }
       }
     }
   }
@@ -573,7 +576,10 @@ function() {
           }
         }
       }.map { results => logger.debug("Final histo result for %s = %s".format(compact(render(filter.filter)), results)); results }
-      case _ => Future.sync(Map()) // No range means no entries
+      case _ => {
+        // We have no range, so compute a single histogram without any time range
+        runHistogramQuery(token, path, variable, tagTerms, additionalConstraints, variable.isArrayIndex || isAnonLoc)
+      }
     }
   }
 
@@ -746,8 +752,7 @@ function(key, values) {
           counts => val finalSum = counts.sum; logger.debug("Final count = " + finalSum + " for " + compact(render(filter.filter))); finalSum
         }
       }
-      case Some(_) => logger.debug("Simple count on future/large results"); queryEventsdb(count.from(events_collection).where(filter))
-      case None => logger.debug("Empty range on variable count, returning zero"); Future.sync(0l) // If we couldn't find a range it's because nothing exists
+      case _ => logger.debug("Simple count on future/large results"); queryEventsdb(count.from(events_collection).where(filter))
     }
   }
 
@@ -1458,26 +1463,27 @@ function (key, vals) {
      * We either have been given a time span or we use [token creation time,now). In the case where
      * we've been given a time range, ceiling the lower bound to the token creation time */
     val minTime: Instant = token.createdAt.toInstant
-    tagTerms.collectFirst[Future[Option[(Instant,Instant)]]] {
-      case SpanTerm(encoding, TimeSpan(start, end)) => Future.sync {
+    Future.sync(tagTerms.collectFirst {
+      case SpanTerm(encoding, TimeSpan(start, end)) => {
         if (start.isBefore(minTime)) {
           logger.debug("Adjusting start time to token creation")
-          Some((minTime, end))
+          (minTime, end)
         } else {
-          Some((start,end))
+          (start,end)
         }
       }
-    }.getOrElse {
-      logger.warn("Resorting to full DB query to determine min/max timestamps")
-      queryEventsdb(selectOne(".timestamp").from(events_collection).where(filter).sortBy(".timestamp" >>)).flatMap {
-        case Some(start) => {
-          queryEventsdb(selectOne(".timestamp").from(events_collection).where(filter).sortBy(".timestamp" <<)).flatMap {
-            case Some(end) => Future.sync(Some((start("timestamp").deserialize[Instant]), new Instant(end("timestamp").deserialize[Long] + 1))) // make our end inclusive
-            case None      => logger.warn("Found start timestamp without end during range query"); Future.sync(None) // Technically this shouldn't be possible if we found a start event
-          }
+    })
+  }
+
+  def findRangeFor(token: Token, tagTerms: Seq[TagTerm], filter: MongoFilter): Future[Option[(Instant,Instant)]] = {
+    queryEventsdb(selectOne(".timestamp").from(events_collection).where(filter).sortBy(".timestamp" >>)).flatMap {
+      case Some(start) => {
+        queryEventsdb(selectOne(".timestamp").from(events_collection).where(filter).sortBy(".timestamp" <<)).flatMap {
+          case Some(end) => Future.sync(Some((start("timestamp").deserialize[Instant]), new Instant(end("timestamp").deserialize[Long] + 1))) // make our end inclusive
+          case None      => logger.warn("Found start timestamp without end during range query"); Future.sync(None) // Technically this shouldn't be possible if we found a start event
         }
-        case None => Future.sync(None) // Easy, there aren't any
       }
+      case None => Future.sync(None) // Easy, there aren't any
     }
   }
 
