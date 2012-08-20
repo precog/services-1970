@@ -23,9 +23,9 @@ object TokenService extends HttpRequestHandlerCombinators {
     path(/?) {
       get {
         (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-          logger.debug("Finding descendants for " + token)
+          logger.trace("Finding descendants for " + token)
           tokenManager.listDescendants(token) map { 
-            descendants => logger.debug("Found descendants: " + descendants); descendants.map(_.tokenId).serialize.ok
+            descendants => logger.trace("Found descendants: " + descendants); descendants.map(_.tokenId).serialize.ok
           }
         }
       } ~
@@ -67,9 +67,9 @@ object TokenService extends HttpRequestHandlerCombinators {
       path('descendantTokenId) {
         get { 
           (request: HttpRequest[Future[JValue]]) => (token: Token) => {
-            logger.debug("Finding info for " + token)
+            logger.trace("Finding info for " + token)
             if (token.tokenId == request.parameters('descendantTokenId)) {
-              logger.debug("Finding parent info")
+              logger.trace("Finding parent info")
               token.parentTokenId.map { parTokenId =>
                 tokenManager.lookup(parTokenId).map { parent => 
                   val sanitized = parent.map(token.relativeTo).map(_.copy(parentTokenId = None, accountTokenId = ""))
@@ -79,12 +79,12 @@ object TokenService extends HttpRequestHandlerCombinators {
                 Future.sync(HttpResponse[JValue](Forbidden))
               }
             } else {
-              logger.debug("Finding child info (%s)".format(request.parameters('descendantTokenId)))
+              logger.trace("Finding child info (%s)".format(request.parameters('descendantTokenId)))
               tokenManager.getDescendant(token, request.parameters('descendantTokenId)).map { info =>
-                logger.debug("Found descendant info: " + info)
+                logger.trace("Found descendant info: " + info)
                 info.map { infoToken => 
                   val result = infoToken.relativeTo(token).copy(accountTokenId = "")
-                  logger.debug("Final result for descendant info = " + result)
+                  logger.trace("Final result for descendant info = " + result)
                   result.serialize
                 }
               } map { descendantToken =>
